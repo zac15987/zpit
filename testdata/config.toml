@@ -1,0 +1,107 @@
+# ~/.config/zpit/config.toml
+
+[terminal]
+windows_mode = "new_tab"
+tmux_mode = "new_window"
+
+[notification]
+tui_alert = true
+windows_toast = true
+sound = true
+re_remind_minutes = 15
+
+[worktree]
+base_dir_windows = "D:/Documents/.worktrees"
+base_dir_wsl = "/mnt/d/Documents/.worktrees"
+dir_format = "{project_id}/{issue_id}--{slug}"
+auto_cleanup = true
+max_per_project = 5
+
+[providers.tracker.forgejo-leyu]
+type = "forgejo_issues"
+url = "https://leyu88.synology.me"
+api_key_env = "FORGEJO_TOKEN"
+
+[providers.tracker.github-personal]
+type = "github_issues"
+
+[providers.git.forgejo-leyu]
+type = "forgejo"
+url = "https://leyu88.synology.me"
+api_key_env = "FORGEJO_TOKEN"
+
+[providers.git.github]
+type = "github"
+api_key_env = "GITHUB_TOKEN"
+
+# ──────────────────────────────────────────────
+# Projects
+# ──────────────────────────────────────────────
+
+[[projects]]
+name = "AI 檢測清潔機台 Demo"
+id = "ai-inspection-cleaning"
+profile = "machine"
+hook_mode = "strict"
+tracker = "forgejo-leyu"
+tracker_project = "AI_Inspection_Cleaning_Demo"
+git = "forgejo-leyu"
+repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
+shared_core = true
+log_level = "strict"
+tags = ["wpf", "ethercat", "basler"]
+
+[projects.path]
+windows = "D:/Documents/LeYu/Workspace/AI_Inspection_Cleaning_Demo"
+wsl = "/mnt/d/Documents/LeYu/Workspace/AI_Inspection_Cleaning_Demo"
+
+[[projects]]
+name = "ENR 點膠機台"
+id = "enr-duc"
+profile = "machine"
+hook_mode = "strict"
+tracker = "forgejo-leyu"
+tracker_project = "ENR_DUC"
+git = "forgejo-leyu"
+repo = "Leyu-LGBT/ENR_DUC"
+shared_core = true
+log_level = "strict"
+tags = ["wpf", "secsgem"]
+
+[projects.path]
+windows = "D:/Documents/LeYu/Workspace/ENR_DUC"
+wsl = "/mnt/d/Documents/LeYu/Workspace/ENR_DUC"
+
+[[projects]]
+name = "DisplayProfileManager"
+id = "display-profile-mgr"
+profile = "desktop"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "DisplayProfileManager"
+git = "github"
+repo = "zac15987/DisplayProfileManager"
+shared_core = false
+log_level = "standard"
+tags = ["wpf", "nlog"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/DisplayProfileManager"
+wsl = "/mnt/d/Documents/MyProjects/DisplayProfileManager"
+
+[[projects]]
+name = "Zpit"
+id = "zpit"
+profile = "desktop"
+hook_mode = "relaxed"
+tracker = "github-personal"
+tracker_project = "zpit"
+git = "github"
+repo = "zac15987/zpit"
+shared_core = false
+log_level = "minimal"
+tags = ["go", "bubbletea"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zpit"
+wsl = "/mnt/d/Documents/MyProjects/zpit"
