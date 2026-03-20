@@ -10,6 +10,8 @@ var (
 	colorTag      = lipgloss.Color("245") // mid gray — tags
 	colorStatusFg = lipgloss.Color("229") // bright yellow — status bar text
 	colorStatusBg = lipgloss.Color("236") // dark gray — status bar / header background
+	colorWorking  = lipgloss.Color("78")  // green — agent working
+	colorWaiting  = lipgloss.Color("220") // bright yellow-orange — agent waiting
 )
 
 var (
@@ -52,4 +54,15 @@ var (
 
 	hotkeyDescStyle = lipgloss.NewStyle().
 			Foreground(colorText)
+
+	workingStyle = lipgloss.NewStyle().
+			Foreground(colorWorking)
+
+	waitingStyle = lipgloss.NewStyle().
+			Foreground(colorWaiting).
+			Bold(true)
+
+	questionStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Italic(true)
 )

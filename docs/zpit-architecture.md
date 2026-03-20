@@ -2019,11 +2019,11 @@ echo $?   # 應該是 2
 - [x] Code Construction Principles 整合至 Reviewer 流程 + 部署腳本
 
 ### M2: Session Log 監控 + 通知（2-3 天）
-- [ ] Session Log Watcher 模組（fsnotify + log 解析）
-- [ ] TUI「活躍終端」區域即時更新
-- [ ] Agent 等待回應偵測 + TUI 變色警示
-- [ ] Windows Toast 通知
-- [ ] 音效提示
+- [x] Session Log Watcher 模組（fsnotify + log 解析）
+- [x] TUI「活躍終端」區域即時更新
+- [x] Agent 等待回應偵測 + TUI 變色警示
+- [x] Windows Toast 通知
+- [x] 音效提示
 
 ### M3: Clarifier + Tracker 串接（3-5 天）
 - [ ] Issue Tracker 部署（Plane/Linear/GitHub/Forgejo 擇一）

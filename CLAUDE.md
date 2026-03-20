@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Zpit is a TUI-based AI development cockpit written in Go with Bubble Tea. It acts as a **dispatch center** (not a wrapper) — it selects projects, launches Claude Code agents in separate terminal windows, monitors their progress via session logs, and coordinates the full issue lifecycle from requirement clarification to PR.
 
-Key design principle: Claude Code runs in independent terminal windows. The TUI monitors via `tail` on session logs (`~/.claude/projects/<hash>/sessions/*.jsonl`), never wrapping or embedding Claude Code directly.
+Key design principle: Claude Code runs in independent terminal windows. The TUI monitors via fsnotify on session logs (`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`), never wrapping or embedding Claude Code directly.
 
 ## Build & Run
 
@@ -19,7 +19,7 @@ go run .                 # Run (reads ~/.config/zpit/config.toml)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ```
 
-## Current State (M1 Complete)
+## Current State (M2 Complete)
 
 ### What works now
 - TUI project list with ↑↓ navigation and profile icons
@@ -27,6 +27,13 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Environment detection (Windows Terminal / WSL / Linux tmux)
 - Terminal Launcher: `Enter` opens Claude Code in new WT tab or tmux window
 - `[o]` opens project folder in file manager
+- Session Log Watcher: fsnotify monitors JSONL logs, detects agent state (Working/Waiting/Ended)
+- Active Terminals area: 🟢 Working / 🟡 Waiting for input / ⚫ Session ended (auto-removes after 10s)
+- Agent waiting detection: extracts question text from session log, shows preview in TUI
+- Windows Toast notification when agent waits for input (via PowerShell)
+- Sound alert (SystemSounds.Asterisk)
+- Notification cooldown (re_remind_minutes, per-project)
+- Session liveness check: PID monitoring every 10s, detects closed sessions
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`)
 
@@ -41,8 +48,6 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - `[?]` Help → TBD
 
 ### What's not implemented yet
-- Session Log Watcher / fsnotify (M2)
-- Windows Toast notifications (M2)
 - Tracker Provider API clients (M3)
 - Issue Spec validation/parsing (M3)
 - Worktree Manager (M4)
@@ -60,12 +65,27 @@ internal/
 │   ├── launcher.go              # LaunchClaude() dispatch + arg builders
 │   ├── launcher_windows.go      # wt.exe (build tag: windows)
 │   └── launcher_unix.go         # tmux (build tag: !windows)
+├── watcher/
+│   ├── encode.go                # EncodeCwd() path encoding + ClaudeHome()
+│   ├── parse.go                 # AgentState enum + ParseLine() JSONL parser
+│   ├── session.go               # FindActiveSessions() + IsProcessAlive() + LogFilePath()
+│   ├── watcher.go               # Watcher: fsnotify tail + WatchOnce()
+│   ├── process_windows.go       # PID liveness check (Windows tasklist)
+│   ├── process_unix.go          # PID liveness check (Unix signal 0)
+│   └── watcher_test.go          # 17 tests: encode, parse, session discovery, state
+├── notify/
+│   ├── notify.go                # Notifier: cooldown logic + dispatch
+│   ├── toast_windows.go         # Windows Toast via PowerShell
+│   ├── toast_unix.go            # no-op on non-Windows
+│   ├── sound_windows.go         # SystemSounds.Asterisk via PowerShell
+│   ├── sound_unix.go            # paplay/aplay fallback
+│   └── notify_test.go           # 6 tests: cooldown, reset, config respect
 ├── tui/
-│   ├── model.go                 # Root Bubble Tea model, Update, view routing
+│   ├── model.go                 # Root Bubble Tea model, Update, watcher lifecycle, liveness check
 │   ├── keymap.go                # Key bindings
 │   ├── styles.go                # Lip Gloss styles with named color constants
 │   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals
-│   └── msg.go                   # Custom tea.Msg types
+│   └── msg.go                   # Custom tea.Msg types (AgentEventMsg, TickMsg, etc.)
 └── tracker/types.go             # IssueTracker + GitHost interfaces (stubs)
 hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
@@ -73,13 +93,28 @@ hooks/
 ├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
 └── hooks_test.go                # Go tests shelling out to each hook
 scripts/setup-hooks.sh           # Deploy hooks + docs to a project's .claude/
-testdata/config.toml             # Real project config used for tests + manual TUI testing
+testdata/
+├── config.toml                  # Real project config used for tests + manual TUI testing
+├── config_minimal.toml          # Minimal config for defaults testing
+├── session_working.jsonl        # JSONL fixture: agent working (tool_use)
+└── session_waiting.jsonl        # JSONL fixture: agent waiting (end_turn)
 docs/
 ├── zpit-architecture.md         # Full architecture document
 └── code-construction-principles.md  # Code quality baseline for agent review
 ```
 
 ## Architecture
+
+### Session Log Monitoring (M2)
+
+The TUI monitors Claude Code sessions via their JSONL log files:
+
+1. **Path encoding**: `EncodeCwd()` converts project path to Claude's directory name (non-alphanumeric → `-`)
+2. **Session discovery**: scans `~/.claude/sessions/{pid}.json` for matching project + alive PID
+3. **Two-phase startup**: finds session PID immediately (enables liveness check), then waits for JSONL file creation (happens on first user input)
+4. **State detection**: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
+5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
+6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
 
 ### Provider Abstraction
 
