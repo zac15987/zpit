@@ -72,7 +72,7 @@ internal/
 │   ├── watcher.go               # Watcher: fsnotify tail + WatchOnce()
 │   ├── process_windows.go       # PID liveness check (Windows tasklist)
 │   ├── process_unix.go          # PID liveness check (Unix signal 0)
-│   └── watcher_test.go          # 17 tests: encode, parse, session discovery, state
+│   └── watcher_test.go          # 22 tests: encode, parse, session discovery, state, liveness
 ├── notify/
 │   ├── notify.go                # Notifier: cooldown logic + dispatch
 │   ├── toast_windows.go         # Windows Toast via PowerShell
