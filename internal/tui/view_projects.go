@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/zac15987/zpit/internal/watcher"
 )
 
 // UI symbols.
@@ -14,6 +16,9 @@ const (
 	iconWeb      = "🌐 "
 	iconDesktop  = "🖥️ "
 	iconAndroid  = "📱 "
+	iconWorking  = "🟢"
+	iconWaiting  = "🟡"
+	iconEnded    = "⚫"
 	cursorMarker = " › "
 	boxHoriz     = "─"
 	boxVert      = "│"
@@ -157,15 +162,67 @@ func (m Model) renderActiveTerminals() string {
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
 	i := 1
-	for projectID, result := range m.activeTerminals {
-		b.WriteString(fmt.Sprintf("  [%d] %s %s %s\n",
+	for projectID, at := range m.activeTerminals {
+		// Status icon and text.
+		statusIcon, statusText := renderAgentStatus(at)
+
+		// Elapsed time since last state change.
+		elapsed := formatElapsed(time.Since(at.StateChangedAt))
+
+		b.WriteString(fmt.Sprintf("  [%d] %s %s %s %s\n",
 			i,
 			selectedStyle.Render(m.projectName(projectID)),
 			boxVert,
-			detailStyle.Render(result.SwitchHint),
+			statusText,
+			detailStyle.Render(elapsed),
 		))
+
+		// Question preview when waiting.
+		if at.LastQuestion != "" && statusIcon == iconWaiting {
+			preview := truncate(at.LastQuestion, 80)
+			b.WriteString(fmt.Sprintf("      %s %s\n",
+				detailStyle.Render("Q:"),
+				questionStyle.Render(preview),
+			))
+		}
+
+		// Switch hint.
+		if at.LaunchResult != nil && at.LaunchResult.SwitchHint != "" {
+			b.WriteString(fmt.Sprintf("      %s\n",
+				detailStyle.Render(at.LaunchResult.SwitchHint),
+			))
+		}
 		i++
 	}
 
 	return b.String()
+}
+
+func renderAgentStatus(at *ActiveTerminal) (string, string) {
+	switch at.State {
+	case watcher.StateEnded:
+		return iconEnded, detailStyle.Render(iconEnded + " Session ended")
+	case watcher.StateWaiting:
+		return iconWaiting, waitingStyle.Render(iconWaiting + " Waiting for input")
+	case watcher.StateWorking:
+		return iconWorking, workingStyle.Render(iconWorking + " Working")
+	case watcher.StateStreaming:
+		return iconWorking, workingStyle.Render(iconWorking + " Working")
+	default:
+		return iconWorking, detailStyle.Render(iconWorking + " Launched")
+	}
+}
+
+func formatElapsed(d time.Duration) string {
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	return fmt.Sprintf("%02d:%02d", m, s)
+}
+
+func truncate(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }
