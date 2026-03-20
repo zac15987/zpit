@@ -618,7 +618,7 @@ wsl = "/mnt/d/Projects/MonitorApp"
 Zpit (Go)
   └─ TrackerBridge
        │  exec: claude -p --model sonnet --output-format json --json-schema ...
-       │        --allowedTools "mcp__<server>__*" --max-budget-usd 0.10
+       │        --allowedTools "mcp__<server>__*" --max-budget-usd 1.00
        │        --no-session-persistence
        │
        ├──MCP──▸ gitea MCP server    (Forgejo)
