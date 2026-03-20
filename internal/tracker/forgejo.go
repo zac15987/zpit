@@ -1,0 +1,159 @@
+package tracker
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+)
+
+// ForgejoClient implements TrackerClient for Forgejo/Gitea REST API v1.
+type ForgejoClient struct {
+	restClient
+}
+
+// forgejoIssue is the JSON shape returned by the Gitea/Forgejo issues API.
+type forgejoIssue struct {
+	Number  int            `json:"number"`
+	Title   string         `json:"title"`
+	Body    string         `json:"body"`
+	State   string         `json:"state"`
+	HTMLURL string         `json:"html_url"`
+	Labels  []forgejoLabel `json:"labels"`
+}
+
+type forgejoLabel struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// forgejoPR is the JSON shape returned by the Gitea/Forgejo pulls API.
+type forgejoPR struct {
+	Number  int    `json:"number"`
+	State   string `json:"state"`
+	Merged  bool   `json:"merged"`
+	HTMLURL string `json:"html_url"`
+}
+
+func (c *ForgejoClient) ListIssues(ctx context.Context, repo string) ([]Issue, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/issues?state=open&type=issues&limit=%d", owner, name, forgejoPageLimit)
+
+	var items []forgejoIssue
+	if err := c.get(ctx, path, &items); err != nil {
+		return nil, fmt.Errorf("list issues: %w", err)
+	}
+
+	issues := make([]Issue, 0, len(items))
+	for _, item := range items {
+		issues = append(issues, forgejoIssueToIssue(item))
+	}
+	return issues, nil
+}
+
+func (c *ForgejoClient) GetIssue(ctx context.Context, repo string, id string) (*Issue, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/issues/%s", owner, name, id)
+
+	var item forgejoIssue
+	if err := c.get(ctx, path, &item); err != nil {
+		return nil, fmt.Errorf("get issue: %w", err)
+	}
+
+	issue := forgejoIssueToIssue(item)
+	return &issue, nil
+}
+
+func (c *ForgejoClient) UpdateLabels(ctx context.Context, repo string, id string, add, remove []string) error {
+	owner, name := splitRepo(repo)
+	labelsPath := fmt.Sprintf("/api/v1/repos/%s/%s/issues/%s/labels", owner, name, id)
+	repoLabelsPath := fmt.Sprintf("/api/v1/repos/%s/%s/labels", owner, name)
+
+	var currentLabels []forgejoLabel
+	if err := c.get(ctx, labelsPath, &currentLabels); err != nil {
+		return fmt.Errorf("get current labels: %w", err)
+	}
+
+	var repoLabels []forgejoLabel
+	if err := c.get(ctx, repoLabelsPath, &repoLabels); err != nil {
+		return fmt.Errorf("get repo labels: %w", err)
+	}
+
+	newIDs := resolveNewLabelIDs(currentLabels, repoLabels, add, remove)
+
+	body := struct {
+		Labels []int64 `json:"labels"`
+	}{Labels: newIDs}
+	if err := c.doJSON(ctx, http.MethodPut, labelsPath, body, nil); err != nil {
+		return fmt.Errorf("update labels: %w", err)
+	}
+	return nil
+}
+
+func (c *ForgejoClient) GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%s", owner, name, prID)
+
+	var pr forgejoPR
+	if err := c.get(ctx, path, &pr); err != nil {
+		return nil, fmt.Errorf("get PR status: %w", err)
+	}
+
+	state := pr.State
+	if pr.Merged {
+		state = "merged"
+	}
+	return &PRStatus{
+		ID:    fmt.Sprintf("%d", pr.Number),
+		State: state,
+		URL:   pr.HTMLURL,
+	}, nil
+}
+
+// forgejoIssueToIssue converts the API response to a canonical Issue.
+func forgejoIssueToIssue(item forgejoIssue) Issue {
+	labels := make([]string, len(item.Labels))
+	for i, l := range item.Labels {
+		labels[i] = l.Name
+	}
+	return Issue{
+		ID:     fmt.Sprintf("%d", item.Number),
+		Title:  item.Title,
+		Status: MapLabelsToStatus(item.State, labels),
+		Labels: labels,
+		Body:   item.Body,
+	}
+}
+
+// resolveNewLabelIDs computes the new label ID set after adding and removing labels.
+func resolveNewLabelIDs(current, repoLabels []forgejoLabel, add, remove []string) []int64 {
+	removeSet := make(map[string]bool, len(remove))
+	for _, r := range remove {
+		removeSet[strings.ToLower(r)] = true
+	}
+
+	// Keep current labels that aren't being removed.
+	kept := make(map[int64]bool)
+	for _, l := range current {
+		if !removeSet[strings.ToLower(l.Name)] {
+			kept[l.ID] = true
+		}
+	}
+
+	// Resolve add names to IDs from repo labels.
+	repoLabelByName := make(map[string]int64, len(repoLabels))
+	for _, l := range repoLabels {
+		repoLabelByName[strings.ToLower(l.Name)] = l.ID
+	}
+	for _, a := range add {
+		if id, ok := repoLabelByName[strings.ToLower(a)]; ok {
+			kept[id] = true
+		}
+	}
+
+	ids := make([]int64, 0, len(kept))
+	for id := range kept {
+		ids = append(ids, id)
+	}
+	return ids
+}

@@ -505,36 +505,33 @@ re_remind_minutes = 15
 [providers.tracker.plane-local]
 type = "plane"
 url = "https://plane.nas.local"
+token_env = "PLANE_TOKEN"
 
 
 [providers.tracker.linear-work]
 type = "linear"
+token_env = "LINEAR_TOKEN"
 
 
 [providers.tracker.github-personal]
 type = "github_issues"
-# 使用 repo 本身的 Issues，不需要額外 url
+token_env = "GITHUB_TOKEN"       # 或使用 gh CLI 自動處理 auth
 
 [providers.tracker.forgejo-local]
 type = "forgejo_issues"
 url = "https://git.nas.local"
-
-mcp_server = "gitea"              # 對應 claude mcp add 的 server name
+token_env = "FORGEJO_TOKEN"
 
 # ──────────────────────────────────────────────
-# Git Host Providers
+# Git Host Providers（agent 透過 MCP 操作，Zpit 不直接使用）
 # ──────────────────────────────────────────────
 
 [providers.git.forgejo-local]
 type = "forgejo"
 url = "https://git.nas.local"
 
-mcp_server = "gitea"              # 同一個 MCP server 同時提供 issue + git 操作
-
 [providers.git.github]
 type = "github"
-
-mcp_server = "github"             # github MCP server
 
 # ──────────────────────────────────────────────
 # 專案定義
@@ -609,114 +606,66 @@ windows = "D:/Projects/MonitorApp"
 wsl = "/mnt/d/Projects/MonitorApp"
 ```
 
-### 4.1 Provider 抽象層 — TrackerBridge（claude -p + MCP）
+### 4.1 Provider 抽象層 — TrackerClient（直接 REST API）
 
-**核心設計決策：Zpit 不直接實作各 tracker 的 HTTP API client。**
-改用 `claude -p`（headless 模式）搭配 MCP tools，讓 Claude Code 作為 tracker 的統一橋接層。
+**核心設計決策：Zpit 透過直接 REST API 與各 tracker 互動。**
 
 ```
 Zpit (Go)
-  └─ TrackerBridge
-       │  exec: claude -p --model sonnet --output-format json --json-schema ...
-       │        --allowedTools "mcp__<server>__*" --max-budget-usd 1.00
-       │        --no-session-persistence
+  └─ TrackerClient (interface)
        │
-       ├──MCP──▸ gitea MCP server    (Forgejo)
-       ├──MCP──▸ github MCP server   (GitHub Issues)
-       ├──MCP──▸ plane MCP server    (未來)
-       └──MCP──▸ linear MCP server   (未來)
+       ├─ ForejoClient   → Forgejo/Gitea REST API
+       ├─ GitHubClient   → GitHub REST API
+       ├─ PlaneClient    → Plane REST API（未來）
+       └─ LinearClient   → Linear GraphQL API（未來）
 ```
 
-**為什麼不直接寫 Go HTTP client？**
-- 4 種 tracker × 5+ API method = 大量重複的 HTTP client 程式碼
-- MCP 生態已有各 tracker 的 server，白白不用太浪費
-- 新增 tracker 只需安裝 MCP server + config，Zpit 零改動
-- `--json-schema` 提供 constrained decoding，結構化輸出可靠度極高
+**為什麼用直接 API 而非 MCP 橋接？**
+- Zpit 的 tracker 操作都是簡單 CRUD（列 issue、改 label、查 PR），不需要 LLM
+- 直接 API < 1 秒回應，claude -p 橋接要 10-20 秒——Loop 頻繁 poll 無法接受
+- `[s]` status 列表需要即時回應，使用者體驗優先
 
-**前提條件：**
-- 使用者已安裝對應 tracker 的 MCP server（`claude mcp add`）
-- Config 中的 tracker type 對應到 MCP server name（見下方 mapping）
+**Agent 仍透過 MCP 操作 tracker：**
+- Clarifier agent 透過 MCP 推 issue（在終端中，使用者確認後）
+- Coding/Reviewer agent 透過 MCP 開 PR、寫 comment、更新 status
+- MCP 的安裝與配置由各專案的 `claude mcp add` 管理，與 Zpit config 無關
 
-#### TrackerBridge 設計（Go 虛擬碼）
+**Auth 機制：**
+- 每個 provider 設定 `token_env` 欄位，指向環境變數名稱
+- Zpit 啟動時從環境變數讀取 token，不在 config 中存放明文
+- GitHub 也可搭配 `gh auth` 使用 `GITHUB_TOKEN`
+
+#### TrackerClient 設計（Go 虛擬碼）
 
 ```go
-// TrackerBridge 透過 claude -p + MCP 與任意 tracker 互動。
-// 一份實作處理所有 tracker type — 差異只在 prompt 和 MCP tool name。
-type TrackerBridge struct {
-    Model       string // "sonnet" (default)
-    MaxBudget   string // "0.10" (default)
+// TrackerClient 定義 Zpit 對 tracker 的所有操作。
+type TrackerClient interface {
+    ListIssues(ctx context.Context, project ProjectConfig) ([]Issue, error)
+    GetIssue(ctx context.Context, project ProjectConfig, id string) (*Issue, error)
+    UpdateLabels(ctx context.Context, project ProjectConfig, id string, add, remove []string) error
+    GetPRStatus(ctx context.Context, project ProjectConfig, prID string) (*PRStatus, error)
 }
 
-// ListIssues 呼叫 claude -p 取得 issue 列表。
-func (b *TrackerBridge) ListIssues(project ProjectConfig) ([]Issue, error) {
-    schema := issueListSchema // JSON Schema for structured output
-    allowedTools := mcpToolsFor(project.Tracker) // e.g. "mcp__gitea__list_issues"
-
-    prompt := fmt.Sprintf(
-        "List all open issues from repository %s. Return every issue.",
-        project.Repo,
-    )
-
-    result, err := b.execClaude(prompt, schema, allowedTools)
-    // parse result.StructuredOutput into []Issue
-}
-
-// ConfirmIssue 將 issue 從 pending_confirm 改為 todo。
-func (b *TrackerBridge) ConfirmIssue(project ProjectConfig, issueID string) error {
-    // 根據 tracker type 組合對應的 prompt + MCP tool
-    // Forgejo/GitHub: 改 label (pending → todo)
-    // Plane: 改 status column
-}
-
-// mcpToolsFor 根據 config 中的 tracker key 回傳對應的 MCP tool pattern。
-func mcpToolsFor(trackerKey string) string {
-    // 從 config 查找 tracker type，對應到 MCP server name
-    // forgejo_issues → "mcp__gitea__issue_read mcp__gitea__issue_write mcp__gitea__label_read mcp__gitea__label_write"
-    // github_issues  → "mcp__github__list_issues mcp__github__create_issue ..."
+// NewClient 根據 provider type 建立對應的 client。
+func NewClient(provider ProviderEntry) (TrackerClient, error) {
+    token := os.Getenv(provider.TokenEnv)
+    if token == "" {
+        return nil, fmt.Errorf("env var %s not set", provider.TokenEnv)
+    }
+    switch provider.Type {
+    case "forgejo_issues":
+        return NewForgejoClient(provider.URL, token), nil
+    case "github_issues":
+        return NewGitHubClient(token), nil
+    default:
+        return nil, fmt.Errorf("unsupported tracker type: %s", provider.Type)
+    }
 }
 ```
-
-#### claude -p 呼叫範例
-
-```bash
-# 列出 issues（結構化輸出）
-echo "List open issues from Leyu-LGBT/AI_Inspection_Cleaning_Demo" | \
-  claude -p --model sonnet --output-format json \
-  --json-schema '{"type":"object","properties":{"issues":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"title":{"type":"string"},"state":{"type":"string"},"labels":{"type":"array","items":{"type":"string"}}},"required":["number","title","state"]}}},"required":["issues"]}' \
-  --allowedTools "mcp__gitea__list_issues" \
-  --max-budget-usd 0.10 --no-session-persistence
-
-# 回傳 structured_output:
-# {"issues": [{"number": 4, "title": "PluginConfig ...", "state": "open", "labels": []}]}
-```
-
-#### Tracker Type → MCP Server 對應
-
-```
-Config tracker type    MCP server name    MCP tools prefix
-───────────────────────────────────────────────────────────
-forgejo_issues         gitea              mcp__gitea__issue_*, mcp__gitea__label_*
-github_issues          github             mcp__github__list_issues, mcp__github__create_issue, ...
-plane                  plane              mcp__plane__* (未來)
-linear                 linear             mcp__linear__* (未來)
-```
-
-Zpit 啟動時檢查 `claude mcp list` 輸出，驗證所需 MCP server 是否可用。
-不可用時在 TUI 顯示警告，不 crash。
-
-#### 效能與成本
-
-| 指標 | 實測值 |
-|------|--------|
-| 延遲 | 首次 ~12s（cache creation），後續 ~3-5s |
-| 成本 | Sonnet ~$0.05-0.20/次（訂閱制吃額度，不額外扣費） |
-| 可靠度 | `--json-schema` constrained decoding，schema 違反率極低 |
-
-對 `[s]` status 列表和 `[y]` 確認這類低頻操作，延遲和成本都可接受。
 
 ---
 
-**統一的 Issue 狀態（內部使用，各 tracker 透過 prompt 指示 MCP 對應）：**
+**統一的 Issue 狀態（內部使用，各 tracker 的 label 對應由 client 實作）：**
 
 ```go
 const (
@@ -730,7 +679,7 @@ const (
 )
 ```
 
-各 tracker 的狀態對應（寫進 TrackerBridge 的 prompt 中）：
+各 tracker 的狀態對應（TrackerClient 的 label 映射 + agent MCP prompt 參考）：
 
 ```
 內部狀態            Plane          Linear         GitHub Issues    Forgejo Issues
@@ -745,82 +694,51 @@ done                Done            Done           closed           closed
 ```
 
 每個專案獨立選擇 tracker — 公司機台用 Forgejo/Plane（self-hosted），個人專案用 GitHub Issues。
-新增 tracker 只需：安裝 MCP server → config 加入對應 type → 完成。
+新增 tracker 只需：實作 TrackerClient interface + config 加入對應 type + `token_env`。
+Agent 端若需 MCP 操作（推 issue、開 PR），需另外安裝對應 MCP server（`claude mcp add`）。
 
 ---
 
 ## 5. 專案 Profile 定義
 
+Profile 只存放 **agent prompt 需要的 metadata**。
+Build、test、review、開 PR 等執行動作都是 agent 的職責（agent 從各專案 CLAUDE.md 得知 build 指令），
+Zpit 不介入 agent 的工作內容。
+
 ### 5.1 Profile: machine (機台專案)
 
-```yaml
-build_cmd: "msbuild /p:Configuration=Release"
-verify_steps:
-  - compile                    # msbuild 編譯
-  - static_analysis            # 可選: Roslyn analyzers
-# claude_mode 已由 config.toml 的 hook_mode 取代（見 §13.3.6）
-issue_labels_auto:
-  - "需機台驗證"               # 自動加上
-log_policy: "strict"
-  # 所有 Service 方法必須有進出 log
-  # 硬體操作必須有指令/回應 log
-  # 狀態機轉換必須有前後狀態 log
-post_implement:
-  - ai_review
-  - open_pr
-post_machine_push:             # 機台 push 回來後
-  - ai_review_diff
-  - update_plane_status
+```toml
+[profiles.machine]
+issue_labels_auto = ["需機台驗證"]
+log_policy = "strict"
+# strict: 所有 Service 方法必須有進出 log
+#         硬體操作必須有指令/回應 log
+#         狀態機轉換必須有前後狀態 log
 ```
 
 ### 5.2 Profile: web (個人網頁)
 
-```yaml
-build_cmd: "npm run build"
-verify_steps:
-  - npm_build
-  - lighthouse_basic           # 可選
-# claude_mode 已由 config.toml 的 hook_mode 取代（見 §13.3.6）
-issue_labels_auto: []
-log_policy: "minimal"
-post_implement:
-  - ai_review
-  - open_pr
-  - auto_deploy                # webhook → Docker build
+```toml
+[profiles.web]
+issue_labels_auto = []
+log_policy = "minimal"
 ```
 
 ### 5.3 Profile: desktop (桌面工具)
 
-```yaml
-build_cmd: "msbuild /p:Configuration=Release"  # 或 dotnet build
-verify_steps:
-  - compile
-  - unit_test                  # 如果有的話
-# claude_mode 已由 config.toml 的 hook_mode 取代（見 §13.3.6）
-issue_labels_auto: []
-log_policy: "standard"
-  # Service 方法有進出 log
-  # 異常有完整 log
-post_implement:
-  - ai_review
-  - open_pr
+```toml
+[profiles.desktop]
+issue_labels_auto = []
+log_policy = "standard"
+# standard: Service 方法有進出 log、異常有完整 log
 ```
 
 ### 5.4 Profile: android
 
-```yaml
-build_cmd: "gradlew assembleDebug"
-verify_steps:
-  - gradle_build
-  - lint
-  - unit_test
-# claude_mode 已由 config.toml 的 hook_mode 取代（見 §13.3.6）
-issue_labels_auto:
-  - "需實機驗證"
-log_policy: "standard"
-post_implement:
-  - ai_review
-  - open_pr
+```toml
+[profiles.android]
+issue_labels_auto = ["需實機驗證"]
+log_policy = "standard"
 ```
 
 ---
@@ -1518,60 +1436,58 @@ max_per_project = 5       # 每個專案最大同時 worktree 數量
 TUI 按 [l] 後，在新終端啟動 loop。支援同一專案多個 agent 平行工作。
 每個 agent 在自己的 worktree 中運行，互不干擾。
 
+**核心原則：Zpit 只負責調度，不介入 agent 工作內容。**
+Build、test、review、開 PR、更新 tracker status 都是 agent 自己的職責。
+
 ```
 TUI 按 [l]
 │
 ├─ 開新終端 (wt new-tab / tmux new-window)
 │  └─ 執行 loop (Go binary 的 loop 子命令)
 │
-│  ┌── loop 在獨立終端中運行 ──────────────────────────────┐
+│  ┌── loop 在獨立終端中運行（純調度）─────────────────────┐
 │  │                                                        │
-│  │ 1. 查詢 Tracker API: 抓此專案 status=Todo 的          │
-│  │    最高優先 issue                                      │
+│  │ 1. 查詢 Tracker API（直接 REST）: 抓此專案             │
+│  │    status=Todo 的最高優先 issue                        │
 │  │    如果沒有 → 等待，定期 poll                          │
 │  │                                                        │
 │  │ 2. 檢查此專案目前有幾個活躍 worktree                   │
 │  │    如果 >= max_per_project → 等待                      │
 │  │                                                        │
-│  │ 3. 衝突預檢：分析 issue 影響範圍                       │
+│  │ 3. 衝突預檢：分析 issue SCOPE 影響範圍                 │
 │  │    如果跟現有 worktree 的 agent 會碰同一個檔案         │
 │  │    → 跳過，抓下一個 issue                              │
 │  │                                                        │
-│  │ 4. 更新 Tracker: status → In Progress                  │
-│  │                                                        │
-│  │ 5. 建立 branch + worktree                              │
+│  │ 4. 建立 branch + worktree                              │
 │  │    git branch fix/ISSUE-ID-slug develop                │
 │  │    git worktree add <path> fix/ISSUE-ID-slug           │
 │  │                                                        │
-│  │ 6. 在新終端中啟動 Claude Code:                         │
+│  │ 5. 啟動 coding agent（新終端）                         │
 │  │    工作目錄 = worktree 路徑                            │
 │  │    claude -p (prompt 由 §6.5 模板組裝)                 │
 │  │    --allowedTools: Read,Write,Edit,Bash,Grep,Glob      │
 │  │    --max-turns: 50                                     │
+│  │    Agent 自己負責: build, test, commit,                │
+│  │                    開 PR (MCP), 更新 status (MCP)      │
 │  │                                                        │
-│  │ 7. 執行 profile 的 verify_steps                        │
-│  │    失敗 → agent 自動修復 (最多 3 次)                   │
-│  │    3 次都失敗 → 標記 blocked                           │
+│  │ 6. 等待 coding agent 結束（監控 process exit）         │
 │  │                                                        │
-│  │ 8. 啟動 reviewer agent (唯讀)                          │
+│  │ 7. 啟動 reviewer agent（同一 worktree，唯讀）          │
+│  │    Agent 自己負責: 讀 diff, 檢查 AC, 寫 comment (MCP) │
 │  │                                                        │
-│  │ 9. Review 結果回寫 Tracker issue comment               │
+│  │ 8. 等待 reviewer 結束                                  │
 │  │                                                        │
-│  │ 10. 開 PR (透過 Git Host API)                          │
-│  │                                                        │
-│  │ 11. 更新 Tracker: status → 等待 Review                 │
-│  │                                                        │
-│  │ 12. 不等 PR merge — 直接回到步驟 1 抓下一個 issue     │
-│  │     （平行化的關鍵：做完一個就去抓下一個，             │
-│  │       不用等你 review 完）                              │
+│  │ 9. 回到步驟 1 抓下一個 issue                           │
+│  │    （平行化的關鍵：做完一個就去抓下一個，              │
+│  │      不用等你 review 完）                               │
 │  │                                                        │
 │  └────────────────────────────────────────────────────────┘
 │
 │  PR merge 後的清理（由 TUI 背景執行）：
-│  ├─ 偵測到 PR merged
+│  ├─ 偵測到 PR merged（透過 TrackerClient poll PR status）
 │  ├─ git worktree remove <path>
 │  ├─ git branch -d <branch>
-│  └─ 更新 Tracker: status → Done (或 → 待實體驗證)
+│  └─ 更新 Tracker label: → Done（或 → 待實體驗證）
 │
 └── TUI 即時監控 (session log)
 ```
@@ -2093,7 +2009,6 @@ echo $?   # 應該是 2
 ### 13.5 Loop 安全
 
 - `--max-turns` 限制每次 `claude -p` 的最大回合數
-- verify 失敗 3 次自動停止
 - 單一 issue 執行超過 30 分鐘自動標記 timeout
 - agent 等待回應超過 15 分鐘 → TUI 再次發送提醒通知
 
@@ -2119,29 +2034,30 @@ echo $?   # 應該是 2
 - [x] 音效提示
 
 ### M3: Clarifier + Tracker 串接（3-5 天）
-- [x] TrackerBridge 模組：claude -p（sonnet）+ MCP 統一橋接層（Forgejo 驗證通過）
-- [x] MCP 可用性檢查：啟動時偵測所需 MCP server 是否已安裝
+- [x] TrackerClient 模組：直接 REST API（Forgejo / GitHub），token_env auth
 - [x] Issue Spec 格式驗證模組（ValidateIssueSpec + ParseIssueSpec）
 - [x] Clarifier agent 定義（agents/clarifier.md，go:embed 嵌入）
 - [x] TUI [c] clarify：開新終端啟動 claude --agent clarifier（未部署時 huh confirm 自動部署）
-- [x] TUI [s] status：唯讀 issue 列表（透過 TrackerBridge 拉取）+ [y] 確認 + [p] 開瀏覽器
+- [x] TUI [s] status：唯讀 issue 列表（透過 TrackerClient 拉取）+ [y] 確認 + [p] 開瀏覽器
 - [x] TUI [p] open tracker：主畫面開瀏覽器到 issue list
-- [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerBridge 改 label）
+- [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerClient 改 label）
 - [ ] 專案 CLAUDE.md 模板 + 第一個專案實際填寫
 
-### M4: 自動化 Loop + Worktree（1 週）
+### M4a: Worktree + Prompt 模板 + Bridge 擴充（基礎建設）
 - [ ] Worktree Manager 模組（建立 / 清理 / 衝突預檢）
 - [ ] Worktree 建立時根據 hook_mode 自動配置 settings.local.json
 - [ ] Hook 自動化測試（make test-hooks）
 - [ ] Coding Agent Prompt 模板實作（§6.5，Issue Spec → prompt 組裝）
 - [ ] Reviewer 驗收模板實作（§6.6，Issue Spec → reviewer prompt 組裝）
-- [ ] Loop 引擎實作（抓 issue → 建 worktree → 新終端啟動 claude -p → verify → review → PR）
-- [ ] 同一專案多 agent 平行執行
-- [ ] Profile-based verify steps
+- [ ] TrackerClient 擴充：GetIssue（含 body）、GetPRStatus
+- [ ] Profile 定義落地至 config.toml（log_policy, issue_labels_auto）
 - [ ] Reviewer agent 定義 + 測試
+
+### M4b: Loop 引擎 + 自動化（自動化核心）
+- [ ] Loop 引擎實作（抓 todo issue → 建 worktree → 啟動 coding agent → 等結束 → 啟動 reviewer → 下一個）
+- [ ] 同一專案多 agent 平行執行
 - [ ] TUI 加入 [l] loop monitor + worktree 狀態顯示
-- [ ] Git Host API 串接（開 PR）
-- [ ] PR merge 後自動清理 worktree
+- [ ] PR merge 偵測 + 自動清理 worktree
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams
@@ -2149,6 +2065,5 @@ echo $?   # 應該是 2
 - [ ] [r] review 模式
 - [ ] 最近活動 feed（從 session log 解析）
 - [ ] shared-core 跨專案影響偵測
-- [ ] Log 規範自動檢查整合到 reviewer
 - [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
 - [ ] Cross-compile: 同一份 code 編譯 Windows + Linux binary

@@ -52,9 +52,9 @@ type ProvidersConfig struct {
 }
 
 type ProviderEntry struct {
-	Type      string `toml:"type"`
-	URL       string `toml:"url"`
-	MCPServer string `toml:"mcp_server"`
+	Type     string `toml:"type"`
+	URL      string `toml:"url"`
+	TokenEnv string `toml:"token_env"`
 }
 
 type ProjectConfig struct {

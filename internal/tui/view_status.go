@@ -21,7 +21,7 @@ func (m Model) viewStatus() string {
 	b.WriteString("  " + strings.Repeat(boxHoriz, 60) + "\n\n")
 
 	if m.statusLoading {
-		b.WriteString("  Loading issues via TrackerBridge...\n")
+		b.WriteString("  Loading issues...\n")
 	} else if m.statusError != "" {
 		b.WriteString(fmt.Sprintf("  Error: %s\n", m.statusError))
 	} else if len(m.statusIssues) == 0 {
