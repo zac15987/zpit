@@ -36,27 +36,26 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
-- TrackerBridge: `claude -p` + MCP 統一橋接層（sonnet, $1.00 budget）
+- 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests
+- TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
 - `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
-- `[s]` Status: readonly issue list via TrackerBridge + `[y]` confirm (pending→todo) + `[p]` open in browser
+- `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
-- MCP availability check on startup (warns if MCP server not found)
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
-- 28 tracker tests + 22 watcher tests + 6 notify tests
 
 ### What's stubbed (shows "coming in MX" message)
-- `[l]` Loop → M4
-- `[r]` Review → M4
+- `[l]` Loop → M4b
+- `[r]` Review → M4a
 - `[a]` Add Project → M5
 - `[e]` Edit Config → M5
 - `[?]` Help → TBD
 
 ### What's not implemented yet
-- Worktree Manager (M4)
-- Loop engine (M4)
-- Agent prompt assembly (M4)
-- Coding/Reviewer agent templates (M4)
+- Worktree Manager (M4a)
+- Loop engine (M4b)
+- Agent prompt assembly (M4a)
+- Coding/Reviewer agent templates (M4a)
 
 ## Package Structure
 
@@ -95,8 +94,10 @@ internal/
 │   └── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, IssueConfirmedMsg, etc.)
 └── tracker/
     ├── types.go                 # Issue/PR structs + canonical status constants
-    ├── bridge.go                # TrackerBridge: claude -p + MCP 統一橋接
-    ├── bridge_test.go           # 11 tests (mock exec)
+    ├── client.go                # TrackerClient interface + NewClient factory
+    ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API
+    ├── github.go                # GitHubClient: GitHub REST API
+    ├── client_test.go           # TrackerClient tests
     ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec
     ├── issuespec_test.go        # 12 tests
     ├── urls.go                  # BuildIssueURL + BuildTrackerURL
@@ -130,20 +131,20 @@ The TUI monitors Claude Code sessions via their JSONL log files:
 5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
 6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
 
-### TrackerBridge (M3)
+### TrackerClient (M3)
 
-Zpit 不直接實作各 tracker 的 HTTP API client。改用 `claude -p`（headless 模式）+ MCP tools 作為統一橋接層：
+Zpit 透過直接 REST API 與各 tracker 互動（TrackerClient interface）：
 
 ```
-Zpit (Go) → claude -p --model sonnet --output-format json --json-schema ...
-                → MCP → gitea/github/plane/linear server
+Zpit (Go) → TrackerClient interface
+                ├─ ForgejoClient → Forgejo/Gitea REST API
+                └─ GitHubClient  → GitHub REST API
 ```
 
-- `--json-schema` constrained decoding 確保結構化輸出可靠
-- 新增 tracker 只需安裝 MCP server + config 加入 `mcp_server` 欄位
-- Config 中 `providers.tracker.*.mcp_server` 對應 `claude mcp add` 的 server name
-- Clarifier agent 在終端中直接透過 MCP 推 issue（使用者確認後）
-- TUI `[s]` status 透過 TrackerBridge 拉 issue 列表，`[y]` 改狀態
+- 直接 API < 1 秒回應，適合 `[s]` status 即時顯示和 Loop 頻繁 poll
+- Auth 透過 `token_env` 指向環境變數，不在 config 存明文
+- Agent（Clarifier/Coding/Reviewer）仍透過 MCP 操作 tracker（推 issue、開 PR、寫 comment）
+- TUI `[s]` status 透過 TrackerClient 拉 issue 列表，`[y]` 改 label
 
 ### Hook-Based Safety System (5 Layers)
 
@@ -162,7 +163,7 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 
 `~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
 
-Provider entries include `mcp_server` field mapping to the MCP server name (e.g. `mcp_server = "gitea"` → tools prefixed `mcp__gitea__*`).
+Provider entries include `token_env` field pointing to environment variable name for API auth (e.g. `token_env = "FORGEJO_TOKEN"`).
 
 ## Conventions
 
