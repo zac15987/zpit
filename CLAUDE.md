@@ -15,18 +15,71 @@ go build ./...           # Build
 go test ./...            # Run all tests
 go test ./internal/...   # Run a specific package's tests
 go test -run TestName    # Run a single test
+go run .                 # Run (reads ~/.config/zpit/config.toml)
+ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
+```
+
+## Current State (M1 Complete)
+
+### What works now
+- TUI project list with ↑↓ navigation and profile icons
+- Config loading from `~/.config/zpit/config.toml` (TOML, with defaults)
+- Environment detection (Windows Terminal / WSL / Linux tmux)
+- Terminal Launcher: `Enter` opens Claude Code in new WT tab or tmux window
+- `[o]` opens project folder in file manager
+- 3 PreToolUse hook scripts with 29 tests
+- Hook deployment script (`scripts/setup-hooks.sh`)
+
+### What's stubbed (shows "coming in MX" message)
+- `[c]` Clarify → M3
+- `[l]` Loop → M4
+- `[r]` Review → M4
+- `[s]` Status → M3
+- `[p]` Open Tracker → M3
+- `[a]` Add Project → M5
+- `[e]` Edit Config → M5
+- `[?]` Help → TBD
+
+### What's not implemented yet
+- Session Log Watcher / fsnotify (M2)
+- Windows Toast notifications (M2)
+- Tracker Provider API clients (M3)
+- Issue Spec validation/parsing (M3)
+- Worktree Manager (M4)
+- Loop engine (M4)
+- Agent prompt assembly (M4)
+
+## Package Structure
+
+```
+main.go                          # Entry point: load config → run Bubble Tea
+internal/
+├── config/config.go             # Config structs + Load() + defaults
+├── platform/detect.go           # Environment detection + ResolvePath()
+├── terminal/
+│   ├── launcher.go              # LaunchClaude() dispatch + arg builders
+│   ├── launcher_windows.go      # wt.exe (build tag: windows)
+│   └── launcher_unix.go         # tmux (build tag: !windows)
+├── tui/
+│   ├── model.go                 # Root Bubble Tea model, Update, view routing
+│   ├── keymap.go                # Key bindings
+│   ├── styles.go                # Lip Gloss styles with named color constants
+│   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals
+│   └── msg.go                   # Custom tea.Msg types
+└── tracker/types.go             # IssueTracker + GitHost interfaces (stubs)
+hooks/
+├── path-guard.sh                # Confine Write/Edit to worktree dir
+├── bash-firewall.sh             # Block destructive commands
+├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
+└── hooks_test.go                # Go tests shelling out to each hook
+scripts/setup-hooks.sh           # Deploy hooks + docs to a project's .claude/
+testdata/config.toml             # Real project config used for tests + manual TUI testing
+docs/
+├── zpit-architecture.md         # Full architecture document
+└── code-construction-principles.md  # Code quality baseline for agent review
 ```
 
 ## Architecture
-
-### Core Engine Modules
-
-The system is composed of four core modules under the TUI:
-
-- **ProjectMgr** — reads `~/.config/zpit/config.toml`, manages project definitions with per-OS paths (`windows` / `wsl`)
-- **Tracker Provider** — abstract `IssueTracker` interface with implementations for Plane, Linear, GitHub Issues, and Forgejo Issues. Internal status constants (`todo`, `in_progress`, `ai_review`, `waiting_review`, `needs_verify`, `done`) are mapped per-provider.
-- **Terminal Launcher** — detects environment (Windows Terminal vs tmux) and launches Claude Code in new tabs/windows. Behavior controlled by `config.toml [terminal]` section.
-- **LogTail (Session Log Watcher)** — uses fsnotify to watch Claude Code session logs, parses events (`tool_use`, `bash`, `thinking`), and feeds them into Bubble Tea's Update loop as `AgentEvent` messages.
 
 ### Provider Abstraction
 
@@ -44,38 +97,6 @@ type GitHost interface {
 
 Each project in `config.toml` references a tracker and git provider by key. Providers are defined under `[providers.tracker.*]` and `[providers.git.*]`.
 
-### Project Profiles
-
-Each project has a `profile` field (`machine` | `web` | `desktop` | `android`) that determines:
-- Build/verify commands (msbuild, npm, gradlew)
-- Log policy strictness (strict/standard/minimal)
-- Post-implementation steps (ai_review, open_pr, auto_deploy)
-- Auto-applied issue labels (e.g., "needs hardware verification")
-
-### Git Worktree Parallel Development
-
-Multiple agents can work on the same project simultaneously using git worktrees:
-- Worktrees are created under a centralized `base_dir` (e.g., `D:/Projects/.worktrees/{project_id}/{issue_id}--{slug}`)
-- Each agent gets its own worktree directory and branch
-- `.claude/` directory (agents, hooks, settings) is inherited automatically
-- Loop engine checks for file-level conflicts before assigning concurrent issues
-- Cleanup (worktree remove + branch delete) happens automatically after PR merge
-
-### Issue Spec — The Agent Communication Contract
-
-Issues use a strict structured format (§6.2) with mandatory sections: `## CONTEXT`, `## APPROACH`, `## ACCEPTANCE_CRITERIA`, `## SCOPE`, `## CONSTRAINTS`, and optional `## REFERENCES`. This is the **only** communication interface between Clarifier, Coding Agent, and Reviewer agents. Zpit validates completeness before pushing to any tracker.
-
-### Agent Roles
-
-Three agent types live in each managed project's `.claude/agents/`:
-- **Clarifier** (`clarifier.md`) — read-only, turns vague requirements into structured Issue Specs, proposes and compares technical approaches, pushes issues as "pending_confirm"
-- **Reviewer** (`reviewer.md`) — read-only, checks implementation against AC criteria item-by-item, outputs structured Review Report with PASS/NEEDS CHANGES verdict
-- **Coding Agent** — launched by Loop via `claude -p` with a prompt assembled from the Issue Spec template (§6.5)
-
-### Automation Loop Flow
-
-`[l]` key triggers: poll tracker for Todo issues → conflict precheck → create branch + worktree → launch Claude Code in new terminal → verify (build) → AI review → open PR → update tracker → move to next issue without waiting for human review.
-
 ### Hook-Based Safety System (5 Layers)
 
 1. **CLAUDE.md behavioral guidelines** (soft)
@@ -91,7 +112,7 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 
 ## Config Location
 
-`~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions.
+`~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
 
 ## Conventions
 
@@ -100,3 +121,4 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 - Issue statuses flow: pending_confirm → todo → in_progress → ai_review → waiting_review → (needs_verify) → done
 - Agents must stop and ask on uncertain technical decisions, even with bypass-all-permissions enabled
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
+- Code quality baseline: `docs/code-construction-principles.md` — Reviewer agent checks against this

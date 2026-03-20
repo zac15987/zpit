@@ -1978,14 +1978,15 @@ echo $?   # 應該是 2
 
 ## 14. Milestone 計畫
 
-### M1: 能用的最小版本（1-2 天）
-- [ ] Go 專案骨架 + Bubble Tea 基礎框架
-- [ ] config.toml 讀取 (TOML)
-- [ ] 專案選擇 → 自動 cd + 在新終端啟動 Claude Code
-- [ ] 偵測 Windows / WSL 環境，選對應 path 和終端啟動方式
-- [ ] Terminal Launcher 模組（wt new-tab / tmux new-window）
-- [ ] Hook 腳本撰寫 + 測試（path-guard / bash-firewall / git-guard）
-- [ ] 第一個專案的 .claude/settings.json + .claude/hooks/ 建立
+### M1: 能用的最小版本 ✅
+- [x] Go 專案骨架 + Bubble Tea 基礎框架
+- [x] config.toml 讀取 (TOML)
+- [x] 專案選擇 → 自動 cd + 在新終端啟動 Claude Code
+- [x] 偵測 Windows / WSL 環境，選對應 path 和終端啟動方式
+- [x] Terminal Launcher 模組（wt new-tab / tmux new-window）
+- [x] Hook 腳本撰寫 + 測試（path-guard / bash-firewall / git-guard）
+- [x] 第一個專案的 .claude/settings.json + .claude/hooks/ 建立（setup-hooks.sh）
+- [x] Code Construction Principles 整合至 Reviewer 流程 + 部署腳本
 
 ### M2: Session Log 監控 + 通知（2-3 天）
 - [ ] Session Log Watcher 模組（fsnotify + log 解析）
