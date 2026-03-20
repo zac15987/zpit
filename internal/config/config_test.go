@@ -49,8 +49,8 @@ func TestLoad(t *testing.T) {
 	if forgejo.Type != "forgejo_issues" {
 		t.Errorf("forgejo-leyu type = %q, want %q", forgejo.Type, "forgejo_issues")
 	}
-	if forgejo.APIKeyEnv != "FORGEJO_TOKEN" {
-		t.Errorf("forgejo-leyu api_key_env = %q", forgejo.APIKeyEnv)
+	if forgejo.MCPServer != "gitea" {
+		t.Errorf("forgejo-leyu mcp_server = %q, want %q", forgejo.MCPServer, "gitea")
 	}
 
 	if len(cfg.Providers.Git) != 2 {

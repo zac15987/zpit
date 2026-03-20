@@ -22,8 +22,8 @@ func TestBuildWindowsArgs_NewWindow(t *testing.T) {
 }
 
 func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
-	args := BuildWindowsArgs("Test", "/path", "new_tab", []string{"-p", "do something"})
-	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--", "claude -p do something"}
+	args := BuildWindowsArgs("Test", "/path", "new_tab", []string{"--agent", "clarifier"})
+	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--", "claude", "--agent", "clarifier"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -45,14 +45,17 @@ func TestBuildTmuxArgs_NewPane(t *testing.T) {
 	}
 }
 
-func TestBuildClaudeCommand(t *testing.T) {
-	if got := buildClaudeCommand(nil); got != "claude" {
-		t.Errorf("nil args: got %q", got)
+func TestBuildClaudeArgs(t *testing.T) {
+	got := buildClaudeArgs(nil)
+	if len(got) != 1 || got[0] != "claude" {
+		t.Errorf("nil args: got %v", got)
 	}
-	if got := buildClaudeCommand([]string{}); got != "claude" {
-		t.Errorf("empty args: got %q", got)
+	got = buildClaudeArgs([]string{})
+	if len(got) != 1 || got[0] != "claude" {
+		t.Errorf("empty args: got %v", got)
 	}
-	if got := buildClaudeCommand([]string{"-p", "hello"}); got != "claude -p hello" {
-		t.Errorf("with args: got %q", got)
+	got = buildClaudeArgs([]string{"--agent", "clarifier"})
+	if len(got) != 3 || got[0] != "claude" || got[1] != "--agent" || got[2] != "clarifier" {
+		t.Errorf("with args: got %v", got)
 	}
 }

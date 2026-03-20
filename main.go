@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/tui"
 )
+
+//go:embed agents/clarifier.md
+var clarifierAgentMD []byte
 
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
@@ -35,7 +39,7 @@ func main() {
 	}
 
 	p := tea.NewProgram(
-		tui.NewModel(cfg),
+		tui.NewModel(cfg, clarifierAgentMD),
 		tea.WithAltScreen(),
 	)
 
