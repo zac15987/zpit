@@ -35,21 +35,16 @@ type WatcherErrorMsg struct {
 	Err       error
 }
 
-// IssuesLoadedMsg carries the result of a TrackerBridge.ListIssues call.
+// IssuesLoadedMsg carries the result of a TrackerClient.ListIssues call.
 type IssuesLoadedMsg struct {
 	ProjectID string
 	Issues    []tracker.Issue
 	Err       error
 }
 
-// IssueConfirmedMsg carries the result of a ConfirmIssue call.
+// IssueConfirmedMsg carries the result of an UpdateLabels call.
 type IssueConfirmedMsg struct {
 	ProjectID string
 	IssueID   string
 	Err       error
-}
-
-// MCPCheckResultMsg carries MCP availability warnings from startup check.
-type MCPCheckResultMsg struct {
-	Warnings []string
 }

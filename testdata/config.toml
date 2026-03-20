@@ -21,22 +21,22 @@ max_per_project = 5
 type = "forgejo_issues"
 url = "http://leyu88.synology.me:3000"
 
-mcp_server = "gitea"
+token_env = "FORGEJO_TOKEN"
 
 [providers.tracker.github-personal]
 type = "github_issues"
-mcp_server = "github"
+token_env = "GITHUB_TOKEN"
 
 [providers.git.forgejo-leyu]
 type = "forgejo"
 url = "http://leyu88.synology.me:3000"
 
-mcp_server = "gitea"
+token_env = "FORGEJO_TOKEN"
 
 [providers.git.github]
 type = "github"
 
-mcp_server = "github"
+token_env = "GITHUB_TOKEN"
 
 # ──────────────────────────────────────────────
 # Projects

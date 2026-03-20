@@ -68,8 +68,8 @@ type Model struct {
 	activeTerminals    map[string]*ActiveTerminal
 	lastLivenessCheck  time.Time
 
-	// TrackerBridge for [s] status and [y] confirm
-	bridge *tracker.TrackerBridge
+	// TrackerClients for [s] status and [y] confirm (keyed by provider name)
+	clients map[string]tracker.TrackerClient
 
 	// Status view state
 	statusProjectID string
@@ -89,6 +89,16 @@ type Model struct {
 
 // NewModel creates the root TUI model.
 func NewModel(cfg *config.Config, clarifierMD []byte) Model {
+	clients := make(map[string]tracker.TrackerClient)
+	for name, provider := range cfg.Providers.Tracker {
+		client, err := tracker.NewClient(provider.Type, provider.URL, provider.TokenEnv)
+		if err != nil {
+			// Token not set or unsupported type — skip silently.
+			// User will see error when pressing [s] on a project using this provider.
+			continue
+		}
+		clients[name] = client
+	}
 	return Model{
 		cfg:             cfg,
 		env:             platform.Detect(),
@@ -97,13 +107,13 @@ func NewModel(cfg *config.Config, clarifierMD []byte) Model {
 		currentView:     ViewProjects,
 		projects:        cfg.Projects,
 		activeTerminals: make(map[string]*ActiveTerminal),
-		bridge:          tracker.NewBridge(),
+		clients:         clients,
 		clarifierMD:     clarifierMD,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), m.checkMCPCmd())
+	return tickCmd()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -198,11 +208,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case MCPCheckResultMsg:
-		if len(msg.Warnings) > 0 {
-			m.setStatus(msg.Warnings[0])
-		}
-		return m, nil
 	}
 
 	return m, nil
@@ -664,20 +669,20 @@ func (m Model) openTrackerCmd() tea.Cmd {
 	return openInBrowser(url)
 }
 
-// loadIssuesCmd fetches issues from the tracker via TrackerBridge.
+// loadIssuesCmd fetches issues from the tracker via TrackerClient.
 func (m Model) loadIssuesCmd() tea.Cmd {
 	project := m.projects[m.cursor]
-	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	client, ok := m.clients[project.Tracker]
 	if !ok {
 		return func() tea.Msg {
-			return IssuesLoadedMsg{ProjectID: project.ID, Err: fmt.Errorf("tracker provider %q not found", project.Tracker)}
+			return IssuesLoadedMsg{ProjectID: project.ID, Err: fmt.Errorf("tracker %q not configured or token missing", project.Tracker)}
 		}
 	}
-	bridge := m.bridge
+	repo := project.Repo
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		issues, err := bridge.ListIssues(ctx, project, provider)
+		issues, err := client.ListIssues(ctx, repo)
 		return IssuesLoadedMsg{ProjectID: project.ID, Issues: issues, Err: err}
 	}
 }
@@ -697,16 +702,17 @@ func (m Model) confirmIssueCmd() tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	client, ok := m.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
-	bridge := m.bridge
+	repo := project.Repo
+	issueID := issue.ID
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		err := bridge.ConfirmIssue(ctx, *project, provider, issue.ID)
-		return IssueConfirmedMsg{ProjectID: project.ID, IssueID: issue.ID, Err: err}
+		err := client.UpdateLabels(ctx, repo, issueID, []string{"todo"}, []string{"pending"})
+		return IssueConfirmedMsg{ProjectID: project.ID, IssueID: issueID, Err: err}
 	}
 }
 
@@ -749,24 +755,3 @@ func openInBrowser(url string) tea.Cmd {
 	}
 }
 
-// checkMCPCmd verifies MCP server availability on startup.
-func (m Model) checkMCPCmd() tea.Cmd {
-	providers := m.cfg.Providers.Tracker
-	return func() tea.Msg {
-		seen := make(map[string]bool)
-		var warnings []string
-		for key, p := range providers {
-			if p.MCPServer == "" || seen[p.MCPServer] {
-				continue
-			}
-			seen[p.MCPServer] = true
-			available, err := tracker.CheckMCP(p.MCPServer)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("MCP check failed for %q (%s): %s", p.MCPServer, key, err))
-			} else if !available {
-				warnings = append(warnings, fmt.Sprintf("MCP server %q not found — [c]/[s] won't work for %s projects", p.MCPServer, key))
-			}
-		}
-		return MCPCheckResultMsg{Warnings: warnings}
-	}
-}

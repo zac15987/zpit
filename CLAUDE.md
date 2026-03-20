@@ -36,7 +36,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
-- 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests
+- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
 - `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
@@ -94,10 +94,11 @@ internal/
 │   └── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, IssueConfirmedMsg, etc.)
 └── tracker/
     ├── types.go                 # Issue/PR structs + canonical status constants
-    ├── client.go                # TrackerClient interface + NewClient factory
-    ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API
+    ├── client.go                # TrackerClient interface + NewClient factory + MapLabelsToStatus
+    ├── restapi.go               # Shared REST HTTP helper (restClient, doJSON, splitRepo)
+    ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API v1
     ├── github.go                # GitHubClient: GitHub REST API
-    ├── client_test.go           # TrackerClient tests
+    ├── client_test.go           # 14 client tests (httptest mock)
     ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec
     ├── issuespec_test.go        # 12 tests
     ├── urls.go                  # BuildIssueURL + BuildTrackerURL
