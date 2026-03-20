@@ -33,6 +33,15 @@ mkdir -p "$DOCS_DST"
 cp "$DOCS_SRC/code-construction-principles.md" "$DOCS_DST/"
 echo "Docs copied to $DOCS_DST"
 
+# Copy agent definitions
+AGENTS_SRC="$REPO_ROOT/agents"
+AGENTS_DST="$CLAUDE_DIR/agents"
+mkdir -p "$AGENTS_DST"
+if [ -d "$AGENTS_SRC" ]; then
+    cp "$AGENTS_SRC"/*.md "$AGENTS_DST/"
+    echo "Agents copied to $AGENTS_DST"
+fi
+
 # Generate settings.json based on hook_mode
 generate_settings() {
     local mode="$1"

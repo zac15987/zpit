@@ -31,29 +31,26 @@ func LaunchClaude(project config.ProjectConfig, cfg config.TerminalConfig, extra
 	}
 }
 
-// buildClaudeCommand constructs the claude command string with optional extra arguments.
-func buildClaudeCommand(extraArgs []string) string {
-	if len(extraArgs) == 0 {
-		return "claude"
-	}
-	parts := append([]string{"claude"}, extraArgs...)
-	return strings.Join(parts, " ")
+// buildClaudeArgs returns "claude" followed by any extra arguments as separate elements.
+func buildClaudeArgs(extraArgs []string) []string {
+	return append([]string{"claude"}, extraArgs...)
 }
 
 // BuildWindowsArgs constructs wt.exe arguments for testing without exec.
 func BuildWindowsArgs(projectName, projectPath, mode string, extraArgs []string) []string {
-	claudeCmd := buildClaudeCommand(extraArgs)
+	base := []string{}
 	switch mode {
 	case "new_window":
-		return []string{"-w", "new", "-d", projectPath, "--title", projectName, "--", claudeCmd}
+		base = []string{"-w", "new", "-d", projectPath, "--title", projectName, "--"}
 	default: // "new_tab"
-		return []string{"new-tab", "-d", projectPath, "--title", projectName, "--", claudeCmd}
+		base = []string{"new-tab", "-d", projectPath, "--title", projectName, "--"}
 	}
+	return append(base, buildClaudeArgs(extraArgs)...)
 }
 
 // BuildTmuxArgs constructs tmux arguments for testing without exec.
 func BuildTmuxArgs(projectID, projectPath, mode string, extraArgs []string) []string {
-	claudeCmd := buildClaudeCommand(extraArgs)
+	claudeCmd := strings.Join(buildClaudeArgs(extraArgs), " ")
 	switch mode {
 	case "new_pane":
 		return []string{"split-window", "-h", "-c", projectPath, claudeCmd}

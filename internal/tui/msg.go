@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/zac15987/zpit/internal/terminal"
+	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
 )
 
@@ -32,4 +33,23 @@ type TickMsg time.Time
 type WatcherErrorMsg struct {
 	ProjectID string
 	Err       error
+}
+
+// IssuesLoadedMsg carries the result of a TrackerBridge.ListIssues call.
+type IssuesLoadedMsg struct {
+	ProjectID string
+	Issues    []tracker.Issue
+	Err       error
+}
+
+// IssueConfirmedMsg carries the result of a ConfirmIssue call.
+type IssueConfirmedMsg struct {
+	ProjectID string
+	IssueID   string
+	Err       error
+}
+
+// MCPCheckResultMsg carries MCP availability warnings from startup check.
+type MCPCheckResultMsg struct {
+	Warnings []string
 }

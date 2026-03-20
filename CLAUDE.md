@@ -19,7 +19,7 @@ go run .                 # Run (reads ~/.config/zpit/config.toml)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ```
 
-## Current State (M2 Complete)
+## Current State (M3 Complete)
 
 ### What works now
 - TUI project list with ↑↓ navigation and profile icons
@@ -35,29 +35,35 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Notification cooldown (re_remind_minutes, per-project)
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - 3 PreToolUse hook scripts with 29 tests
-- Hook deployment script (`scripts/setup-hooks.sh`)
+- Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
+- TrackerBridge: `claude -p` + MCP 統一橋接層（sonnet, $1.00 budget）
+- Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
+- `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
+- `[s]` Status: readonly issue list via TrackerBridge + `[y]` confirm (pending→todo) + `[p]` open in browser
+- `[p]` Open Tracker: opens project issue tracker in browser
+- MCP availability check on startup (warns if MCP server not found)
+- Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
+- 28 tracker tests + 22 watcher tests + 6 notify tests
 
 ### What's stubbed (shows "coming in MX" message)
-- `[c]` Clarify → M3
 - `[l]` Loop → M4
 - `[r]` Review → M4
-- `[s]` Status → M3
-- `[p]` Open Tracker → M3
 - `[a]` Add Project → M5
 - `[e]` Edit Config → M5
 - `[?]` Help → TBD
 
 ### What's not implemented yet
-- Tracker Provider API clients (M3)
-- Issue Spec validation/parsing (M3)
 - Worktree Manager (M4)
 - Loop engine (M4)
 - Agent prompt assembly (M4)
+- Coding/Reviewer agent templates (M4)
 
 ## Package Structure
 
 ```
-main.go                          # Entry point: load config → run Bubble Tea
+main.go                          # Entry point: load config, embed agents, run Bubble Tea
+agents/
+└── clarifier.md                 # Clarifier agent template (go:embed → auto-deploy)
 internal/
 ├── config/config.go             # Config structs + Load() + defaults
 ├── platform/detect.go           # Environment detection + ResolvePath()
@@ -72,27 +78,35 @@ internal/
 │   ├── watcher.go               # Watcher: fsnotify tail + WatchOnce()
 │   ├── process_windows.go       # PID liveness check (Windows tasklist)
 │   ├── process_unix.go          # PID liveness check (Unix signal 0)
-│   └── watcher_test.go          # 22 tests: encode, parse, session discovery, state, liveness
+│   └── watcher_test.go          # 22 tests
 ├── notify/
 │   ├── notify.go                # Notifier: cooldown logic + dispatch
 │   ├── toast_windows.go         # Windows Toast via PowerShell
 │   ├── toast_unix.go            # no-op on non-Windows
 │   ├── sound_windows.go         # SystemSounds.Asterisk via PowerShell
 │   ├── sound_unix.go            # paplay/aplay fallback
-│   └── notify_test.go           # 6 tests: cooldown, reset, config respect
+│   └── notify_test.go           # 6 tests
 ├── tui/
-│   ├── model.go                 # Root Bubble Tea model, Update, watcher lifecycle, liveness check
-│   ├── keymap.go                # Key bindings
+│   ├── model.go                 # Root Bubble Tea model, Update, key routing, confirm dialog (huh)
+│   ├── keymap.go                # Key bindings (incl. Back, Confirm)
 │   ├── styles.go                # Lip Gloss styles with named color constants
 │   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals
-│   └── msg.go                   # Custom tea.Msg types (AgentEventMsg, TickMsg, etc.)
-└── tracker/types.go             # IssueTracker + GitHost interfaces (stubs)
+│   ├── view_status.go           # Status sub-view: issue list + [y] confirm + [p] browser
+│   └── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, IssueConfirmedMsg, etc.)
+└── tracker/
+    ├── types.go                 # Issue/PR structs + canonical status constants
+    ├── bridge.go                # TrackerBridge: claude -p + MCP 統一橋接
+    ├── bridge_test.go           # 11 tests (mock exec)
+    ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec
+    ├── issuespec_test.go        # 12 tests
+    ├── urls.go                  # BuildIssueURL + BuildTrackerURL
+    └── urls_test.go             # 6 tests
 hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands
 ├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
-└── hooks_test.go                # Go tests shelling out to each hook
-scripts/setup-hooks.sh           # Deploy hooks + docs to a project's .claude/
+└── hooks_test.go                # Go tests shelling out to each hook (29 tests)
+scripts/setup-hooks.sh           # Deploy hooks + docs + agents to a project's .claude/
 testdata/
 ├── config.toml                  # Real project config used for tests + manual TUI testing
 ├── config_minimal.toml          # Minimal config for defaults testing
@@ -116,21 +130,20 @@ The TUI monitors Claude Code sessions via their JSONL log files:
 5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
 6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
 
-### Provider Abstraction
+### TrackerBridge (M3)
 
-Two key interfaces drive extensibility:
+Zpit 不直接實作各 tracker 的 HTTP API client。改用 `claude -p`（headless 模式）+ MCP tools 作為統一橋接層：
 
-```go
-type IssueTracker interface {
-    ListIssues, GetIssue, CreateIssue, UpdateStatus, AddComment
-}
-
-type GitHost interface {
-    CreatePR, GetPRStatus
-}
+```
+Zpit (Go) → claude -p --model sonnet --output-format json --json-schema ...
+                → MCP → gitea/github/plane/linear server
 ```
 
-Each project in `config.toml` references a tracker and git provider by key. Providers are defined under `[providers.tracker.*]` and `[providers.git.*]`.
+- `--json-schema` constrained decoding 確保結構化輸出可靠
+- 新增 tracker 只需安裝 MCP server + config 加入 `mcp_server` 欄位
+- Config 中 `providers.tracker.*.mcp_server` 對應 `claude mcp add` 的 server name
+- Clarifier agent 在終端中直接透過 MCP 推 issue（使用者確認後）
+- TUI `[s]` status 透過 TrackerBridge 拉 issue 列表，`[y]` 改狀態
 
 ### Hook-Based Safety System (5 Layers)
 
@@ -148,6 +161,8 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 ## Config Location
 
 `~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
+
+Provider entries include `mcp_server` field mapping to the MCP server name (e.g. `mcp_server = "gitea"` → tools prefixed `mcp__gitea__*`).
 
 ## Conventions
 

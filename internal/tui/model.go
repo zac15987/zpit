@@ -1,18 +1,23 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/charmbracelet/huh"
+
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/notify"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/terminal"
+	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
 )
 
@@ -28,7 +33,7 @@ type View int
 
 const (
 	ViewProjects View = iota
-	// Future: ViewStatus, ViewLoop, ViewHelp
+	ViewStatus
 )
 
 // ActiveTerminal tracks a launched terminal and its agent state.
@@ -62,10 +67,28 @@ type Model struct {
 	// Active terminals
 	activeTerminals    map[string]*ActiveTerminal
 	lastLivenessCheck  time.Time
+
+	// TrackerBridge for [s] status and [y] confirm
+	bridge *tracker.TrackerBridge
+
+	// Status view state
+	statusProjectID string
+	statusIssues    []tracker.Issue
+	statusCursor    int
+	statusLoading   bool
+	statusError     string
+
+	// Confirm dialog (huh)
+	confirmForm   *huh.Form
+	confirmResult *bool          // heap-allocated: shared across Bubble Tea value copies
+	confirmAction func() tea.Cmd
+
+	// Embedded agent template
+	clarifierMD []byte
 }
 
 // NewModel creates the root TUI model.
-func NewModel(cfg *config.Config) Model {
+func NewModel(cfg *config.Config, clarifierMD []byte) Model {
 	return Model{
 		cfg:             cfg,
 		env:             platform.Detect(),
@@ -74,14 +97,41 @@ func NewModel(cfg *config.Config) Model {
 		currentView:     ViewProjects,
 		projects:        cfg.Projects,
 		activeTerminals: make(map[string]*ActiveTerminal),
+		bridge:          tracker.NewBridge(),
+		clarifierMD:     clarifierMD,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tickCmd()
+	return tea.Batch(tickCmd(), m.checkMCPCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// If confirm dialog is active, route messages to it (but keep tick alive).
+	if m.confirmForm != nil {
+		// Let tick through so the UI stays responsive after confirm closes.
+		if _, ok := msg.(TickMsg); ok {
+			m.checkSessionLiveness()
+			return m, tickCmd()
+		}
+		form, cmd := m.confirmForm.Update(msg)
+		if f, ok := form.(*huh.Form); ok {
+			m.confirmForm = f
+		}
+		if m.confirmForm.State == huh.StateCompleted {
+			action := m.confirmAction
+			confirmed := m.confirmResult != nil && *m.confirmResult
+			m.confirmForm = nil
+			m.confirmAction = nil
+			m.confirmResult = nil
+			if confirmed && action != nil {
+				return m, action()
+			}
+			return m, nil
+		}
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -122,15 +172,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StatusMsg:
 		m.setStatus(msg.Text)
 		return m, nil
+
+	case IssuesLoadedMsg:
+		if msg.ProjectID == m.statusProjectID {
+			m.statusLoading = false
+			if msg.Err != nil {
+				m.statusError = msg.Err.Error()
+			} else {
+				m.statusIssues = msg.Issues
+			}
+		}
+		return m, nil
+
+	case IssueConfirmedMsg:
+		if msg.Err != nil {
+			m.setStatus(fmt.Sprintf("Confirm failed: %s", msg.Err))
+		} else {
+			m.setStatus(fmt.Sprintf("Issue #%s confirmed → todo", msg.IssueID))
+			for i, issue := range m.statusIssues {
+				if issue.ID == msg.IssueID {
+					m.statusIssues[i].Status = tracker.StatusTodo
+					break
+				}
+			}
+		}
+		return m, nil
+
+	case MCPCheckResultMsg:
+		if len(msg.Warnings) > 0 {
+			m.setStatus(msg.Warnings[0])
+		}
+		return m, nil
 	}
 
 	return m, nil
 }
 
 func (m Model) View() string {
+	if m.confirmForm != nil {
+		return m.confirmForm.View()
+	}
 	switch m.currentView {
 	case ViewProjects:
 		return m.viewProjects()
+	case ViewStatus:
+		return m.viewStatus()
 	default:
 		return "Unknown view"
 	}
@@ -142,16 +228,33 @@ func (m *Model) setStatus(text string) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Global keys
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		// Stop all watchers on quit.
+		if m.currentView != ViewProjects {
+			m.currentView = ViewProjects
+			return m, nil
+		}
 		for _, at := range m.activeTerminals {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
 		}
 		return m, tea.Quit
+	}
 
+	// View-specific keys
+	switch m.currentView {
+	case ViewProjects:
+		return m.handleProjectsKey(msg)
+	case ViewStatus:
+		return m.handleStatusKey(msg)
+	}
+	return m, nil
+}
+
+func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
 	case key.Matches(msg, m.keys.Up):
 		if m.cursor > 0 {
 			m.cursor--
@@ -169,10 +272,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openFolderCmd()
 
 	case key.Matches(msg, m.keys.Tracker):
-		m.setStatus("[p] Open Tracker — coming in M3")
+		return m, m.openTrackerCmd()
 
 	case key.Matches(msg, m.keys.Clarify):
-		m.setStatus("[c] Clarify — coming in M3")
+		project := m.projects[m.cursor]
+		if project.Tracker == "" {
+			m.setStatus("No tracker configured for this project")
+			return m, nil
+		}
+		agentPath := filepath.Join(
+			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+			".claude", "agents", "clarifier.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			// Agent not deployed — show confirm dialog
+			m.showDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchClarifierCmd()
 
 	case key.Matches(msg, m.keys.Loop):
 		m.setStatus("[l] Loop — coming in M4")
@@ -181,7 +298,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus("[r] Review — coming in M4")
 
 	case key.Matches(msg, m.keys.Status):
-		m.setStatus("[s] Status — coming in M3")
+		project := m.projects[m.cursor]
+		if project.Tracker == "" {
+			m.setStatus("No tracker configured for this project")
+			return m, nil
+		}
+		m.currentView = ViewStatus
+		m.statusProjectID = project.ID
+		m.statusIssues = nil
+		m.statusCursor = 0
+		m.statusLoading = true
+		m.statusError = ""
+		return m, m.loadIssuesCmd()
 
 	case key.Matches(msg, m.keys.Add):
 		m.setStatus("[a] Add Project — coming in M5")
@@ -191,6 +319,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Help):
 		m.setStatus("[?] Help — coming soon")
+	}
+
+	return m, nil
+}
+
+func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.currentView = ViewProjects
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		if m.statusCursor > 0 {
+			m.statusCursor--
+		}
+
+	case key.Matches(msg, m.keys.Down):
+		if m.statusCursor < len(m.statusIssues)-1 {
+			m.statusCursor++
+		}
+
+	case key.Matches(msg, m.keys.Confirm):
+		return m, m.confirmIssueCmd()
+
+	case key.Matches(msg, m.keys.Tracker):
+		return m, m.openIssueURLCmd()
 	}
 
 	return m, nil
@@ -429,5 +583,190 @@ func watchNextCmd(projectID string, w *watcher.Watcher) tea.Cmd {
 			return nil
 		}
 		return AgentEventMsg{ProjectID: projectID, Events: events}
+	}
+}
+
+// launchClarifierCmd opens a new terminal with claude --agent clarifier.
+func (m Model) launchClarifierCmd() tea.Cmd {
+	project := m.projects[m.cursor]
+	cfg := m.cfg.Terminal
+	return func() tea.Msg {
+		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
+		return LaunchResultMsg{
+			ProjectID: project.ID,
+			Result:    result,
+			Err:       err,
+		}
+	}
+}
+
+// showDeployConfirm displays a huh confirm dialog for deploying the clarifier agent.
+func (m *Model) showDeployConfirm() {
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Clarifier agent 未部署至此專案，是否部署？").
+				Affirmative("部署並啟動").
+				Negative("取消").
+				Value(confirmed),
+		),
+	)
+	m.confirmAction = func() tea.Cmd {
+		return m.deployAndLaunchClarifier()
+	}
+}
+
+// deployAndLaunchClarifier deploys clarifier.md to the project and launches it.
+func (m Model) deployAndLaunchClarifier() tea.Cmd {
+	project := m.projects[m.cursor]
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	clarifierMD := m.clarifierMD
+	cfg := m.cfg.Terminal
+
+	return func() tea.Msg {
+		// Deploy: create .claude/agents/ and write clarifier.md
+		agentDir := filepath.Join(projectPath, ".claude", "agents")
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+		agentPath := filepath.Join(agentDir, "clarifier.md")
+		if err := os.WriteFile(agentPath, clarifierMD, 0o644); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+
+		// Launch
+		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
+		return LaunchResultMsg{
+			ProjectID: project.ID,
+			Result:    result,
+			Err:       err,
+		}
+	}
+}
+
+// openTrackerCmd opens the project's issue tracker in the browser.
+func (m Model) openTrackerCmd() tea.Cmd {
+	project := m.projects[m.cursor]
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return func() tea.Msg {
+			return StatusMsg{Text: "No tracker configured for this project"}
+		}
+	}
+	url := tracker.BuildTrackerURL(provider, project.Repo)
+	if url == "" {
+		return func() tea.Msg {
+			return StatusMsg{Text: fmt.Sprintf("Unknown tracker type: %s", provider.Type)}
+		}
+	}
+	return openInBrowser(url)
+}
+
+// loadIssuesCmd fetches issues from the tracker via TrackerBridge.
+func (m Model) loadIssuesCmd() tea.Cmd {
+	project := m.projects[m.cursor]
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return func() tea.Msg {
+			return IssuesLoadedMsg{ProjectID: project.ID, Err: fmt.Errorf("tracker provider %q not found", project.Tracker)}
+		}
+	}
+	bridge := m.bridge
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		issues, err := bridge.ListIssues(ctx, project, provider)
+		return IssuesLoadedMsg{ProjectID: project.ID, Issues: issues, Err: err}
+	}
+}
+
+// confirmIssueCmd changes the selected issue from pending_confirm to todo.
+func (m Model) confirmIssueCmd() tea.Cmd {
+	if m.statusCursor >= len(m.statusIssues) {
+		return nil
+	}
+	issue := m.statusIssues[m.statusCursor]
+	if issue.Status != tracker.StatusPendingConfirm {
+		return func() tea.Msg {
+			return StatusMsg{Text: fmt.Sprintf("Issue #%s is %s, not pending_confirm", issue.ID, issue.Status)}
+		}
+	}
+	project := m.findProject(m.statusProjectID)
+	if project == nil {
+		return nil
+	}
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return nil
+	}
+	bridge := m.bridge
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := bridge.ConfirmIssue(ctx, *project, provider, issue.ID)
+		return IssueConfirmedMsg{ProjectID: project.ID, IssueID: issue.ID, Err: err}
+	}
+}
+
+// openIssueURLCmd opens the selected issue in the browser.
+func (m Model) openIssueURLCmd() tea.Cmd {
+	if m.statusCursor >= len(m.statusIssues) {
+		return nil
+	}
+	issue := m.statusIssues[m.statusCursor]
+	project := m.findProject(m.statusProjectID)
+	if project == nil {
+		return nil
+	}
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return nil
+	}
+	url := tracker.BuildIssueURL(provider, project.Repo, issue.ID)
+	if url == "" {
+		return func() tea.Msg {
+			return StatusMsg{Text: "Cannot build URL for this tracker type"}
+		}
+	}
+	return openInBrowser(url)
+}
+
+// openInBrowser opens a URL in the default browser.
+func openInBrowser(url string) tea.Cmd {
+	return func() tea.Msg {
+		var cmd *exec.Cmd
+		if platform.IsWindows() {
+			cmd = exec.Command("cmd", "/c", "start", url)
+		} else {
+			cmd = exec.Command("xdg-open", url)
+		}
+		if err := cmd.Start(); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Failed to open: %s", err)}
+		}
+		return StatusMsg{Text: fmt.Sprintf("Opened %s", url)}
+	}
+}
+
+// checkMCPCmd verifies MCP server availability on startup.
+func (m Model) checkMCPCmd() tea.Cmd {
+	providers := m.cfg.Providers.Tracker
+	return func() tea.Msg {
+		seen := make(map[string]bool)
+		var warnings []string
+		for key, p := range providers {
+			if p.MCPServer == "" || seen[p.MCPServer] {
+				continue
+			}
+			seen[p.MCPServer] = true
+			available, err := tracker.CheckMCP(p.MCPServer)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("MCP check failed for %q (%s): %s", p.MCPServer, key, err))
+			} else if !available {
+				warnings = append(warnings, fmt.Sprintf("MCP server %q not found — [c]/[s] won't work for %s projects", p.MCPServer, key))
+			}
+		}
+		return MCPCheckResultMsg{Warnings: warnings}
 	}
 }

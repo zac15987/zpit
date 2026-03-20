@@ -19,20 +19,24 @@ max_per_project = 5
 
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
-url = "https://leyu88.synology.me"
-api_key_env = "FORGEJO_TOKEN"
+url = "http://leyu88.synology.me:3000"
+
+mcp_server = "gitea"
 
 [providers.tracker.github-personal]
 type = "github_issues"
+mcp_server = "github"
 
 [providers.git.forgejo-leyu]
 type = "forgejo"
-url = "https://leyu88.synology.me"
-api_key_env = "FORGEJO_TOKEN"
+url = "http://leyu88.synology.me:3000"
+
+mcp_server = "gitea"
 
 [providers.git.github]
 type = "github"
-api_key_env = "GITHUB_TOKEN"
+
+mcp_server = "github"
 
 # ──────────────────────────────────────────────
 # Projects

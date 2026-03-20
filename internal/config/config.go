@@ -54,7 +54,7 @@ type ProvidersConfig struct {
 type ProviderEntry struct {
 	Type      string `toml:"type"`
 	URL       string `toml:"url"`
-	APIKeyEnv string `toml:"api_key_env"`
+	MCPServer string `toml:"mcp_server"`
 }
 
 type ProjectConfig struct {

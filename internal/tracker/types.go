@@ -27,15 +27,6 @@ type NewIssue struct {
 	Labels   []string
 }
 
-// IssueTracker is the abstract interface for all issue tracker providers.
-type IssueTracker interface {
-	ListIssues(project string, status string) ([]Issue, error)
-	GetIssue(project string, id string) (*Issue, error)
-	CreateIssue(project string, issue NewIssue) (*Issue, error)
-	UpdateStatus(project string, id string, status string) error
-	AddComment(project string, id string, comment string) error
-}
-
 type PR struct {
 	ID    string
 	URL   string
@@ -53,10 +44,4 @@ type PRStatus struct {
 	ID    string
 	State string // "open", "merged", "closed"
 	URL   string
-}
-
-// GitHost is the abstract interface for all git hosting providers.
-type GitHost interface {
-	CreatePR(repo string, pr NewPR) (*PR, error)
-	GetPRStatus(repo string, id string) (*PRStatus, error)
 }
