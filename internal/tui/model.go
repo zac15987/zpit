@@ -137,6 +137,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Status):
 		m.setStatus("[s] Status — coming in M3")
 
+	case key.Matches(msg, m.keys.Add):
+		m.setStatus("[a] Add Project — coming in M5")
+
+	case key.Matches(msg, m.keys.EditConfig):
+		m.setStatus("[e] Edit Config — coming in M5")
+
 	case key.Matches(msg, m.keys.Help):
 		m.setStatus("[?] Help — coming soon")
 	}

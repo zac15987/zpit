@@ -123,6 +123,8 @@ func (m Model) renderHotkeys() string {
 		{"s", "Status overview", false},
 		{"o", "Open project folder", false},
 		{"p", "Open Issue Tracker", false},
+		{"a", "Add project", true},
+		{"e", "Edit config", false},
 		{"?", "Help", true},
 		{"q", "Quit", false},
 	}
