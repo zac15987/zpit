@@ -48,8 +48,10 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - `[?]` Help → TBD
 
 ### What's not implemented yet
-- Tracker Provider API clients (M3)
+- TrackerBridge: claude -p + MCP 統一橋接層 (M3)
 - Issue Spec validation/parsing (M3)
+- Clarifier agent template (M3)
+- TUI [c] clarify + [s] status (M3)
 - Worktree Manager (M4)
 - Loop engine (M4)
 - Agent prompt assembly (M4)
@@ -86,7 +88,9 @@ internal/
 │   ├── styles.go                # Lip Gloss styles with named color constants
 │   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals
 │   └── msg.go                   # Custom tea.Msg types (AgentEventMsg, TickMsg, etc.)
-└── tracker/types.go             # IssueTracker + GitHost interfaces (stubs)
+└── tracker/
+    ├── types.go                 # Issue/PR structs + canonical status constants
+    └── bridge.go                # TrackerBridge: claude -p + MCP 統一橋接 (M3)
 hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands
@@ -116,21 +120,20 @@ The TUI monitors Claude Code sessions via their JSONL log files:
 5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
 6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
 
-### Provider Abstraction
+### TrackerBridge (M3)
 
-Two key interfaces drive extensibility:
+Zpit 不直接實作各 tracker 的 HTTP API client。改用 `claude -p`（headless 模式）+ MCP tools 作為統一橋接層：
 
-```go
-type IssueTracker interface {
-    ListIssues, GetIssue, CreateIssue, UpdateStatus, AddComment
-}
-
-type GitHost interface {
-    CreatePR, GetPRStatus
-}
+```
+Zpit (Go) → claude -p --model haiku --output-format json --json-schema ...
+                → MCP → gitea/github/plane/linear server
 ```
 
-Each project in `config.toml` references a tracker and git provider by key. Providers are defined under `[providers.tracker.*]` and `[providers.git.*]`.
+- `--json-schema` constrained decoding 確保結構化輸出可靠
+- 新增 tracker 只需安裝 MCP server + config 加入 `mcp_server` 欄位
+- Config 中 `providers.tracker.*.mcp_server` 對應 `claude mcp add` 的 server name
+- Clarifier agent 在終端中直接透過 MCP 推 issue（使用者確認後）
+- TUI `[s]` status 透過 TrackerBridge 拉 issue 列表，`[y]` 改狀態
 
 ### Hook-Based Safety System (5 Layers)
 
@@ -148,6 +151,8 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 ## Config Location
 
 `~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
+
+Provider entries include `mcp_server` field mapping to the MCP server name (e.g. `mcp_server = "gitea"` → tools prefixed `mcp__gitea__*`).
 
 ## Conventions
 

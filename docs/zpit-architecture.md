@@ -519,6 +519,7 @@ type = "github_issues"
 type = "forgejo_issues"
 url = "https://git.nas.local"
 api_key_env = "FORGEJO_TOKEN"
+mcp_server = "gitea"              # 對應 claude mcp add 的 server name
 
 # ──────────────────────────────────────────────
 # Git Host Providers
@@ -528,10 +529,12 @@ api_key_env = "FORGEJO_TOKEN"
 type = "forgejo"
 url = "https://git.nas.local"
 api_key_env = "FORGEJO_TOKEN"
+mcp_server = "gitea"              # 同一個 MCP server 同時提供 issue + git 操作
 
 [providers.git.github]
 type = "github"
 api_key_env = "GITHUB_TOKEN"
+mcp_server = "github"             # github MCP server
 
 # ──────────────────────────────────────────────
 # 專案定義
@@ -606,31 +609,116 @@ windows = "D:/Projects/MonitorApp"
 wsl = "/mnt/d/Projects/MonitorApp"
 ```
 
-### 4.1 Provider 抽象層
+### 4.1 Provider 抽象層 — TrackerBridge（claude -p + MCP）
 
-Core Engine 中的 Issue Tracker 和 Git Host 透過 interface 抽象，
-每個 provider 實作同一組操作：
+**核心設計決策：Zpit 不直接實作各 tracker 的 HTTP API client。**
+改用 `claude -p`（headless 模式）搭配 MCP tools，讓 Claude Code 作為 tracker 的統一橋接層。
+
+```
+Zpit (Go)
+  └─ TrackerBridge
+       │  exec: claude -p --model haiku --output-format json --json-schema ...
+       │        --allowedTools "mcp__<server>__*" --max-budget-usd 0.10
+       │        --no-session-persistence
+       │
+       ├──MCP──▸ gitea MCP server    (Forgejo)
+       ├──MCP──▸ github MCP server   (GitHub Issues)
+       ├──MCP──▸ plane MCP server    (未來)
+       └──MCP──▸ linear MCP server   (未來)
+```
+
+**為什麼不直接寫 Go HTTP client？**
+- 4 種 tracker × 5+ API method = 大量重複的 HTTP client 程式碼
+- MCP 生態已有各 tracker 的 server，白白不用太浪費
+- 新增 tracker 只需安裝 MCP server + config，Zpit 零改動
+- `--json-schema` 提供 constrained decoding，結構化輸出可靠度極高
+
+**前提條件：**
+- 使用者已安裝對應 tracker 的 MCP server（`claude mcp add`）
+- Config 中的 tracker type 對應到 MCP server name（見下方 mapping）
+
+#### TrackerBridge 設計（Go 虛擬碼）
 
 ```go
-// Issue Tracker interface — 所有 tracker 都實作這個
-type IssueTracker interface {
-    // 查詢
-    ListIssues(project string, status string) ([]Issue, error)
-    GetIssue(project string, id string) (*Issue, error)
-
-    // 建立與更新
-    CreateIssue(project string, issue NewIssue) (*Issue, error)
-    UpdateStatus(project string, id string, status string) error
-    AddComment(project string, id string, comment string) error
+// TrackerBridge 透過 claude -p + MCP 與任意 tracker 互動。
+// 一份實作處理所有 tracker type — 差異只在 prompt 和 MCP tool name。
+type TrackerBridge struct {
+    Model       string // "haiku" (default)
+    MaxBudget   string // "0.10" (default)
 }
 
-// Git Host interface — 所有 git host 都實作這個
-type GitHost interface {
-    CreatePR(repo string, pr NewPR) (*PR, error)
-    GetPRStatus(repo string, id string) (*PRStatus, error)
+// ListIssues 呼叫 claude -p 取得 issue 列表。
+func (b *TrackerBridge) ListIssues(project ProjectConfig) ([]Issue, error) {
+    schema := issueListSchema // JSON Schema for structured output
+    allowedTools := mcpToolsFor(project.Tracker) // e.g. "mcp__gitea__list_issues"
+
+    prompt := fmt.Sprintf(
+        "List all open issues from repository %s. Return every issue.",
+        project.Repo,
+    )
+
+    result, err := b.execClaude(prompt, schema, allowedTools)
+    // parse result.StructuredOutput into []Issue
 }
 
-// 統一的 Issue 狀態（內部使用，各 provider 自行對應）
+// ConfirmIssue 將 issue 從 pending_confirm 改為 todo。
+func (b *TrackerBridge) ConfirmIssue(project ProjectConfig, issueID string) error {
+    // 根據 tracker type 組合對應的 prompt + MCP tool
+    // Forgejo/GitHub: 改 label (pending → todo)
+    // Plane: 改 status column
+}
+
+// mcpToolsFor 根據 config 中的 tracker key 回傳對應的 MCP tool pattern。
+func mcpToolsFor(trackerKey string) string {
+    // 從 config 查找 tracker type，對應到 MCP server name
+    // forgejo_issues → "mcp__gitea__issue_read mcp__gitea__issue_write mcp__gitea__label_read mcp__gitea__label_write"
+    // github_issues  → "mcp__github__list_issues mcp__github__create_issue ..."
+}
+```
+
+#### claude -p 呼叫範例
+
+```bash
+# 列出 issues（結構化輸出）
+echo "List open issues from Leyu-LGBT/AI_Inspection_Cleaning_Demo" | \
+  claude -p --model haiku --output-format json \
+  --json-schema '{"type":"object","properties":{"issues":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"title":{"type":"string"},"state":{"type":"string"},"labels":{"type":"array","items":{"type":"string"}}},"required":["number","title","state"]}}},"required":["issues"]}' \
+  --allowedTools "mcp__gitea__list_issues" \
+  --max-budget-usd 0.10 --no-session-persistence
+
+# 回傳 structured_output:
+# {"issues": [{"number": 4, "title": "PluginConfig ...", "state": "open", "labels": []}]}
+```
+
+#### Tracker Type → MCP Server 對應
+
+```
+Config tracker type    MCP server name    MCP tools prefix
+───────────────────────────────────────────────────────────
+forgejo_issues         gitea              mcp__gitea__issue_*, mcp__gitea__label_*
+github_issues          github             mcp__github__list_issues, mcp__github__create_issue, ...
+plane                  plane              mcp__plane__* (未來)
+linear                 linear             mcp__linear__* (未來)
+```
+
+Zpit 啟動時檢查 `claude mcp list` 輸出，驗證所需 MCP server 是否可用。
+不可用時在 TUI 顯示警告，不 crash。
+
+#### 效能與成本
+
+| 指標 | 實測值 |
+|------|--------|
+| 延遲 | 首次 ~12s（cache creation），後續 ~3-5s |
+| 成本 | Haiku ~$0.003-0.06/次 |
+| 可靠度 | `--json-schema` constrained decoding，schema 違反率極低 |
+
+對 `[s]` status 列表和 `[y]` 確認這類低頻操作，延遲和成本都可接受。
+
+---
+
+**統一的 Issue 狀態（內部使用，各 tracker 透過 prompt 指示 MCP 對應）：**
+
+```go
 const (
     StatusPendingConfirm = "pending_confirm"  // 待確認
     StatusTodo           = "todo"
@@ -642,7 +730,7 @@ const (
 )
 ```
 
-各 provider 的狀態對應：
+各 tracker 的狀態對應（寫進 TrackerBridge 的 prompt 中）：
 
 ```
 內部狀態            Plane          Linear         GitHub Issues    Forgejo Issues
@@ -656,11 +744,8 @@ needs_verify        待實體驗證      Done(blocked)  label:verify     label:v
 done                Done            Done           closed           closed
 ```
 
-這樣你可以：
-- 公司機台專案用 Plane（self-hosted，資料留在 NAS）
-- 個人專案用 GitHub Issues（簡單、免費）
-- 如果之後評估改用 Linear，只要在 yaml 裡換 provider 就好
-- 甚至同時混用 — 每個專案獨立選擇
+每個專案獨立選擇 tracker — 公司機台用 Forgejo/Plane（self-hosted），個人專案用 GitHub Issues。
+新增 tracker 只需：安裝 MCP server → config 加入對應 type → 完成。
 
 ---
 
@@ -846,9 +931,12 @@ AC-6: 需機台驗證：拔除 EtherCAT 線模擬斷線，觀察 retry 行為和
 **格式執行規則：**
 - Clarifier 產出的 issue body 必須包含所有必填 section
 - Section 標題用 `## SECTION_NAME`（全大寫英文），不允許改名或翻譯
-- Zpit 在 Clarifier 推上 Tracker 前，自動驗證格式完整性
-  （檢查所有必填 `##` 標記是否存在）
-- 如果缺少任何必填 section，Zpit 拒絕推上並提示 Clarifier 補完
+- Clarifier 在推上 Tracker 前，必須先自我驗證格式完整性
+  （檢查所有必填 `##` 標記是否存在，此規則寫在 agent prompt 中）
+- Clarifier 透過 MCP tools 直接推上 Tracker，推送前必須先讓使用者在終端中確認內容
+- Zpit 的 `[s]` status 畫面從 Tracker 拉取 issue，可再次驗證格式
+- Issue Spec 驗證模組（`ValidateIssueSpec` / `ParseIssueSpec`）同時用於：
+  Zpit 的 status 畫面顯示 + M4 Loop 引擎讀取 issue 時的格式檢查
 
 ### 6.4 Zpit 的 Issue Spec 驗證（Go 虛擬碼）
 
@@ -1032,6 +1120,7 @@ disallowedTools: Write, Edit
 你是需求釐清與技術顧問。你的工作是：
 1. 把使用者模糊的需求轉化為結構清晰的 issue
 2. 主動提出技術方案建議，分析利弊，幫使用者做出最佳決策
+3. 使用者確認後，透過 MCP tools 將 issue 推上 Tracker
 
 ## 流程
 
@@ -1046,7 +1135,11 @@ disallowedTools: Write, Edit
 5. 使用者回答後，如果還有不清楚的，繼續問
 6. **反覆確認直到使用者明確說「可以」或「OK」**
 7. 產出結構化 issue（包含最終選定的方案）
-8. **issue 推上 Tracker 時狀態為「待確認」，不是「Todo」**
+8. 自我驗證 Issue Spec 格式：檢查所有必填 section（## CONTEXT, ## APPROACH,
+   ## ACCEPTANCE_CRITERIA, ## SCOPE, ## CONSTRAINTS）是否都存在
+9. **向使用者展示完整 issue 內容，等待使用者明確說「推」或「push」**
+10. 透過 MCP tools 推上 Tracker，狀態設為「待確認」（label: pending）
+11. 推送成功後告知使用者 issue URL
 
 ## 技術評估規則
 
@@ -2026,12 +2119,13 @@ echo $?   # 應該是 2
 - [x] 音效提示
 
 ### M3: Clarifier + Tracker 串接（3-5 天）
-- [ ] Issue Tracker 部署（Plane/Linear/GitHub/Forgejo 擇一）
-- [ ] Tracker Provider 實作（先做一個，其他後續擴充）
+- [ ] TrackerBridge 模組：claude -p + MCP 統一橋接層（先以 Forgejo 驗證）
+- [ ] MCP 可用性檢查：啟動時偵測所需 MCP server 是否已安裝
 - [ ] Issue Spec 格式驗證模組（ValidateIssueSpec + ParseIssueSpec）
-- [ ] Clarifier agent 定義 + 測試（確認產出符合 §6.2 格式）
-- [ ] TUI 加入 [c] clarify 和 [s] status 功能
-- [ ] 「待確認」→「Todo」確認流程
+- [ ] Clarifier agent 定義（.claude/agents/clarifier.md 模板）
+- [ ] TUI [c] clarify：開新終端啟動 claude --agent clarifier
+- [ ] TUI [s] status：唯讀 issue 列表（透過 TrackerBridge 拉取）+ [y] 確認 + [p] 開瀏覽器
+- [ ] 「待確認」→「Todo」確認流程（[y] 透過 TrackerBridge 改狀態）
 - [ ] 專案 CLAUDE.md 模板 + 第一個專案實際填寫
 
 ### M4: 自動化 Loop + Worktree（1 週）
