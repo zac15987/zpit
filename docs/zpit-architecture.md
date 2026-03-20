@@ -316,7 +316,11 @@ TUI 透過 tail session log 即時顯示 agent 正在做什麼。
 │  └─────────────────────────────────────┘            │               │
 │                                                     │               │
 │  Claude Code session logs ◂─────────────────────────┘               │
-│  ~/.claude/projects/<hash>/sessions/*.jsonl                         │
+│  ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl                │
+│                                                                     │
+│  <encoded-cwd> = 專案絕對路徑編碼（非英數字元替換為 -）             │
+│  例: D:\Documents\MyProjects\zpit → D--Documents-MyProjects-zpit    │
+│  Session log 直接存在此目錄下，不在 sessions/ 子目錄                 │
 │                                                                     │
 │  每個專案的 repo:                                                    │
 │  ├── .claude/agents/clarifier.md                                    │
@@ -389,8 +393,30 @@ func LaunchClaude(project Project, config Config) {
 
 ### 3.2 Session Log Watcher 模組
 
-Claude Code 的每次 session 會產生 log 檔。TUI 透過監控這些檔案
+Claude Code 的每次 session 會產生 JSONL log 檔。TUI 透過監控這些檔案
 即時更新狀態，不需要跟 Claude Code 直接通訊。
+
+**路徑編碼規則：** 專案絕對路徑中所有非英數字元替換為 `-`，作為目錄名。
+例如 `D:\Documents\MyProjects\zpit` → `~/.claude/projects/D--Documents-MyProjects-zpit/`
+
+**Session 發現機制：**
+- 活躍 session：讀取 `~/.claude/sessions/{pid}.json`，內含 `pid`、`sessionId`、`cwd`、`startedAt`。檢查 PID 是否仍在運行來判斷 session 是否活躍。
+- Log 檔位置：`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`（直接在目錄下，不在 `sessions/` 子目錄）
+
+**JSONL 事件格式：** 每行一個 JSON 物件，`type` 欄位區分事件類型：
+
+| type | 說明 |
+|------|------|
+| `user` | 使用者訊息，或 `tool_result` 回傳（含 `toolUseResult` metadata） |
+| `assistant` | 模型回應，`message.content[]` 含 `thinking`/`text`/`tool_use` block |
+| `system` | 系統事件：`turn_duration`（回合結束）、`compact_boundary`（壓縮） |
+| `progress` | hook/sub-agent/web-search 進度 |
+| `last-prompt` | Session 閒置時的最後一則提示 |
+
+**Agent 狀態判斷：** 讀取最後一筆 `type: "assistant"` 事件的 `message.stop_reason`：
+- `"end_turn"` → 等待使用者輸入（觸發通知）
+- `"tool_use"` → 工作中（呼叫工具）
+- `null` → 串流中（尚未完成）
 
 ```go
 // 虛擬碼
@@ -398,10 +424,15 @@ func WatchSessionLog(project Project) <-chan AgentEvent {
     events := make(chan AgentEvent)
 
     go func() {
-        // 找到此專案最新的 session log
-        logPath := findLatestSessionLog(project.Path)
+        // 1. 路徑編碼：專案路徑 → encoded-cwd 目錄名
+        encodedCwd := encodeCwd(project.Path)
+        projectDir := filepath.Join(claudeHome, "projects", encodedCwd)
 
-        // 用 fsnotify 監控檔案變化
+        // 2. 找活躍 session（透過 PID 檔）
+        sessionID := findActiveSession(project.Path)  // 讀 ~/.claude/sessions/{pid}.json
+        logPath := filepath.Join(projectDir, sessionID+".jsonl")
+
+        // 3. 用 fsnotify 監控檔案變化
         watcher := fsnotify.NewWatcher()
         watcher.Add(logPath)
 
@@ -409,15 +440,14 @@ func WatchSessionLog(project Project) <-chan AgentEvent {
             select {
             case event := <-watcher.Events:
                 if event.Op == fsnotify.Write {
-                    // 讀取新增的行
                     newLines := readNewLines(logPath)
                     for _, line := range newLines {
                         parsed := parseSessionLog(line)
                         events <- parsed
-                        // parsed 可能是:
-                        //   AgentEvent{Type: "tool_use", Tool: "Edit", File: "EtherCatService.cs"}
-                        //   AgentEvent{Type: "bash", Command: "msbuild ..."}
-                        //   AgentEvent{Type: "thinking", Content: "分析重連邏輯..."}
+                        // 根據 type + stop_reason 判斷 agent 狀態：
+                        //   type="assistant", stop_reason="end_turn"  → 等待使用者
+                        //   type="assistant", stop_reason="tool_use"  → 工作中
+                        //   type="assistant", content 含 tool_use     → 正在呼叫工具
                     }
                 }
             }
