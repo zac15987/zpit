@@ -11,7 +11,11 @@ import (
 )
 
 func main() {
-	cfgPath := config.DefaultConfigPath()
+	cfgPath, err := config.DefaultConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	if envPath := os.Getenv("ZPIT_CONFIG"); envPath != "" {
 		cfgPath = envPath

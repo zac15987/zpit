@@ -8,11 +8,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// UI symbols.
+const (
+	iconMachine  = "⚙️ "
+	iconWeb      = "🌐 "
+	iconDesktop  = "🖥️ "
+	iconAndroid  = "📱 "
+	cursorMarker = " › "
+	boxHoriz     = "─"
+	boxVert      = "│"
+)
+
 var profileIcons = map[string]string{
-	"machine": "\u2699\uFE0F ",
-	"web":     "\U0001F310 ",
-	"desktop": "\U0001F5A5\uFE0F ",
-	"android": "\U0001F4F1 ",
+	"machine": iconMachine,
+	"web":     iconWeb,
+	"desktop": iconDesktop,
+	"android": iconAndroid,
 }
 
 func (m Model) viewProjects() string {
@@ -57,7 +68,7 @@ func (m Model) renderProjectList() string {
 	var b strings.Builder
 	b.WriteString(sectionTitleStyle.Render("Projects"))
 	b.WriteString("\n")
-	b.WriteString("  " + strings.Repeat("\u2500", 32) + "\n\n")
+	b.WriteString("  " + strings.Repeat(boxHoriz, 32) + "\n\n")
 
 	for i, p := range m.projects {
 		icon := profileIcons[p.Profile]
@@ -67,7 +78,7 @@ func (m Model) renderProjectList() string {
 
 		cursor := "   "
 		if i == m.cursor {
-			cursor = " \u203A "
+			cursor = cursorMarker
 		}
 
 		name := p.Name
@@ -86,7 +97,7 @@ func (m Model) renderProjectList() string {
 		b.WriteString(fmt.Sprintf("     %s",
 			detailStyle.Render(p.Profile)))
 		if tags != "" {
-			b.WriteString(fmt.Sprintf(" \u2502 %s", tags))
+			b.WriteString(fmt.Sprintf(" %s %s", boxVert, tags))
 		}
 		b.WriteString("\n\n")
 	}
@@ -98,52 +109,57 @@ func (m Model) renderHotkeys() string {
 	var b strings.Builder
 	b.WriteString(sectionTitleStyle.Render("Hotkeys"))
 	b.WriteString("\n")
-	b.WriteString("  " + strings.Repeat("\u2500", 26) + "\n\n")
+	b.WriteString("  " + strings.Repeat(boxHoriz, 26) + "\n\n")
 
 	hotkeys := []struct {
 		key  string
 		desc string
+		sep  bool // insert blank line before this entry
 	}{
-		{"Enter", "Launch Claude Code"},
-		{"c", "Clarify requirement"},
-		{"l", "Loop auto-implement"},
-		{"r", "Review changes"},
-		{"s", "Status overview"},
-		{"o", "Open project folder"},
-		{"p", "Open Issue Tracker"},
+		{"Enter", "Launch Claude Code", false},
+		{"c", "Clarify requirement", false},
+		{"l", "Loop auto-implement", false},
+		{"r", "Review changes", false},
+		{"s", "Status overview", false},
+		{"o", "Open project folder", false},
+		{"p", "Open Issue Tracker", false},
+		{"?", "Help", true},
+		{"q", "Quit", false},
 	}
 
 	for _, h := range hotkeys {
+		if h.sep {
+			b.WriteString("\n")
+		}
 		k := hotkeyLabelStyle.Render(fmt.Sprintf("[%s]", h.key))
 		d := hotkeyDescStyle.Render(h.desc)
 		b.WriteString(fmt.Sprintf("  %s %s\n", k, d))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %s %s\n", hotkeyLabelStyle.Render("[?]"), hotkeyDescStyle.Render("Help")))
-	b.WriteString(fmt.Sprintf("  %s %s\n", hotkeyLabelStyle.Render("[q]"), hotkeyDescStyle.Render("Quit")))
-
 	return b.String()
+}
+
+func (m Model) projectName(id string) string {
+	for _, p := range m.projects {
+		if p.ID == id {
+			return p.Name
+		}
+	}
+	return id
 }
 
 func (m Model) renderActiveTerminals() string {
 	var b strings.Builder
 	b.WriteString(sectionTitleStyle.Render("Active Terminals"))
 	b.WriteString("\n")
-	b.WriteString("  " + strings.Repeat("\u2500", 50) + "\n")
+	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
 	i := 1
 	for projectID, result := range m.activeTerminals {
-		name := projectID
-		for _, p := range m.projects {
-			if p.ID == projectID {
-				name = p.Name
-				break
-			}
-		}
-		b.WriteString(fmt.Sprintf("  [%d] %s \u2502 %s\n",
+		b.WriteString(fmt.Sprintf("  [%d] %s %s %s\n",
 			i,
-			selectedStyle.Render(name),
+			selectedStyle.Render(m.projectName(projectID)),
+			boxVert,
 			detailStyle.Render(result.SwitchHint),
 		))
 		i++

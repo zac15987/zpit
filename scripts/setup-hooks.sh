@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# setup-hooks.sh — Deploy hooks and settings.json to a project's .claude/ directory
+# setup-hooks.sh — Deploy hooks, docs, and settings.json to a project's .claude/ directory
 # Usage: ./scripts/setup-hooks.sh <project-path> [hook_mode]
 # hook_mode: strict (default) | standard | relaxed
 
@@ -11,23 +11,27 @@ HOOK_MODE="${2:-strict}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 HOOKS_SRC="$REPO_ROOT/hooks"
+DOCS_SRC="$REPO_ROOT/docs"
 
 CLAUDE_DIR="$PROJECT_DIR/.claude"
 HOOKS_DST="$CLAUDE_DIR/hooks"
+DOCS_DST="$CLAUDE_DIR/docs"
 
-echo "Setting up hooks for: $PROJECT_DIR"
+echo "Setting up .claude/ for: $PROJECT_DIR"
 echo "Hook mode: $HOOK_MODE"
 
-# Create directories
-mkdir -p "$HOOKS_DST"
-
 # Copy hook scripts
+mkdir -p "$HOOKS_DST"
 cp "$HOOKS_SRC/path-guard.sh" "$HOOKS_DST/"
 cp "$HOOKS_SRC/bash-firewall.sh" "$HOOKS_DST/"
 cp "$HOOKS_SRC/git-guard.sh" "$HOOKS_DST/"
 chmod +x "$HOOKS_DST"/*.sh
-
 echo "Hooks copied to $HOOKS_DST"
+
+# Copy shared docs (code quality baseline for agents)
+mkdir -p "$DOCS_DST"
+cp "$DOCS_SRC/code-construction-principles.md" "$DOCS_DST/"
+echo "Docs copied to $DOCS_DST"
 
 # Generate settings.json based on hook_mode
 generate_settings() {

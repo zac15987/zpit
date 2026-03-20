@@ -8,6 +8,15 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// Default values for config fields.
+const (
+	defaultWindowsMode     = "new_tab"
+	defaultTmuxMode        = "new_window"
+	defaultMaxPerProject   = 5
+	defaultReRemindMinutes = 15
+	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
+)
+
 // Config is the top-level configuration loaded from config.toml.
 type Config struct {
 	Terminal     TerminalConfig     `toml:"terminal"`
@@ -69,9 +78,12 @@ type ProjectPathConfig struct {
 }
 
 // DefaultConfigPath returns ~/.config/zpit/config.toml.
-func DefaultConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "zpit", "config.toml")
+func DefaultConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "zpit", "config.toml"), nil
 }
 
 // Load reads and parses the TOML config file.
@@ -87,18 +99,18 @@ func Load(path string) (*Config, error) {
 
 func applyDefaults(cfg *Config) {
 	if cfg.Terminal.WindowsMode == "" {
-		cfg.Terminal.WindowsMode = "new_tab"
+		cfg.Terminal.WindowsMode = defaultWindowsMode
 	}
 	if cfg.Terminal.TmuxMode == "" {
-		cfg.Terminal.TmuxMode = "new_window"
+		cfg.Terminal.TmuxMode = defaultTmuxMode
 	}
 	if cfg.Worktree.MaxPerProject == 0 {
-		cfg.Worktree.MaxPerProject = 5
+		cfg.Worktree.MaxPerProject = defaultMaxPerProject
 	}
 	if cfg.Notification.ReRemindMinutes == 0 {
-		cfg.Notification.ReRemindMinutes = 15
+		cfg.Notification.ReRemindMinutes = defaultReRemindMinutes
 	}
 	if cfg.Worktree.DirFormat == "" {
-		cfg.Worktree.DirFormat = "{project_id}/{issue_id}--{slug}"
+		cfg.Worktree.DirFormat = defaultDirFormat
 	}
 }

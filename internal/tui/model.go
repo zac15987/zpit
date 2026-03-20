@@ -13,6 +13,8 @@ import (
 	"github.com/zac15987/zpit/internal/terminal"
 )
 
+const statusDisplayDuration = 5 * time.Second
+
 // View represents the current screen.
 type View int
 
@@ -96,7 +98,7 @@ func (m Model) View() string {
 
 func (m *Model) setStatus(text string) {
 	m.statusMessage = text
-	m.statusExpiry = time.Now().Add(5 * time.Second)
+	m.statusExpiry = time.Now().Add(statusDisplayDuration)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

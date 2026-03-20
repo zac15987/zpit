@@ -973,7 +973,8 @@ Reviewer 啟動時也注入 Issue Spec，逐條比對 AC：
 4. 檢查是否有改動超出 SCOPE 範圍的檔案
 5. 檢查是否違反 CONSTRAINTS
 6. 檢查 logging 是否符合 CLAUDE.md 規範
-7. 產出 Review Report（見下方格式）
+7. 讀取 `.claude/docs/code-construction-principles.md`，抽樣檢查 code 品質
+8. 產出 Review Report（見下方格式）
 ```
 
 ---
@@ -1144,7 +1145,8 @@ disallowedTools: Write, Edit
 5. 檢查是否有改動**超出 SCOPE** 範圍的檔案
 6. 檢查是否違反 **CONSTRAINTS**
 7. 檢查 logging 是否符合 CLAUDE.md 規範
-8. 產出 Review Report
+8. 讀取 `.claude/docs/code-construction-principles.md`，抽樣檢查 code 品質
+9. 產出 Review Report
 
 ## 輸出格式
 
@@ -1175,6 +1177,14 @@ disallowedTools: Write, Edit
 - 新增的 log 是否符合規範: ✓/✗
 - 碰到的舊 code 是否有機會補 log: [列表]
 
+### Code Quality 檢查（依 code-construction-principles.md）
+抽樣檢查以下重點項目（不需逐條全檢，挑出有問題的即可）：
+- §3 函式職責單一、命名自解釋、參數 ≤ 7
+- §4 系統邊界有驗證、錯誤不被吞掉
+- §5 無 magic number、變數命名清楚
+- §6 巢狀 ≤ 3 層、適當使用 guard clause / table-driven
+- §10 code 自文件化、註解只說 why
+
 ## 判定規則
 
 - 有任何 AC 標記 ❌ → 整體評價 = NEEDS CHANGES
@@ -1202,6 +1212,10 @@ disallowedTools: Write, Edit
 - [例: UI 更新必須回到 UI thread]
 - [例: alarm 必須走 strategy pattern]
 - [例: DI container 使用 Microsoft.Extensions.DependencyInjection]
+
+## Code 品質基準
+- 遵循 `.claude/docs/code-construction-principles.md`
+- Reviewer 會依此文件抽樣檢查
 
 ## Logging 現狀與規範
 
