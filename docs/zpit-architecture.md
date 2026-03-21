@@ -2041,7 +2041,7 @@ echo $?   # 應該是 2
 - [x] TUI [s] status：唯讀 issue 列表（透過 TrackerClient 拉取）+ [y] 確認 + [p] 開瀏覽器
 - [x] TUI [p] open tracker：主畫面開瀏覽器到 issue list
 - [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerClient 改 label）
-- [ ] 專案 CLAUDE.md 模板 + 第一個專案實際填寫
+- ~~專案 CLAUDE.md 模板~~ → 延後至 Refine 階段（預設使用者已有 CLAUDE.md）
 
 ### M4a: Worktree + Prompt 模板 + Bridge 擴充（基礎建設）
 - [ ] Worktree Manager 模組（建立 / 清理 / 衝突預檢）
@@ -2067,3 +2067,6 @@ echo $?   # 應該是 2
 - [ ] shared-core 跨專案影響偵測
 - [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
 - [ ] Cross-compile: 同一份 code 編譯 Windows + Linux binary
+
+### Refine: 體驗優化
+- [ ] 專案 CLAUDE.md 模板（TUI 按鍵觸發 claude /init，已有則跳過）
