@@ -83,12 +83,13 @@ type Model struct {
 	confirmResult *bool          // heap-allocated: shared across Bubble Tea value copies
 	confirmAction func() tea.Cmd
 
-	// Embedded agent template
+	// Embedded agent templates
 	clarifierMD []byte
+	reviewerMD  []byte
 }
 
 // NewModel creates the root TUI model.
-func NewModel(cfg *config.Config, clarifierMD []byte) Model {
+func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
 	clients := make(map[string]tracker.TrackerClient)
 	for name, provider := range cfg.Providers.Tracker {
 		client, err := tracker.NewClient(provider.Type, provider.URL, provider.TokenEnv)
@@ -109,6 +110,7 @@ func NewModel(cfg *config.Config, clarifierMD []byte) Model {
 		activeTerminals: make(map[string]*ActiveTerminal),
 		clients:         clients,
 		clarifierMD:     clarifierMD,
+		reviewerMD:      reviewerMD,
 	}
 }
 
@@ -300,7 +302,20 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus("[l] Loop — coming in M4")
 
 	case key.Matches(msg, m.keys.Review):
-		m.setStatus("[r] Review — coming in M4")
+		project := m.projects[m.cursor]
+		if project.Tracker == "" {
+			m.setStatus("No tracker configured for this project")
+			return m, nil
+		}
+		agentPath := filepath.Join(
+			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+			".claude", "agents", "reviewer.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			m.showReviewerDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchReviewerCmd()
 
 	case key.Matches(msg, m.keys.Status):
 		project := m.projects[m.cursor]
@@ -737,6 +752,64 @@ func (m Model) openIssueURLCmd() tea.Cmd {
 		}
 	}
 	return openInBrowser(url)
+}
+
+// launchReviewerCmd opens a new terminal with claude --agent reviewer.
+func (m Model) launchReviewerCmd() tea.Cmd {
+	project := m.projects[m.cursor]
+	cfg := m.cfg.Terminal
+	return func() tea.Msg {
+		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
+		return LaunchResultMsg{
+			ProjectID: project.ID,
+			Result:    result,
+			Err:       err,
+		}
+	}
+}
+
+// showReviewerDeployConfirm displays a huh confirm dialog for deploying the reviewer agent.
+func (m *Model) showReviewerDeployConfirm() {
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Reviewer agent 未部署至此專案，是否部署？").
+				Affirmative("部署並啟動").
+				Negative("取消").
+				Value(confirmed),
+		),
+	)
+	m.confirmAction = func() tea.Cmd {
+		return m.deployAndLaunchReviewer()
+	}
+}
+
+// deployAndLaunchReviewer deploys reviewer.md to the project and launches it.
+func (m Model) deployAndLaunchReviewer() tea.Cmd {
+	project := m.projects[m.cursor]
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	reviewerMD := m.reviewerMD
+	cfg := m.cfg.Terminal
+
+	return func() tea.Msg {
+		agentDir := filepath.Join(projectPath, ".claude", "agents")
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+		agentPath := filepath.Join(agentDir, "reviewer.md")
+		if err := os.WriteFile(agentPath, reviewerMD, 0o644); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+
+		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
+		return LaunchResultMsg{
+			ProjectID: project.ID,
+			Result:    result,
+			Err:       err,
+		}
+	}
 }
 
 // openInBrowser opens a URL in the default browser.

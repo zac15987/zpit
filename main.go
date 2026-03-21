@@ -14,6 +14,9 @@ import (
 //go:embed agents/clarifier.md
 var clarifierAgentMD []byte
 
+//go:embed agents/reviewer.md
+var reviewerAgentMD []byte
+
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
 	if err != nil {
@@ -39,7 +42,7 @@ func main() {
 	}
 
 	p := tea.NewProgram(
-		tui.NewModel(cfg, clarifierAgentMD),
+		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD),
 		tea.WithAltScreen(),
 	)
 

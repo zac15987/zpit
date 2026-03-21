@@ -39,6 +39,22 @@ type = "github"
 token_env = "GITHUB_TOKEN"
 
 # ──────────────────────────────────────────────
+# Profiles
+# ──────────────────────────────────────────────
+
+[profiles.machine]
+log_policy = "strict"
+
+[profiles.desktop]
+log_policy = "standard"
+
+[profiles.web]
+log_policy = "minimal"
+
+[profiles.android]
+log_policy = "standard"
+
+# ──────────────────────────────────────────────
 # Projects
 # ──────────────────────────────────────────────
 
@@ -53,6 +69,7 @@ git = "forgejo-leyu"
 repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
 shared_core = true
 log_level = "strict"
+base_branch = "dev"
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
