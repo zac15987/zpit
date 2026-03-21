@@ -15,15 +15,22 @@ const (
 	defaultMaxPerProject   = 5
 	defaultReRemindMinutes = 15
 	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
+	defaultBaseBranch      = "dev"
 )
 
 // Config is the top-level configuration loaded from config.toml.
+// ProfileConfig holds agent-relevant metadata per project type.
+type ProfileConfig struct {
+	LogPolicy string `toml:"log_policy"` // "strict" | "standard" | "minimal"
+}
+
 type Config struct {
-	Terminal     TerminalConfig     `toml:"terminal"`
-	Notification NotificationConfig `toml:"notification"`
-	Worktree     WorktreeConfig     `toml:"worktree"`
-	Providers    ProvidersConfig    `toml:"providers"`
-	Projects     []ProjectConfig    `toml:"projects"`
+	Terminal     TerminalConfig            `toml:"terminal"`
+	Notification NotificationConfig        `toml:"notification"`
+	Worktree     WorktreeConfig            `toml:"worktree"`
+	Providers    ProvidersConfig           `toml:"providers"`
+	Profiles     map[string]ProfileConfig  `toml:"profiles"`
+	Projects     []ProjectConfig           `toml:"projects"`
 }
 
 type TerminalConfig struct {
@@ -68,6 +75,7 @@ type ProjectConfig struct {
 	Repo           string            `toml:"repo"`
 	SharedCore     bool              `toml:"shared_core"`
 	LogLevel       string            `toml:"log_level"`
+	BaseBranch     string            `toml:"base_branch"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
 }
@@ -112,5 +120,10 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Worktree.DirFormat == "" {
 		cfg.Worktree.DirFormat = defaultDirFormat
+	}
+	for i := range cfg.Projects {
+		if cfg.Projects[i].BaseBranch == "" {
+			cfg.Projects[i].BaseBranch = defaultBaseBranch
+		}
 	}
 }

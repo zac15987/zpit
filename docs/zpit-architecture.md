@@ -2049,15 +2049,17 @@ echo $?   # 應該是 2
 - [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerClient 改 label）
 - ~~專案 CLAUDE.md 模板~~ → 延後至 Refine 階段（預設使用者已有 CLAUDE.md）
 
-### M4a: Worktree + Prompt 模板 + Profile（基礎建設）
-- [ ] Worktree Manager 模組（建立 / 清理 / 衝突預檢）
-- [ ] Worktree 建立時根據 hook_mode 自動配置 settings.local.json
-- [ ] Hook 自動化測試（make test-hooks）
-- [ ] Coding Agent Prompt 模板實作（§6.5，Issue Spec → prompt 組裝）
-- [ ] Reviewer 驗收模板實作（§6.6，Issue Spec → reviewer prompt 組裝）
+### M4a: Worktree + Prompt 模板 + Profile（基礎建設） ✅
+- [x] Worktree Manager 模組（建立 / 清理 / 列出，shell out to git）
+- [x] Worktree 建立時根據 hook_mode 自動配置 settings.local.json
+- [x] Hook 自動化測試（make test-hooks）
+- [x] Coding Agent Prompt 模板實作（§6.5，Issue Spec → prompt 組裝 + log_policy 注入）
+- [x] Reviewer 驗收模板實作（§6.6，Issue Spec → reviewer prompt 組裝）
 - [x] TrackerClient 擴充：GetIssue（含 body）、GetPRStatus（M3 已完成）
-- [ ] Profile 定義落地至 config.toml（log_policy）
-- [ ] Reviewer agent 定義 + 測試
+- [x] Profile 定義落地至 config.toml（log_policy: strict/standard/minimal）
+- [x] Reviewer agent 定義（agents/reviewer.md，go:embed）+ TUI [r] 部署啟動
+- [x] Per-project base_branch config（預設 "dev"）
+- [x] Slug 工具（issue title → URL-safe slug）
 
 ### M4b: Loop 引擎 + 自動化（自動化核心）
 - [ ] Loop 引擎實作（抓 todo issue → 建 worktree → 啟動 coding agent → 等結束 → 啟動 reviewer → 下一個）

@@ -84,6 +84,25 @@ func TestLoad(t *testing.T) {
 	if first.Path.WSL == "" {
 		t.Error("Projects[0].Path.WSL should not be empty")
 	}
+	if first.BaseBranch != "dev" {
+		t.Errorf("Projects[0].BaseBranch = %q, want %q", first.BaseBranch, "dev")
+	}
+
+	// Profiles
+	if len(cfg.Profiles) != 4 {
+		t.Fatalf("Profiles = %d, want 4", len(cfg.Profiles))
+	}
+	machine, ok := cfg.Profiles["machine"]
+	if !ok {
+		t.Fatal("machine profile not found")
+	}
+	if machine.LogPolicy != "strict" {
+		t.Errorf("machine.LogPolicy = %q, want %q", machine.LogPolicy, "strict")
+	}
+	desktop := cfg.Profiles["desktop"]
+	if desktop.LogPolicy != "standard" {
+		t.Errorf("desktop.LogPolicy = %q, want %q", desktop.LogPolicy, "standard")
+	}
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -123,6 +142,19 @@ func TestLoadMinimal_AppliesAllDefaults(t *testing.T) {
 	}
 	if cfg.Worktree.DirFormat != defaultDirFormat {
 		t.Errorf("DirFormat = %q, want %q", cfg.Worktree.DirFormat, defaultDirFormat)
+	}
+}
+
+func TestBaseBranchDefault(t *testing.T) {
+	cfg, err := Load(testdataPath("config.toml"))
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	// Projects without explicit base_branch should default to "dev"
+	for i, p := range cfg.Projects {
+		if p.BaseBranch != "dev" {
+			t.Errorf("Projects[%d].BaseBranch = %q, want %q", i, p.BaseBranch, "dev")
+		}
 	}
 }
 

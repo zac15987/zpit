@@ -19,7 +19,7 @@ go run .                 # Run (reads ~/.config/zpit/config.toml)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ```
 
-## Current State (M3 Complete)
+## Current State (M4a Complete)
 
 ### What works now
 - TUI project list with ↑↓ navigation and profile icons
@@ -36,35 +36,44 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
-- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests
+- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
+- 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
 - `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
 - `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
+- `[r]` Review: opens new terminal with `claude --agent reviewer` (auto-deploys if missing, huh confirm dialog)
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
+- Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
+- Worktree Manager: Create / Remove / List worktrees, hook mode auto-config (settings.local.json)
+- Prompt assembly: BuildCodingPrompt + BuildReviewerPrompt (Issue Spec → agent prompt with log_policy injection)
+- Profile config: `[profiles.*]` with `log_policy` (strict/standard/minimal)
+- Per-project `base_branch` config (default "dev")
+- Makefile with `test-hooks` target
 
 ### What's stubbed (shows "coming in MX" message)
 - `[l]` Loop → M4b
-- `[r]` Review → M4a
 - `[a]` Add Project → M5
 - `[e]` Edit Config → M5
 - `[?]` Help → TBD
 
 ### What's not implemented yet
-- Worktree Manager (M4a)
 - Loop engine (M4b)
-- Agent prompt assembly (M4a)
-- Coding/Reviewer agent templates (M4a)
+- Worktree + prompt + launch full integration (M4b)
+- Multi-agent parallel execution (M4b)
+- PR merge detection + auto cleanup (M4b)
 
 ## Package Structure
 
 ```
 main.go                          # Entry point: load config, embed agents, run Bubble Tea
+Makefile                         # build, test, test-hooks, test-all targets
 agents/
-└── clarifier.md                 # Clarifier agent template (go:embed → auto-deploy)
+├── clarifier.md                 # Clarifier agent template (go:embed → auto-deploy)
+└── reviewer.md                  # Reviewer agent template (go:embed → auto-deploy)
 internal/
-├── config/config.go             # Config structs + Load() + defaults
+├── config/config.go             # Config structs + Load() + defaults + ProfileConfig
 ├── platform/detect.go           # Environment detection + ResolvePath()
 ├── terminal/
 │   ├── launcher.go              # LaunchClaude() dispatch + arg builders
@@ -92,6 +101,17 @@ internal/
 │   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals
 │   ├── view_status.go           # Status sub-view: issue list + [y] confirm + [p] browser
 │   └── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, IssueConfirmedMsg, etc.)
+├── worktree/
+│   ├── slug.go                  # Slugify() issue title → URL-safe slug
+│   ├── manager.go               # Worktree Manager: Create/Remove/List + runGit helper
+│   ├── hooks.go                 # SetupHookMode() → settings.local.json per hook_mode
+│   ├── slug_test.go             # 11 slug tests
+│   ├── manager_test.go          # Worktree lifecycle tests (real git)
+│   └── hooks_test.go            # 5 hook config tests
+├── prompt/
+│   ├── coding.go                # BuildCodingPrompt() — Issue Spec → coding agent prompt
+│   ├── reviewer.go              # BuildReviewerPrompt() — Issue Spec → reviewer prompt
+│   └── prompt_test.go           # 5 prompt assembly tests
 └── tracker/
     ├── types.go                 # Issue/PR structs + canonical status constants
     ├── client.go                # TrackerClient interface + NewClient factory + MapLabelsToStatus
