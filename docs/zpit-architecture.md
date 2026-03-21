@@ -709,7 +709,6 @@ Zpit 不介入 agent 的工作內容。
 
 ```toml
 [profiles.machine]
-issue_labels_auto = ["需機台驗證"]
 log_policy = "strict"
 # strict: 所有 Service 方法必須有進出 log
 #         硬體操作必須有指令/回應 log
@@ -720,7 +719,6 @@ log_policy = "strict"
 
 ```toml
 [profiles.web]
-issue_labels_auto = []
 log_policy = "minimal"
 ```
 
@@ -728,7 +726,6 @@ log_policy = "minimal"
 
 ```toml
 [profiles.desktop]
-issue_labels_auto = []
 log_policy = "standard"
 # standard: Service 方法有進出 log、異常有完整 log
 ```
@@ -737,9 +734,11 @@ log_policy = "standard"
 
 ```toml
 [profiles.android]
-issue_labels_auto = ["需實機驗證"]
 log_policy = "standard"
 ```
+
+> `log_policy` 會注入到 Coding Agent 和 Reviewer Agent 的 prompt 中，
+> 讓 agent 在實作和 review 時都遵循對應的 logging 規範。
 
 ---
 
@@ -1380,13 +1379,14 @@ D:/Projects/.worktrees/                 ← 所有 worktree 集中管理
 ```
 Issue 進入 In Progress
     │
-    ├─ 1. 從 develop 建立 branch
-    │     git branch fix/ASE-47-ethercat-reconnect develop
+    ├─ 1. 從 dev 建立 branch（agent 自行決定 feat/fix 等前綴）
+    │     git branch feat/ASE-47-ethercat-reconnect dev
+    │     （branch 名必須包含 issue ID）
     │
     ├─ 2. 建立 worktree
-    │     git worktree add <worktree-path> fix/ASE-47-ethercat-reconnect
+    │     git worktree add <worktree-path> feat/ASE-47-ethercat-reconnect
     │
-    ├─ 3. 在新終端中啟動 Claude Code
+    ├─ 3. 在新終端中啟動 Claude Code（可見，使用者可隨時介入）
     │     工作目錄 = worktree 路徑（不是主 repo）
     │     agent 只在這個目錄裡操作，看不到其他 agent 的改動
     │
@@ -1394,7 +1394,7 @@ Issue 進入 In Progress
     │
     ├─ 5. PR merge 後清理
     │     git worktree remove <worktree-path>
-    │     git branch -d fix/ASE-47-ethercat-reconnect
+    │     git branch -d feat/ASE-47-ethercat-reconnect
     │
     └─ 6. Issue → Done
 ```
@@ -1459,14 +1459,15 @@ TUI 按 [l]
 │  │    → 跳過，抓下一個 issue                              │
 │  │                                                        │
 │  │ 4. 建立 branch + worktree                              │
-│  │    git branch fix/ISSUE-ID-slug develop                │
-│  │    git worktree add <path> fix/ISSUE-ID-slug           │
+│  │    git branch feat/ISSUE-ID-slug dev                   │
+│  │    git worktree add <path> feat/ISSUE-ID-slug          │
+│  │    （agent 自行決定 feat/fix 等前綴，branch 必含       │
+│  │      issue ID；slug 從 issue title 自動產生）          │
 │  │                                                        │
-│  │ 5. 啟動 coding agent（新終端）                         │
+│  │ 5. 啟動 coding agent（新終端，可見）                   │
 │  │    工作目錄 = worktree 路徑                            │
-│  │    claude -p (prompt 由 §6.5 模板組裝)                 │
-│  │    --allowedTools: Read,Write,Edit,Bash,Grep,Glob      │
-│  │    --max-turns: 50                                     │
+│  │    透過 LaunchClaude() 在新終端視窗啟動                │
+│  │    使用者可隨時切過去介入                              │
 │  │    Agent 自己負責: build, test, commit,                │
 │  │                    開 PR (MCP), 更新 status (MCP)      │
 │  │                                                        │
@@ -1486,8 +1487,7 @@ TUI 按 [l]
 │  PR merge 後的清理（由 TUI 背景執行）：
 │  ├─ 偵測到 PR merged（透過 TrackerClient poll PR status）
 │  ├─ git worktree remove <path>
-│  ├─ git branch -d <branch>
-│  └─ 更新 Tracker label: → Done（或 → 待實體驗證）
+│  └─ git branch -d <branch>
 │
 └── TUI 即時監控 (session log)
 ```
@@ -2043,14 +2043,14 @@ echo $?   # 應該是 2
 - [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerClient 改 label）
 - ~~專案 CLAUDE.md 模板~~ → 延後至 Refine 階段（預設使用者已有 CLAUDE.md）
 
-### M4a: Worktree + Prompt 模板 + Bridge 擴充（基礎建設）
+### M4a: Worktree + Prompt 模板 + Profile（基礎建設）
 - [ ] Worktree Manager 模組（建立 / 清理 / 衝突預檢）
 - [ ] Worktree 建立時根據 hook_mode 自動配置 settings.local.json
 - [ ] Hook 自動化測試（make test-hooks）
 - [ ] Coding Agent Prompt 模板實作（§6.5，Issue Spec → prompt 組裝）
 - [ ] Reviewer 驗收模板實作（§6.6，Issue Spec → reviewer prompt 組裝）
-- [ ] TrackerClient 擴充：GetIssue（含 body）、GetPRStatus
-- [ ] Profile 定義落地至 config.toml（log_policy, issue_labels_auto）
+- [x] TrackerClient 擴充：GetIssue（含 body）、GetPRStatus（M3 已完成）
+- [ ] Profile 定義落地至 config.toml（log_policy）
 - [ ] Reviewer agent 定義 + 測試
 
 ### M4b: Loop 引擎 + 自動化（自動化核心）

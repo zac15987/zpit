@@ -168,7 +168,8 @@ Provider entries include `token_env` field pointing to environment variable name
 
 ## Conventions
 
-- Branch naming: `feat/ISSUE-ID-description` or `fix/ISSUE-ID-description`
+- Branch naming: `{prefix}/ISSUE-ID-slug` — agent 自行決定 feat/fix 等前綴，branch 名必須包含 issue ID，slug 從 issue title 自動產生
+- Git branching model: `main` ← `dev` ← feature branches（所有功能從 dev 分出，完成合併回 dev，穩定後 dev 合併至 main）
 - Commit messages: `[ISSUE-ID] short description`
 - Issue statuses flow: pending_confirm → todo → in_progress → ai_review → waiting_review → (needs_verify) → done
 - Agents must stop and ask on uncertain technical decisions, even with bypass-all-permissions enabled
