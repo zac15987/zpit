@@ -36,7 +36,8 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
-- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests
+- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
+- 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
 - `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
