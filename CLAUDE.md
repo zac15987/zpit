@@ -166,6 +166,8 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 
 Provider entries include `token_env` field pointing to environment variable name for API auth (e.g. `token_env = "FORGEJO_TOKEN"`).
 
+Each project has `base_branch` (default `"dev"`) — worktree feature branches are created from this branch.
+
 ## Conventions
 
 - Branch naming: `{prefix}/ISSUE-ID-slug` — agent 自行決定 feat/fix 等前綴，branch 名必須包含 issue ID，slug 從 issue title 自動產生

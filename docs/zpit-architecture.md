@@ -548,6 +548,7 @@ git = "forgejo-local"           # 指向 providers.git 的 key
 repo = "leyu/ase-inspection"
 shared_core = true
 log_level = "strict"            # strict | standard | minimal
+base_branch = "dev"             # worktree 從哪個 branch 分出（預設 "dev"）
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
@@ -565,6 +566,7 @@ git = "github"
 repo = "zhihao/personal-site"
 shared_core = false
 log_level = "minimal"
+base_branch = "dev"
 tags = ["astro", "three.js"]
 
 [projects.path]
@@ -582,6 +584,7 @@ git = "forgejo-local"
 repo = "leyu/alarm-manager"
 shared_core = true
 log_level = "standard"
+base_branch = "dev"
 tags = ["wpf"]
 
 [projects.path]
@@ -599,6 +602,7 @@ git = "forgejo-local"
 repo = "zhihao/monitor-app"
 shared_core = false
 log_level = "standard"
+base_branch = "dev"
 tags = ["kotlin"]
 
 [projects.path]
@@ -1408,6 +1412,8 @@ base_dir_wsl = "/mnt/d/Projects/.worktrees"
 dir_format = "{project_id}/{issue_id}--{slug}"
 auto_cleanup = true       # PR merge 後自動清理
 max_per_project = 5       # 每個專案最大同時 worktree 數量
+
+# base_branch 在各 project 中設定（預設 "dev"）
 ```
 
 ### 9.4 TUI 顯示
