@@ -87,7 +87,10 @@ func TestCreateAndList(t *testing.T) {
 	repo := initTestRepo(t)
 	mgr := testManager(t)
 
-	wtPath, err := mgr.Create(repo, "dev", "feat/ASE-47-reconnect", "proj", "ASE-47", "reconnect")
+	wtPath, err := mgr.Create(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/ASE-47-reconnect",
+		ProjectID: "proj", IssueID: "ASE-47", Slug: "reconnect",
+	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -115,7 +118,10 @@ func TestRemove(t *testing.T) {
 	repo := initTestRepo(t)
 	mgr := testManager(t)
 
-	wtPath, err := mgr.Create(repo, "dev", "feat/ASE-48-vision", "proj", "ASE-48", "vision")
+	wtPath, err := mgr.Create(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/ASE-48-vision",
+		ProjectID: "proj", IssueID: "ASE-48", Slug: "vision",
+	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -149,13 +155,19 @@ func TestMaxPerProject(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		branch := fmt.Sprintf("feat/ISSUE-%d-test", i)
 		issueID := fmt.Sprintf("ISSUE-%d", i)
-		if _, err := mgr.Create(repo, "dev", branch, "proj", issueID, "test"); err != nil {
+		if _, err := mgr.Create(CreateParams{
+			RepoPath: repo, BaseBranch: "dev", BranchName: branch,
+			ProjectID: "proj", IssueID: issueID, Slug: "test",
+		}); err != nil {
 			t.Fatalf("Create #%d: %v", i, err)
 		}
 	}
 
 	// 4th should fail.
-	_, err := mgr.Create(repo, "dev", "feat/ISSUE-4-test", "proj", "ISSUE-4", "test")
+	_, err := mgr.Create(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/ISSUE-4-test",
+		ProjectID: "proj", IssueID: "ISSUE-4", Slug: "test",
+	})
 	if err == nil {
 		t.Fatal("expected error for exceeding max worktrees")
 	}

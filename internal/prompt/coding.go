@@ -32,13 +32,7 @@ func BuildCodingPrompt(p CodingParams) string {
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
 
 	b.WriteString("\n\n## 你可以修改的檔案範圍\n\n")
-	for _, s := range p.Spec.Scope {
-		fmt.Fprintf(&b, "[%s] %s", s.Action, s.Path)
-		if s.Reason != "" {
-			fmt.Fprintf(&b, " (%s)", s.Reason)
-		}
-		b.WriteByte('\n')
-	}
+	b.WriteString(formatScope(p.Spec.Scope))
 	b.WriteString("\n超出此範圍的檔案不要碰。如果你發現必須修改範圍外的檔案才能完成任務，\n")
 	b.WriteString("立即停下來說明原因，等待使用者決定。")
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,20 +88,5 @@ func readSettingsLocal(t *testing.T, dir string) []byte {
 }
 
 func containsHook(data []byte, hookName string) bool {
-	return len(data) > 0 && filepath.Base(hookName) != "" &&
-		len(data) > 0 && string(data) != "" &&
-		contains(string(data), hookName)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findSubstring(s, substr))
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(string(data), hookName)
 }

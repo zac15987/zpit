@@ -32,13 +32,7 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
 
 	b.WriteString("\n\n## 允許的修改範圍\n\n")
-	for _, s := range p.Spec.Scope {
-		fmt.Fprintf(&b, "[%s] %s", s.Action, s.Path)
-		if s.Reason != "" {
-			fmt.Fprintf(&b, " (%s)", s.Reason)
-		}
-		b.WriteByte('\n')
-	}
+	b.WriteString(formatScope(p.Spec.Scope))
 
 	b.WriteString("\n## 限制條件\n\n")
 	b.WriteString(p.Spec.Constraints)

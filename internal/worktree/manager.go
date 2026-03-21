@@ -36,11 +36,21 @@ func (m *Manager) ResolvePath(projectID, issueID, slug string) string {
 	return filepath.Join(baseDir, subpath)
 }
 
+// CreateParams holds the parameters for creating a worktree.
+type CreateParams struct {
+	RepoPath   string
+	BaseBranch string
+	BranchName string
+	ProjectID  string
+	IssueID    string
+	Slug       string
+}
+
 // Create creates a new branch from baseBranch and a worktree for it.
 // Returns the absolute path to the created worktree.
-func (m *Manager) Create(repoPath, baseBranch, branchName, projectID, issueID, slug string) (string, error) {
+func (m *Manager) Create(p CreateParams) (string, error) {
 	// Check max worktree limit.
-	existing, err := m.List(repoPath)
+	existing, err := m.List(p.RepoPath)
 	if err != nil {
 		return "", fmt.Errorf("listing worktrees: %w", err)
 	}
@@ -48,17 +58,17 @@ func (m *Manager) Create(repoPath, baseBranch, branchName, projectID, issueID, s
 		return "", fmt.Errorf("max worktrees per project reached (%d)", m.cfg.MaxPerProject)
 	}
 
-	wtPath := m.ResolvePath(projectID, issueID, slug)
+	wtPath := m.ResolvePath(p.ProjectID, p.IssueID, p.Slug)
 
 	// Create branch from baseBranch.
-	if _, err := runGit(repoPath, "branch", branchName, baseBranch); err != nil {
-		return "", fmt.Errorf("creating branch %s: %w", branchName, err)
+	if _, err := runGit(p.RepoPath, "branch", p.BranchName, p.BaseBranch); err != nil {
+		return "", fmt.Errorf("creating branch %s: %w", p.BranchName, err)
 	}
 
 	// Create worktree.
-	if _, err := runGit(repoPath, "worktree", "add", wtPath, branchName); err != nil {
+	if _, err := runGit(p.RepoPath, "worktree", "add", wtPath, p.BranchName); err != nil {
 		// Clean up branch on failure.
-		_, _ = runGit(repoPath, "branch", "-D", branchName)
+		_, _ = runGit(p.RepoPath, "branch", "-D", p.BranchName)
 		return "", fmt.Errorf("creating worktree: %w", err)
 	}
 
