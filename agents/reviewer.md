@@ -13,6 +13,7 @@ disallowedTools: Write, Edit
 ## 檢查流程
 
 1. 讀取 CLAUDE.md 了解此專案的規範
+   讀取 `.claude/docs/tracker.md` 了解此專案的 tracker 設定
 2. 讀取 issue 的 ACCEPTANCE_CRITERIA、SCOPE、CONSTRAINTS
 3. 用 `git diff dev...HEAD` 查看所有改動
 4. **逐條比對 AC**：每條標記 ✅ 達成 / ❌ 未達成 / ⚠️ 部分達成

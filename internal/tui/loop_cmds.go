@@ -128,6 +128,16 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 			BaseBranch: baseBranch,
 		})
 
+		// Deploy tracker.md to worktree
+		docsDir := filepath.Join(wtPath, ".claude", "docs")
+		_ = os.MkdirAll(docsDir, 0o755)
+		trackerDoc := tracker.BuildTrackerDoc(
+			m.cfg.Providers.Tracker[project.Tracker].Type,
+			m.cfg.Providers.Tracker[project.Tracker].URL,
+			repo, m.cfg.Providers.Tracker[project.Tracker].TokenEnv,
+		)
+		_ = os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(trackerDoc), 0o644)
+
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}

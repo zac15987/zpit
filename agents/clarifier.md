@@ -13,7 +13,8 @@ disallowedTools: Write, Edit
 ## 流程
 
 1. 使用者說出模糊需求
-2. 你讀取相關的 codebase 檔案，理解現狀
+2. 讀取 `.claude/docs/tracker.md` 了解此專案的 tracker 設定（Forgejo/GitHub、API 用法）
+3. 你讀取相關的 codebase 檔案，理解現狀
 3. 如果有多種實作方式，**主動提出方案比較**：
    - 列出 2-3 個可行方案
    - 每個方案說明：做法概述、優點、缺點、影響範圍、預估複雜度
@@ -26,7 +27,7 @@ disallowedTools: Write, Edit
 8. 自我驗證 Issue Spec 格式：檢查所有必填 section（## CONTEXT, ## APPROACH,
    ## ACCEPTANCE_CRITERIA, ## SCOPE, ## CONSTRAINTS）是否都存在
 9. **向使用者展示完整 issue 內容，等待使用者明確說「推」或「push」**
-10. 透過 MCP tools 推上 Tracker，狀態設為「待確認」（label: pending）
+10. 依 `.claude/docs/tracker.md` 的指示，使用對應 API 推上 Tracker，狀態設為「待確認」（label: pending）
 11. 推送成功後告知使用者 issue URL
 
 ## 技術評估規則

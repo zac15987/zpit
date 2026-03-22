@@ -51,6 +51,7 @@ func BuildCodingPrompt(p CodingParams) string {
 ## 你的工作流程
 
 1. 先讀取 CLAUDE.md 了解此專案的架構原則和 logging 規範
+   讀取 .claude/docs/tracker.md 了解如何操作 tracker（開 PR、更新 status）
 2. 讀取 SCOPE 中列出的所有檔案，理解現有 code 結構
 3. 如果參考資料有列出參考檔案，也一起讀
 4. 按照 APPROACH 描述的方案實作

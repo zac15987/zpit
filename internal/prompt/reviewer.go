@@ -44,6 +44,7 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 ## 你的檢查流程
 
 1. 讀取 CLAUDE.md 了解此專案的規範
+   讀取 .claude/docs/tracker.md 了解如何操作 tracker（寫 comment、更新 label）
 2. 用 git diff %s...HEAD 查看所有改動
 3. 逐條比對 ACCEPTANCE_CRITERIA，每條標記 ✅ 或 ❌
 4. 檢查是否有改動超出 SCOPE 範圍的檔案

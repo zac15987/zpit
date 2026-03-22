@@ -700,6 +700,8 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	clarifierMD := m.clarifierMD
 	cfg := m.cfg.Terminal
 
+	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
+
 	return func() tea.Msg {
 		// Deploy: create .claude/agents/ and write clarifier.md
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -709,6 +711,10 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		agentPath := filepath.Join(agentDir, "clarifier.md")
 		if err := os.WriteFile(agentPath, clarifierMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+		// Deploy tracker.md
+		if err := deployTracker(); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy tracker doc failed: %s", err)}
 		}
 
 		// Launch
@@ -847,6 +853,7 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	reviewerMD := m.reviewerMD
 	cfg := m.cfg.Terminal
+	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
 
 	return func() tea.Msg {
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -857,6 +864,7 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 		if err := os.WriteFile(agentPath, reviewerMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
+		_ = deployTracker()
 
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
 		return LaunchResultMsg{
@@ -865,6 +873,20 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 			Err:       err,
 		}
 	}
+}
+
+// deployTrackerDoc writes .claude/docs/tracker.md to the target directory.
+func (m Model) deployTrackerDoc(targetPath string, project *config.ProjectConfig) error {
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return nil // no tracker configured, skip silently
+	}
+	docsDir := filepath.Join(targetPath, ".claude", "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		return fmt.Errorf("creating .claude/docs: %w", err)
+	}
+	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv)
+	return os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(content), 0o644)
 }
 
 // openInBrowser opens a URL in the default browser.
