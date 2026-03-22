@@ -69,6 +69,6 @@ disallowedTools: Write, Edit
 
 ## Tracker 操作注意
 
-將 Review Report 寫到 tracker（comment）時，依 `.claude/docs/tracker.md` 指示。
+將 Review Report 同時寫到 **PR comment** 和 **issue comment**，依 `.claude/docs/tracker.md` 指示。
 **不論使用 MCP 或 REST API，長文字一律先用 Write tool 寫到暫存檔，
 再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。**
