@@ -171,7 +171,7 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
 
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName)
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, "開始實作")
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "coder", Result: result, Err: err,
@@ -230,7 +230,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		}
 
 		agentName := fmt.Sprintf("reviewer-%s", issueID)
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName)
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, "開始 review")
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "reviewer", Result: result, Err: err,
