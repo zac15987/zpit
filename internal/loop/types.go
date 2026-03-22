@@ -3,8 +3,9 @@ package loop
 import "time"
 
 const (
-	PollInterval     = 30 * time.Second // how often to poll tracker for todo issues
-	PRPollInterval   = 60 * time.Second // how often to poll for PR merge
+	PollInterval      = 30 * time.Second // how often to poll tracker for todo issues
+	PRPollInterval    = 60 * time.Second // how often to poll for PR merge
+	LivenessInterval  = 5 * time.Second  // how often to check agent PID liveness
 )
 
 // SlotState represents the pipeline state of a single issue in the loop.

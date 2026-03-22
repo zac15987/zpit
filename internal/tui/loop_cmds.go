@@ -195,7 +195,10 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 			return LoopAgentLaunchedMsg{ProjectID: projectID, IssueID: issueID, Role: "reviewer", Err: err}
 		}
 
-		spec, _ := tracker.ParseIssueSpec(issue.Body)
+		spec, err := tracker.ParseIssueSpec(issue.Body)
+		if err != nil {
+			return LoopAgentLaunchedMsg{ProjectID: projectID, IssueID: issueID, Role: "reviewer", Err: err}
+		}
 		promptText := prompt.BuildReviewerPrompt(prompt.ReviewerParams{
 			IssueID:    issueID,
 			IssueTitle: issue.Title,
@@ -257,7 +260,7 @@ func (m Model) loopStartWatcherCmd(projectID, issueID, role string) tea.Cmd {
 
 		// Monitor PID until exit
 		for {
-			time.Sleep(5 * time.Second)
+			time.Sleep(loop.LivenessInterval)
 			if !watcher.IsProcessAlive(pid) {
 				return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
 			}

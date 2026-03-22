@@ -8,6 +8,17 @@ import (
 	"github.com/zac15987/zpit/internal/loop"
 )
 
+// findLoopSlot looks up the LoopState and Slot for a project+issue.
+// Returns nil, nil if not found.
+func (m Model) findLoopSlot(projectID, issueID string) (*loop.LoopState, *loop.Slot) {
+	ls, ok := m.loops[projectID]
+	if !ok {
+		return nil, nil
+	}
+	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	return ls, slot
+}
+
 func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 	ls, ok := m.loops[msg.ProjectID]
 	if !ok || !ls.Active {
@@ -44,13 +55,8 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLoopWorktreeCreated(msg LoopWorktreeCreatedMsg) (tea.Model, tea.Cmd) {
-	ls, ok := m.loops[msg.ProjectID]
-	if !ok {
-		return m, nil
-	}
-	key := loop.SlotKey(msg.ProjectID, msg.IssueID)
-	slot, ok := ls.Slots[key]
-	if !ok {
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
 		return m, nil
 	}
 
@@ -68,13 +74,8 @@ func (m Model) handleLoopWorktreeCreated(msg LoopWorktreeCreatedMsg) (tea.Model,
 }
 
 func (m Model) handleLoopAgentWritten(msg LoopAgentWrittenMsg) (tea.Model, tea.Cmd) {
-	ls, ok := m.loops[msg.ProjectID]
-	if !ok {
-		return m, nil
-	}
-	key := loop.SlotKey(msg.ProjectID, msg.IssueID)
-	slot, ok := ls.Slots[key]
-	if !ok {
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
 		return m, nil
 	}
 
@@ -90,13 +91,8 @@ func (m Model) handleLoopAgentWritten(msg LoopAgentWrittenMsg) (tea.Model, tea.C
 }
 
 func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea.Cmd) {
-	ls, ok := m.loops[msg.ProjectID]
-	if !ok {
-		return m, nil
-	}
-	key := loop.SlotKey(msg.ProjectID, msg.IssueID)
-	slot, ok := ls.Slots[key]
-	if !ok {
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
 		return m, nil
 	}
 
@@ -117,34 +113,22 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 }
 
 func (m Model) handleLoopAgentExited(msg LoopAgentExitedMsg) (tea.Model, tea.Cmd) {
-	ls, ok := m.loops[msg.ProjectID]
-	if !ok {
-		return m, nil
-	}
-	key := loop.SlotKey(msg.ProjectID, msg.IssueID)
-	slot, ok := ls.Slots[key]
-	if !ok {
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
 		return m, nil
 	}
 
 	if msg.Role == "coder" {
-		// Coding done → launch reviewer
 		slot.State = loop.SlotLaunchingReviewer
 		return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
 	}
-	// Reviewer done → poll for PR merge
 	slot.State = loop.SlotWaitingPRMerge
 	return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
 }
 
 func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
-	ls, ok := m.loops[msg.ProjectID]
-	if !ok {
-		return m, nil
-	}
-	key := loop.SlotKey(msg.ProjectID, msg.IssueID)
-	slot, ok := ls.Slots[key]
-	if !ok {
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
 		return m, nil
 	}
 
@@ -154,7 +138,6 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.PR == nil || msg.PR.State == "open" {
-		// Not merged yet, keep polling
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
 
@@ -163,7 +146,6 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 		return m, m.loopCleanupCmd(msg.ProjectID, msg.IssueID)
 	}
 
-	// PR closed without merge
 	slot.State = loop.SlotError
 	slot.Error = fmt.Errorf("PR closed without merge")
 	return m, nil
@@ -174,7 +156,6 @@ func (m Model) handleLoopCleanup(msg LoopCleanupMsg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	key := loop.SlotKey(msg.ProjectID, msg.IssueID)
 
 	if msg.Err != nil {
 		m.setStatus(fmt.Sprintf("Cleanup error #%s: %s", msg.IssueID, msg.Err))
@@ -182,6 +163,6 @@ func (m Model) handleLoopCleanup(msg LoopCleanupMsg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("Issue #%s done, worktree cleaned", msg.IssueID))
 	}
 
-	delete(ls.Slots, key)
+	delete(ls.Slots, loop.SlotKey(msg.ProjectID, msg.IssueID))
 	return m, nil
 }
