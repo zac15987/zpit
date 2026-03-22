@@ -59,6 +59,8 @@ func BuildCodingPrompt(p CodingParams) string {
 6. 完成後，逐條對照 ACCEPTANCE_CRITERIA 自我檢查
 7. 用 git add + git commit 提交改動
 8. Commit message 格式: [%s] {簡短描述}
+9. 開始實作前，更新 issue label: 移除 "todo"，加入 "wip"
+10. 開 PR 後，更新 issue label: 移除 "wip"，加入 "review"
 
 ## 停下來問使用者的時機
 

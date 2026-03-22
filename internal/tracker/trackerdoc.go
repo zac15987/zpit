@@ -51,7 +51,27 @@ curl -X POST "%s/issues/{number}/comments" \
   -H "Content-Type: application/json" \
   -d '{"body":"..."}'
 `+"```"+`
+
+## Label 管理
+
+操作 label 前，先查詢該 label 是否存在。如果不存在，先建立再使用。
+不要因為 label 不存在就跳過或報錯。
+
+查詢所有 label:
+`+"```"+`
+curl -s "%s/labels" -H "%s"
+`+"```"+`
+
+建立 label:
+`+"```"+`
+curl -X POST "%s/labels" \
+  -H "%s" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"wip","color":"#0E8A16"}'
+`+"```"+`
 `, baseURL, repo, tokenEnv,
+			apiBase, authHeader,
+			apiBase, authHeader,
 			apiBase, authHeader,
 			apiBase, authHeader,
 			apiBase, authHeader)
@@ -89,6 +109,15 @@ gh pr create --repo %s --title "..." --body "..." --head feat/ISSUE-ID-slug --ba
 gh issue comment {number} --repo %s --body "..."
 `+"```"+`
 
+## Label 管理
+
+操作 label 前，先確認該 label 是否存在。如果不存在，先建立再使用。
+不要因為 label 不存在就跳過或報錯。
+
+`+"```"+`
+gh label create "wip" --repo %s --color "0E8A16" 2>/dev/null || true
+`+"```"+`
+
 ## REST API fallback
 
 `+"```"+`
@@ -98,6 +127,7 @@ curl -X POST "https://api.github.com/repos/%s/issues" \
   -d '{"title":"...","body":"...","labels":["pending"]}'
 `+"```"+`
 `, repo, tokenEnv,
+			repo,
 			repo, repo, repo,
 			repo, tokenEnv)
 

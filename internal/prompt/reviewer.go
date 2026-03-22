@@ -52,6 +52,8 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 6. 檢查 logging 是否符合 CLAUDE.md 規範
 7. 讀取 `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`，抽樣檢查 code 品質
 8. 產出 Review Report（見下方格式）
+9. 將 Review Report 寫到 PR comment
+10. 如果 PASS，更新 issue label: 移除 "review"，加入 "ai-review"
 
 ## Tracker 操作注意
 

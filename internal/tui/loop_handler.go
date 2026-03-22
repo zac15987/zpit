@@ -2,10 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/zac15987/zpit/internal/loop"
+	"github.com/zac15987/zpit/internal/platform"
+	"github.com/zac15987/zpit/internal/tracker"
+	"github.com/zac15987/zpit/internal/worktree"
 )
 
 // findLoopSlot looks up the LoopState and Slot for a project+issue.
@@ -29,6 +33,14 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		return m, m.loopSchedulePoll(msg.ProjectID)
 	}
 
+	// Check existing worktrees to detect resumed issues.
+	project := m.findProject(msg.ProjectID)
+	var existingWorktrees []worktree.WorktreeInfo
+	if project != nil {
+		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		existingWorktrees, _ = m.wtManager.List(projectPath)
+	}
+
 	var cmds []tea.Cmd
 
 	for _, issue := range msg.Issues {
@@ -39,6 +51,14 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		if len(ls.Slots) >= m.cfg.Worktree.MaxPerProject {
 			break // at capacity
 		}
+
+		// Check if a worktree already exists for this issue (resumed from previous session).
+		if slot := findLoopSlotFromWorktree(msg.ProjectID, issue, existingWorktrees); slot != nil {
+			ls.Slots[key] = slot
+			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issue.ID))
+			continue
+		}
+
 		slot := &loop.Slot{
 			ProjectID:  msg.ProjectID,
 			IssueID:    issue.ID,
@@ -175,4 +195,23 @@ func (m Model) handleLoopCleanup(msg LoopCleanupMsg) (tea.Model, tea.Cmd) {
 
 	delete(ls.Slots, loop.SlotKey(msg.ProjectID, msg.IssueID))
 	return m, nil
+}
+
+// findLoopSlotFromWorktree checks if a worktree with matching issue ID already exists.
+// If found, returns a slot in SlotCoding state (will poll for PR).
+func findLoopSlotFromWorktree(projectID string, issue tracker.Issue, worktrees []worktree.WorktreeInfo) *loop.Slot {
+	for _, wt := range worktrees {
+		if !strings.Contains(wt.Branch, issue.ID) {
+			continue
+		}
+		return &loop.Slot{
+			ProjectID:    projectID,
+			IssueID:      issue.ID,
+			IssueTitle:   issue.Title,
+			BranchName:   wt.Branch,
+			WorktreePath: wt.Path,
+			State:        loop.SlotCoding, // PR poll will determine next step
+		}
+	}
+	return nil
 }
