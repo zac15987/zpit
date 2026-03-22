@@ -55,6 +55,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → PR merge → cleanup
 - LaunchClaudeInDir: worktree path override for loop launches
 - FindPRByBranch: PR detection by branch name (Forgejo + GitHub)
+- TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
 - Loop Status display in TUI main view
 - Multi-agent parallel execution (max_per_project worktrees)
 
@@ -131,7 +132,8 @@ internal/
     ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec
     ├── issuespec_test.go        # 12 tests
     ├── urls.go                  # BuildIssueURL + BuildTrackerURL
-    └── urls_test.go             # 6 tests
+    ├── urls_test.go             # 6 tests
+    └── trackerdoc.go            # BuildTrackerDoc() → .claude/docs/tracker.md content
 hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands

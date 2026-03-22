@@ -701,6 +701,10 @@ done                Done            Done           closed           closed
 新增 tracker 只需：實作 TrackerClient interface + config 加入對應 type + `token_env`。
 Agent 端若需 MCP 操作（推 issue、開 PR），需另外安裝對應 MCP server（`claude mcp add`）。
 
+**Agent Tracker 資訊注入**：Zpit 部署 agent 時自動寫入 `.claude/docs/tracker.md`，
+內容依 provider type 產生（Forgejo → gitea MCP / REST API，GitHub → gh CLI / REST API）。
+Agent 讀取此檔案得知該用哪個 API 操作 tracker，`/resume` 也能讀到。
+
 ---
 
 ## 5. 專案 Profile 定義
