@@ -1430,17 +1430,17 @@ max_per_project = 5       # 每個專案最大同時 worktree 數量
 ### 9.5 注意事項
 
 - CLAUDE.md 和 .claude/ 存在主 repo 中，worktree 會自動繼承
-- shared-core 改動要特別小心：Loop 分配 issue 時偵測潛在衝突，
-  避免同時分配到會碰同一個檔案的 issue
 - worktree 不是 clone：共用同一個 .git，同一份歷史
 - 機台電腦不用 worktree：一次只看一個 branch，不需要平行化
+- 如果多個 agent 改到同一檔案導致衝突，人工處理即可
 
 ---
 
 ## 10. 自動化 Loop 流程（Worktree 感知）
 
-TUI 按 [l] 後，在新終端啟動 loop。支援同一專案多個 agent 平行工作。
-每個 agent 在自己的 worktree 中運行，互不干擾。
+TUI 按 [l] 後，在 TUI 內以 goroutine 啟動 loop（非獨立子命令）。
+支援同一專案多個 agent 平行工作，每個 agent 在自己的 worktree 中運行。
+TUI 關閉時 loop 停止，但已啟動的 Claude Code agent 不受影響（獨立 process）。
 
 **核心原則：Zpit 只負責調度，不介入 agent 工作內容。**
 Build、test、review、開 PR、更新 tracker status 都是 agent 自己的職責。
@@ -1448,10 +1448,7 @@ Build、test、review、開 PR、更新 tracker status 都是 agent 自己的職
 ```
 TUI 按 [l]
 │
-├─ 開新終端 (wt new-tab / tmux new-window)
-│  └─ 執行 loop (Go binary 的 loop 子命令)
-│
-│  ┌── loop 在獨立終端中運行（純調度）─────────────────────┐
+│  ┌── loop 在 TUI goroutine 中運行（純調度）──────────────┐
 │  │                                                        │
 │  │ 1. 查詢 Tracker API（直接 REST）: 抓此專案             │
 │  │    status=Todo 的最高優先 issue                        │
@@ -1460,18 +1457,19 @@ TUI 按 [l]
 │  │ 2. 檢查此專案目前有幾個活躍 worktree                   │
 │  │    如果 >= max_per_project → 等待                      │
 │  │                                                        │
-│  │ 3. 衝突預檢：分析 issue SCOPE 影響範圍                 │
-│  │    如果跟現有 worktree 的 agent 會碰同一個檔案         │
-│  │    → 跳過，抓下一個 issue                              │
-│  │                                                        │
-│  │ 4. 建立 branch + worktree                              │
+│  │ 3. Zpit 建立 branch + worktree + hook config           │
 │  │    git branch feat/ISSUE-ID-slug dev                   │
 │  │    git worktree add <path> feat/ISSUE-ID-slug          │
-│  │    （agent 自行決定 feat/fix 等前綴，branch 必含       │
-│  │      issue ID；slug 從 issue title 自動產生）          │
+│  │    SetupHookMode() 配置 settings.local.json            │
+│  │    （branch 統一用 feat/ 前綴，PR title 由 agent 決定  │
+│  │      feat/fix 等分類；slug 從 issue title 自動產生）   │
+│  │                                                        │
+│  │ 4. 寫入臨時 agent 檔案到 worktree                      │
+│  │    .claude/agents/coding-{issue-id}.md                 │
+│  │    （由 BuildCodingPrompt 組裝 Issue Spec → prompt）   │
 │  │                                                        │
 │  │ 5. 啟動 coding agent（新終端，可見）                   │
-│  │    工作目錄 = worktree 路徑                            │
+│  │    工作目錄 = worktree 路徑（path override）           │
 │  │    透過 LaunchClaude() 在新終端視窗啟動                │
 │  │    使用者可隨時切過去介入                              │
 │  │    Agent 自己負責: build, test, commit,                │
@@ -2014,8 +2012,8 @@ echo $?   # 應該是 2
 
 ### 13.5 Loop 安全
 
-- `--max-turns` 限制每次 `claude -p` 的最大回合數
-- 單一 issue 執行超過 30 分鐘自動標記 timeout
+- Agent 在可見終端中運行，使用者可隨時切過去介入（天然安全閥）
+- `max_per_project` 限制每個專案同時 worktree 數量
 - agent 等待回應超過 15 分鐘 → TUI 再次發送提醒通知
 
 ---
@@ -2070,7 +2068,6 @@ echo $?   # 應該是 2
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams
 - [ ] 機台 push 回來後自動觸發 review
-- [ ] [r] review 模式
 - [ ] 最近活動 feed（從 session log 解析）
 - [ ] shared-core 跨專案影響偵測
 - [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
