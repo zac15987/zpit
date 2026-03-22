@@ -100,6 +100,12 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	baseBranch := project.BaseBranch
 
+	// Build tracker doc content outside closure (avoid accessing m.cfg inside goroutine)
+	var trackerDocContent string
+	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv)
+	}
+
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -129,14 +135,11 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		})
 
 		// Deploy tracker.md to worktree
-		docsDir := filepath.Join(wtPath, ".claude", "docs")
-		_ = os.MkdirAll(docsDir, 0o755)
-		trackerDoc := tracker.BuildTrackerDoc(
-			m.cfg.Providers.Tracker[project.Tracker].Type,
-			m.cfg.Providers.Tracker[project.Tracker].URL,
-			repo, m.cfg.Providers.Tracker[project.Tracker].TokenEnv,
-		)
-		_ = os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(trackerDoc), 0o644)
+		if trackerDocContent != "" {
+			docsDir := filepath.Join(wtPath, ".claude", "docs")
+			_ = os.MkdirAll(docsDir, 0o755)
+			_ = os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(trackerDocContent), 0o644)
+		}
 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {

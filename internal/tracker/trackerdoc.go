@@ -7,6 +7,8 @@ import "fmt"
 func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv string) string {
 	switch providerType {
 	case "forgejo_issues":
+		apiBase := baseURL + "/api/v1/repos/" + repo
+		authHeader := "Authorization: token $" + tokenEnv
 		return fmt.Sprintf(`# Tracker 設定
 
 - 類型: Forgejo
@@ -24,31 +26,31 @@ func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv string) string {
 
 建立 issue:
 `+"```"+`
-curl -X POST "%s/api/v1/repos/%s/issues" \
-  -H "Authorization: token $%s" \
+curl -X POST "%s/issues" \
+  -H "%s" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","labels":["pending"]}'
 `+"```"+`
 
 建立 PR:
 `+"```"+`
-curl -X POST "%s/api/v1/repos/%s/pulls" \
-  -H "Authorization: token $%s" \
+curl -X POST "%s/pulls" \
+  -H "%s" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","head":"feat/ISSUE-ID-slug","base":"dev"}'
 `+"```"+`
 
 新增 comment:
 `+"```"+`
-curl -X POST "%s/api/v1/repos/%s/issues/{number}/comments" \
-  -H "Authorization: token $%s" \
+curl -X POST "%s/issues/{number}/comments" \
+  -H "%s" \
   -H "Content-Type: application/json" \
   -d '{"body":"..."}'
 `+"```"+`
 `, baseURL, repo, tokenEnv,
-			baseURL, repo, tokenEnv,
-			baseURL, repo, tokenEnv,
-			baseURL, repo, tokenEnv)
+			apiBase, authHeader,
+			apiBase, authHeader,
+			apiBase, authHeader)
 
 	case "github_issues":
 		return fmt.Sprintf(`# Tracker 設定
