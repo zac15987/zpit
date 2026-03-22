@@ -18,7 +18,7 @@ func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv string) string {
 
 ## 操作方式
 
-優先使用 Forgejo MCP server（如已安裝）。
+優先使用 Gitea/Forgejo MCP server（名稱通常為 "gitea"，如已安裝）。
 如果 MCP 不可用，改用 curl + Forgejo REST API v1。
 **不要使用 gh CLI**（此專案不是 GitHub）。
 
