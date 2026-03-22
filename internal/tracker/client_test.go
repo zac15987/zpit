@@ -339,7 +339,8 @@ func TestGitHubGetPRStatus_Merged(t *testing.T) {
 func TestForgejoFindPRByBranch_Found(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]forgejoPR{
-			{Number: 5, State: "open", Merged: false, HTMLURL: "http://git.local/o/r/pulls/5"},
+			{Number: 5, State: "open", Merged: false, HTMLURL: "http://git.local/o/r/pulls/5",
+				Head: forgejoPRRef{Ref: "feat/ASE-47-reconnect"}},
 		})
 	}))
 	defer ts.Close()
@@ -373,10 +374,31 @@ func TestForgejoFindPRByBranch_NotFound(t *testing.T) {
 	}
 }
 
+func TestForgejoFindPRByBranch_WrongBranch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// API returns a PR but head.ref doesn't match the requested branch
+		json.NewEncoder(w).Encode([]forgejoPR{
+			{Number: 99, State: "open", Merged: false, HTMLURL: "http://git.local/o/r/pulls/99",
+				Head: forgejoPRRef{Ref: "feat/other-branch"}},
+		})
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "org/repo", "feat/ASE-47-reconnect")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr != nil {
+		t.Errorf("expected nil for wrong branch, got %+v", pr)
+	}
+}
+
 func TestGitHubFindPRByBranch_Merged(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]githubPR{
-			{Number: 10, State: "closed", Merged: true, HTMLURL: "https://github.com/o/r/pull/10"},
+			{Number: 10, State: "closed", Merged: true, HTMLURL: "https://github.com/o/r/pull/10",
+				Head: githubPRRef{Ref: "feat/ISSUE-1-test"}},
 		})
 	}))
 	defer ts.Close()

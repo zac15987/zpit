@@ -29,10 +29,15 @@ type forgejoLabel struct {
 
 // forgejoPR is the JSON shape returned by the Gitea/Forgejo pulls API.
 type forgejoPR struct {
-	Number  int    `json:"number"`
-	State   string `json:"state"`
-	Merged  bool   `json:"merged"`
-	HTMLURL string `json:"html_url"`
+	Number  int          `json:"number"`
+	State   string       `json:"state"`
+	Merged  bool         `json:"merged"`
+	HTMLURL string       `json:"html_url"`
+	Head    forgejoPRRef `json:"head"`
+}
+
+type forgejoPRRef struct {
+	Ref string `json:"ref"` // branch name, e.g. "feat/13-refactor-json-toml"
 }
 
 func (c *ForgejoClient) ListIssues(ctx context.Context, repo string) ([]Issue, error) {
@@ -92,26 +97,29 @@ func (c *ForgejoClient) UpdateLabels(ctx context.Context, repo string, id string
 
 func (c *ForgejoClient) FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error) {
 	owner, name := splitRepo(repo)
-	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls?state=all&head=%s&limit=1", owner, name, branch)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls?state=all&head=%s&limit=10", owner, name, branch)
 
 	var prs []forgejoPR
 	if err := c.get(ctx, path, &prs); err != nil {
 		return nil, fmt.Errorf("find PR by branch: %w", err)
 	}
-	if len(prs) == 0 {
-		return nil, nil // no PR found yet
-	}
 
-	pr := prs[0]
-	state := pr.State
-	if pr.Merged {
-		state = "merged"
+	// Client-side validation: head.ref must match exactly.
+	for _, pr := range prs {
+		if pr.Head.Ref != branch {
+			continue
+		}
+		state := pr.State
+		if pr.Merged {
+			state = "merged"
+		}
+		return &PRStatus{
+			ID:    fmt.Sprintf("%d", pr.Number),
+			State: state,
+			URL:   pr.HTMLURL,
+		}, nil
 	}
-	return &PRStatus{
-		ID:    fmt.Sprintf("%d", pr.Number),
-		State: state,
-		URL:   pr.HTMLURL,
-	}, nil
+	return nil, nil // no matching PR
 }
 
 func (c *ForgejoClient) GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error) {
