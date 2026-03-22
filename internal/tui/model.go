@@ -354,7 +354,10 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.loops[project.ID] = ls
 		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
-		return m, m.loopPollCmd(project.ID)
+		return m, tea.Batch(
+			m.loopCleanupMergedCmd(project.ID),
+			m.loopPollCmd(project.ID),
+		)
 
 	case key.Matches(msg, m.keys.Review):
 		project := m.projects[m.cursor]

@@ -319,6 +319,49 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	}
 }
 
+// loopCleanupMergedCmd cleans up worktrees whose PR has been merged (leftover from previous sessions).
+func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+	mgr := m.wtManager
+
+	return func() tea.Msg {
+		worktrees, err := mgr.List(projectPath)
+		if err != nil || len(worktrees) == 0 {
+			return nil
+		}
+
+		cleaned := 0
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		for _, wt := range worktrees {
+			pr, err := client.FindPRByBranch(ctx, repo, wt.Branch)
+			if err != nil || pr == nil {
+				continue
+			}
+			if pr.State == "merged" {
+				if err := mgr.Remove(projectPath, wt.Path, true); err == nil {
+					cleaned++
+				}
+			}
+		}
+
+		if cleaned > 0 {
+			return StatusMsg{Text: fmt.Sprintf("Cleaned %d merged worktree(s)", cleaned)}
+		}
+		return nil
+	}
+}
+
 // loopSchedulePoll schedules the next tracker poll after PollInterval.
 func (m Model) loopSchedulePoll(projectID string) tea.Cmd {
 	return tea.Tick(loop.PollInterval, func(t time.Time) tea.Msg {
