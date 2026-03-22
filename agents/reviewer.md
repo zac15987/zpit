@@ -66,3 +66,9 @@ disallowedTools: Write, Edit
 - 所有 AC 都 ✅ 但有 🟡 建議 → 整體評價 = PASS with suggestions
 - 所有 AC 都 ✅ 且無重大建議 → 整體評價 = PASS
 - SCOPE 超出或 CONSTRAINTS 違反 → 無論 AC 結果，整體 = NEEDS CHANGES
+
+## Tracker 操作注意
+
+將 Review Report 寫到 tracker（comment）時，依 `.claude/docs/tracker.md` 指示。
+**不論使用 MCP 或 REST API，長文字一律先用 Write tool 寫到暫存檔，
+再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。**

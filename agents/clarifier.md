@@ -27,7 +27,14 @@ disallowedTools: Write, Edit
 8. 自我驗證 Issue Spec 格式：檢查所有必填 section（## CONTEXT, ## APPROACH,
    ## ACCEPTANCE_CRITERIA, ## SCOPE, ## CONSTRAINTS）是否都存在
 9. **向使用者展示完整 issue 內容，等待使用者明確說「推」或「push」**
-10. 依 `.claude/docs/tracker.md` 的指示，使用對應 API 推上 Tracker，狀態設為「待確認」（label: pending）
+10. 推送 issue 到 Tracker（依 `.claude/docs/tracker.md` 指示）：
+    a. **不論使用 MCP 或 REST API，長文字（issue body）一律先用 Write tool 寫到暫存檔
+       （如 `/tmp/issue_body.md`），再用 Read tool 讀取內容傳入 API。
+       絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。**
+    b. 優先使用 MCP server（如 gitea MCP、GitHub MCP）
+    c. 如果 MCP 不可用，改用 REST API（見 tracker.md 範例）
+    d. 完成後刪除暫存檔
+    e. 狀態設為「待確認」（label: pending）
 11. 推送成功後告知使用者 issue URL
 
 ## 技術評估規則

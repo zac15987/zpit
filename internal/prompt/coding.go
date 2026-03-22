@@ -67,6 +67,12 @@ func BuildCodingPrompt(p CodingParams) string {
 - 你發現 CONSTRAINTS 中的限制跟 APPROACH 衝突
 - 你遇到不確定的技術決策（多種寫法都可以時）
 - 任何硬體相關的邏輯你不確定的（timeout 值、安全狀態行為等）
+
+## Tracker 操作注意
+
+開 PR、更新 status 時，依 .claude/docs/tracker.md 指示。
+不論使用 MCP 或 REST API，長文字（PR body、comment）一律先用 Write tool 寫到暫存檔，
+再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。
 `, p.IssueID)
 
 	return b.String()

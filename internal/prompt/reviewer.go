@@ -52,6 +52,12 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 6. 檢查 logging 是否符合 CLAUDE.md 規範
 7. 讀取 `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`，抽樣檢查 code 品質
 8. 產出 Review Report（見下方格式）
+
+## Tracker 操作注意
+
+將 Review Report 寫到 tracker（comment）時，依 .claude/docs/tracker.md 指示。
+不論使用 MCP 或 REST API，長文字一律先用 Write tool 寫到暫存檔，
+再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。
 `, p.BaseBranch)
 
 	return b.String()

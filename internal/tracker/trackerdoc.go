@@ -22,6 +22,10 @@ func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv string) string {
 如果 MCP 不可用，改用 curl + Forgejo REST API v1。
 **不要使用 gh CLI**（此專案不是 GitHub）。
 
+**重要：不論使用 MCP 或 REST API，長文字內容（issue body、PR body、comment）
+一律先用 Write tool 寫到暫存檔（如 /tmp/issue_body.md），再用 Read tool 讀取內容傳入 API。
+絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。**
+
 ## REST API 範例
 
 建立 issue:
@@ -63,6 +67,10 @@ curl -X POST "%s/issues/{number}/comments" \
 
 優先使用 gh CLI（如已安裝）。
 如果 gh 不可用，改用 curl + GitHub REST API。
+
+**重要：不論使用 gh CLI 或 REST API，長文字內容（issue body、PR body、comment）
+一律先用 Write tool 寫到暫存檔（如 /tmp/issue_body.md），再用 Read tool 讀取內容傳入 API。
+絕對不要在 bash 命令裡直接內嵌長文字。**
 
 ## gh CLI 範例
 
