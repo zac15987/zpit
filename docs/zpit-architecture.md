@@ -1475,12 +1475,13 @@ TUI 按 [l]
 │  │    Agent 自己負責: build, test, commit,                │
 │  │                    開 PR (MCP), 更新 status (MCP)      │
 │  │                                                        │
-│  │ 6. 等待 coding agent 結束（監控 process exit）         │
+│  │ 6. 輪詢 PR 出現（每 60 秒 FindPRByBranch）             │
+│  │    PR 出現 = coding agent 完成（終端保留不用關）       │
 │  │                                                        │
 │  │ 7. 啟動 reviewer agent（同一 worktree，唯讀）          │
 │  │    Agent 自己負責: 讀 diff, 檢查 AC, 寫 comment (MCP) │
 │  │                                                        │
-│  │ 8. 等待 reviewer 結束                                  │
+│  │ 8. 等待 reviewer 結束（監控 PID exit）                 │
 │  │                                                        │
 │  │ 9. 回到步驟 1 抓下一個 issue                           │
 │  │    （平行化的關鍵：做完一個就去抓下一個，              │
@@ -2060,10 +2061,12 @@ echo $?   # 應該是 2
 - [x] Slug 工具（issue title → URL-safe slug）
 
 ### M4b: Loop 引擎 + 自動化（自動化核心）
-- [ ] Loop 引擎實作（抓 todo issue → 建 worktree → 啟動 coding agent → 等結束 → 啟動 reviewer → 下一個）
-- [ ] 同一專案多 agent 平行執行
-- [ ] TUI 加入 [l] loop monitor + worktree 狀態顯示
-- [ ] PR merge 偵測 + 自動清理 worktree
+- [x] Loop 引擎實作（抓 todo → 建 worktree → coding agent → PR 出現觸發 reviewer → PR merge 清理）
+- [x] 同一專案多 agent 平行執行（受 max_per_project 限制）
+- [x] TUI [l] toggle + Loop Status 顯示
+- [x] PR merge 偵測（FindPRByBranch）+ 自動清理 worktree
+- [x] LaunchClaudeInDir — worktree path override
+- [x] Coding 完成信號：PR 出現（非 PID 消失），終端保留
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams

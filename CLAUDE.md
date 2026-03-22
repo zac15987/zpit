@@ -19,7 +19,7 @@ go run .                 # Run (reads ~/.config/zpit/config.toml)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ```
 
-## Current State (M4a Complete)
+## Current State (M4b Complete)
 
 ### What works now
 - TUI project list with ↑↓ navigation and profile icons
@@ -44,6 +44,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
 - `[r]` Review: opens new terminal with `claude --agent reviewer` (auto-deploys if missing, huh confirm dialog)
+- `[l]` Loop: auto-dispatch coding + reviewer agents per todo issue
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
 - Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
 - Worktree Manager: Create / Remove / List worktrees, hook mode auto-config (settings.local.json)
@@ -51,18 +52,22 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Profile config: `[profiles.*]` with `log_policy` (strict/standard/minimal)
 - Per-project `base_branch` config (default "dev")
 - Makefile with `test-hooks` target
+- Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → PR merge → cleanup
+- LaunchClaudeInDir: worktree path override for loop launches
+- FindPRByBranch: PR detection by branch name (Forgejo + GitHub)
+- Loop Status display in TUI main view
+- Multi-agent parallel execution (max_per_project worktrees)
 
 ### What's stubbed (shows "coming in MX" message)
-- `[l]` Loop → M4b
 - `[a]` Add Project → M5
 - `[e]` Edit Config → M5
 - `[?]` Help → TBD
 
 ### What's not implemented yet
-- Loop engine (M4b)
-- Worktree + prompt + launch full integration (M4b)
-- Multi-agent parallel execution (M4b)
-- PR merge detection + auto cleanup (M4b)
+- Agent teams (M5)
+- Machine push → auto review trigger (M5)
+- Recent activity feed (M5)
+- shared-core cross-project detection (M5)
 
 ## Package Structure
 
@@ -75,8 +80,10 @@ agents/
 internal/
 ├── config/config.go             # Config structs + Load() + defaults + ProfileConfig
 ├── platform/detect.go           # Environment detection + ResolvePath()
+├── loop/
+│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, constants
 ├── terminal/
-│   ├── launcher.go              # LaunchClaude() dispatch + arg builders
+│   ├── launcher.go              # LaunchClaude() + LaunchClaudeInDir() dispatch + arg builders
 │   ├── launcher_windows.go      # wt.exe (build tag: windows)
 │   └── launcher_unix.go         # tmux (build tag: !windows)
 ├── watcher/
@@ -98,9 +105,11 @@ internal/
 │   ├── model.go                 # Root Bubble Tea model, Update, key routing, confirm dialog (huh)
 │   ├── keymap.go                # Key bindings (incl. Back, Confirm)
 │   ├── styles.go                # Lip Gloss styles with named color constants
-│   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals
+│   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals + loop status
 │   ├── view_status.go           # Status sub-view: issue list + [y] confirm + [p] browser
-│   └── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, IssueConfirmedMsg, etc.)
+│   ├── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, Loop*Msg, etc.)
+│   ├── loop_cmds.go             # Loop tea.Cmd functions (poll, create worktree, launch, cleanup)
+│   └── loop_handler.go          # Loop message handlers (state machine transitions)
 ├── worktree/
 │   ├── slug.go                  # Slugify() issue title → URL-safe slug
 │   ├── manager.go               # Worktree Manager: Create/Remove/List + runGit helper
