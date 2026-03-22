@@ -34,3 +34,25 @@ func launchTmux(project config.ProjectConfig, cfg config.TerminalConfig, path st
 		SwitchHint: hint,
 	}, nil
 }
+
+func launchWindowsInDir(tabTitle string, cfg config.TerminalConfig, path string, extraArgs []string) (*LaunchResult, error) {
+	return nil, fmt.Errorf("Windows Terminal not available on this platform")
+}
+
+func launchTmuxInDir(tabTitle string, cfg config.TerminalConfig, path string, extraArgs []string) (*LaunchResult, error) {
+	args := BuildTmuxArgs(tabTitle, path, cfg.TmuxMode, extraArgs)
+	cmd := exec.Command("tmux", args...)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching tmux: %w", err)
+	}
+	hint := fmt.Sprintf("tmux select-window -t %s", tabTitle)
+	if cfg.TmuxMode == "new_pane" {
+		hint = "Visible in split pane"
+	}
+	return &LaunchResult{
+		Env:        platform.Detect(),
+		Command:    "tmux",
+		Args:       args,
+		SwitchHint: hint,
+	}, nil
+}

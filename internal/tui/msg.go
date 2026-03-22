@@ -48,3 +48,68 @@ type IssueConfirmedMsg struct {
 	IssueID   string
 	Err       error
 }
+
+// --- Loop engine messages ---
+
+// LoopPollMsg carries results of polling tracker for todo issues.
+type LoopPollMsg struct {
+	ProjectID string
+	Issues    []tracker.Issue
+	Err       error
+}
+
+// LoopWorktreeCreatedMsg indicates a worktree was created for an issue.
+type LoopWorktreeCreatedMsg struct {
+	ProjectID    string
+	IssueID      string
+	WorktreePath string
+	BranchName   string
+	Err          error
+}
+
+// LoopAgentWrittenMsg indicates the temp agent file was written.
+type LoopAgentWrittenMsg struct {
+	ProjectID string
+	IssueID   string
+	Err       error
+}
+
+// LoopAgentLaunchedMsg indicates a coding/reviewer agent was launched.
+type LoopAgentLaunchedMsg struct {
+	ProjectID string
+	IssueID   string
+	Role      string // "coder" or "reviewer"
+	Result    *terminal.LaunchResult
+	Err       error
+}
+
+// LoopAgentExitedMsg indicates an agent's PID is no longer alive.
+type LoopAgentExitedMsg struct {
+	ProjectID string
+	IssueID   string
+	Role      string // "coder" or "reviewer"
+}
+
+// LoopPRStatusMsg carries the result of polling PR status for merge detection.
+type LoopPRStatusMsg struct {
+	ProjectID string
+	IssueID   string
+	PR        *tracker.PRStatus
+	Err       error
+}
+
+// LoopCleanupMsg indicates worktree cleanup completed.
+type LoopCleanupMsg struct {
+	ProjectID string
+	IssueID   string
+	Err       error
+}
+
+// loopPollTickMsg triggers the next poll cycle (unexported).
+type loopPollTickMsg struct{ ProjectID string }
+
+// loopPRPollTickMsg triggers the next PR status poll (unexported).
+type loopPRPollTickMsg struct {
+	ProjectID string
+	IssueID   string
+}

@@ -31,6 +31,21 @@ func LaunchClaude(project config.ProjectConfig, cfg config.TerminalConfig, extra
 	}
 }
 
+// LaunchClaudeInDir opens Claude Code in a new terminal with a custom working directory.
+// Used by the loop engine to launch agents in worktree directories.
+func LaunchClaudeInDir(workDir, tabTitle string, cfg config.TerminalConfig, extraArgs ...string) (*LaunchResult, error) {
+	env := platform.Detect()
+
+	switch env {
+	case platform.EnvWindowsTerminal:
+		return launchWindowsInDir(tabTitle, cfg, workDir, extraArgs)
+	case platform.EnvWSLTmux, platform.EnvLinuxTmux:
+		return launchTmuxInDir(tabTitle, cfg, workDir, extraArgs)
+	default:
+		return nil, fmt.Errorf("unsupported environment: %s", env)
+	}
+}
+
 // buildClaudeArgs returns "claude" followed by any extra arguments as separate elements.
 func buildClaudeArgs(extraArgs []string) []string {
 	return append([]string{"claude"}, extraArgs...)

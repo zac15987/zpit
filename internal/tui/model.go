@@ -14,11 +14,13 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/notify"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
+	"github.com/zac15987/zpit/internal/worktree"
 )
 
 const (
@@ -86,6 +88,10 @@ type Model struct {
 	// Embedded agent templates
 	clarifierMD []byte
 	reviewerMD  []byte
+
+	// Loop engine state
+	loops     map[string]*loop.LoopState
+	wtManager *worktree.Manager
 }
 
 // NewModel creates the root TUI model.
@@ -111,6 +117,8 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
 		clients:         clients,
 		clarifierMD:     clarifierMD,
 		reviewerMD:      reviewerMD,
+		loops:           make(map[string]*loop.LoopState),
+		wtManager:       worktree.NewManager(cfg.Worktree),
 	}
 }
 
@@ -210,6 +218,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Loop engine messages
+	case LoopPollMsg:
+		return m.handleLoopPoll(msg)
+	case LoopWorktreeCreatedMsg:
+		return m.handleLoopWorktreeCreated(msg)
+	case LoopAgentWrittenMsg:
+		return m.handleLoopAgentWritten(msg)
+	case LoopAgentLaunchedMsg:
+		return m.handleLoopAgentLaunched(msg)
+	case LoopAgentExitedMsg:
+		return m.handleLoopAgentExited(msg)
+	case LoopPRStatusMsg:
+		return m.handleLoopPRStatus(msg)
+	case LoopCleanupMsg:
+		return m.handleLoopCleanup(msg)
+	case loopPollTickMsg:
+		if ls, ok := m.loops[msg.ProjectID]; ok && ls.Active {
+			return m, m.loopPollCmd(msg.ProjectID)
+		}
+		return m, nil
+	case loopPRPollTickMsg:
+		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+
 	}
 
 	return m, nil
@@ -246,6 +277,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
+		}
+		for _, ls := range m.loops {
+			ls.Active = false
 		}
 		return m, tea.Quit
 	}
@@ -299,7 +333,28 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.launchClarifierCmd()
 
 	case key.Matches(msg, m.keys.Loop):
-		m.setStatus("[l] Loop — coming in M4")
+		project := m.projects[m.cursor]
+		if project.Tracker == "" {
+			m.setStatus("No tracker configured for this project")
+			return m, nil
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus("Tracker token not set")
+			return m, nil
+		}
+		// Toggle loop on/off
+		if ls, ok := m.loops[project.ID]; ok && ls.Active {
+			ls.Active = false
+			m.setStatus(fmt.Sprintf("Loop stopped for %s", project.Name))
+			return m, nil
+		}
+		ls := &loop.LoopState{
+			Active: true,
+			Slots:  make(map[string]*loop.Slot),
+		}
+		m.loops[project.ID] = ls
+		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
+		return m, m.loopPollCmd(project.ID)
 
 	case key.Matches(msg, m.keys.Review):
 		project := m.projects[m.cursor]

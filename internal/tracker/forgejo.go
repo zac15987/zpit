@@ -90,6 +90,30 @@ func (c *ForgejoClient) UpdateLabels(ctx context.Context, repo string, id string
 	return nil
 }
 
+func (c *ForgejoClient) FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls?state=all&head=%s&limit=1", owner, name, branch)
+
+	var prs []forgejoPR
+	if err := c.get(ctx, path, &prs); err != nil {
+		return nil, fmt.Errorf("find PR by branch: %w", err)
+	}
+	if len(prs) == 0 {
+		return nil, nil // no PR found yet
+	}
+
+	pr := prs[0]
+	state := pr.State
+	if pr.Merged {
+		state = "merged"
+	}
+	return &PRStatus{
+		ID:    fmt.Sprintf("%d", pr.Number),
+		State: state,
+		URL:   pr.HTMLURL,
+	}, nil
+}
+
 func (c *ForgejoClient) GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error) {
 	owner, name := splitRepo(repo)
 	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%s", owner, name, prID)

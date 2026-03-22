@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/watcher"
 )
 
@@ -49,6 +50,13 @@ func (m Model) viewProjects() string {
 	if len(m.activeTerminals) > 0 {
 		b.WriteString("\n\n")
 		b.WriteString(m.renderActiveTerminals())
+	}
+
+	// Loop status (if any)
+	loopStatus := m.renderLoopStatus()
+	if loopStatus != "" {
+		b.WriteString("\n\n")
+		b.WriteString(loopStatus)
 	}
 
 	// Status bar
@@ -217,6 +225,62 @@ func formatElapsed(d time.Duration) string {
 	m := int(d.Minutes())
 	s := int(d.Seconds()) % 60
 	return fmt.Sprintf("%02d:%02d", m, s)
+}
+
+func (m Model) renderLoopStatus() string {
+	var b strings.Builder
+	hasContent := false
+
+	for projectID, ls := range m.loops {
+		if !ls.Active && len(ls.Slots) == 0 {
+			continue
+		}
+		if !hasContent {
+			b.WriteString(sectionTitleStyle.Render("Loop Status"))
+			b.WriteString("\n")
+			b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
+			hasContent = true
+		}
+
+		projectName := m.projectName(projectID)
+		status := "running"
+		if !ls.Active {
+			status = "stopping"
+		}
+		b.WriteString(fmt.Sprintf("  %s (%s)\n",
+			selectedStyle.Render(projectName),
+			detailStyle.Render(status),
+		))
+
+		if len(ls.Slots) == 0 {
+			b.WriteString(fmt.Sprintf("    %s\n", detailStyle.Render("polling for issues...")))
+			continue
+		}
+
+		for _, slot := range ls.Slots {
+			icon := iconWorking
+			switch slot.State {
+			case loop.SlotError:
+				icon = "🔴"
+			case loop.SlotWaitingPRMerge:
+				icon = iconWaiting
+			case loop.SlotDone:
+				icon = "✅"
+			}
+			b.WriteString(fmt.Sprintf("    %s #%s %s  %s\n",
+				icon, slot.IssueID,
+				truncate(slot.IssueTitle, 35),
+				detailStyle.Render(slot.State.String()),
+			))
+			if slot.Error != nil {
+				b.WriteString(fmt.Sprintf("      %s\n",
+					detailStyle.Render(slot.Error.Error()),
+				))
+			}
+		}
+	}
+
+	return b.String()
 }
 
 func truncate(s string, maxLen int) string {

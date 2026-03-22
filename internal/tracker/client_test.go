@@ -336,6 +336,64 @@ func TestGitHubGetPRStatus_Merged(t *testing.T) {
 	}
 }
 
+func TestForgejoFindPRByBranch_Found(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]forgejoPR{
+			{Number: 5, State: "open", Merged: false, HTMLURL: "http://git.local/o/r/pulls/5"},
+		})
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "org/repo", "feat/ASE-47-reconnect")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.State != "open" {
+		t.Errorf("State = %q, want open", pr.State)
+	}
+}
+
+func TestForgejoFindPRByBranch_NotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]forgejoPR{})
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "org/repo", "feat/no-pr")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr != nil {
+		t.Errorf("expected nil, got %+v", pr)
+	}
+}
+
+func TestGitHubFindPRByBranch_Merged(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]githubPR{
+			{Number: 10, State: "closed", Merged: true, HTMLURL: "https://github.com/o/r/pull/10"},
+		})
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "owner/repo", "feat/ISSUE-1-test")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+}
+
 func TestForgejoAuthError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)

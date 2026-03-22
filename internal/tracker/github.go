@@ -93,6 +93,31 @@ func (c *GitHubClient) UpdateLabels(ctx context.Context, repo string, id string,
 	return nil
 }
 
+func (c *GitHubClient) FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error) {
+	owner, name := splitRepo(repo)
+	head := fmt.Sprintf("%s:%s", owner, branch)
+	path := fmt.Sprintf("/repos/%s/%s/pulls?state=all&head=%s&per_page=1", owner, name, head)
+
+	var prs []githubPR
+	if err := c.get(ctx, path, &prs); err != nil {
+		return nil, fmt.Errorf("find PR by branch: %w", err)
+	}
+	if len(prs) == 0 {
+		return nil, nil // no PR found yet
+	}
+
+	pr := prs[0]
+	state := pr.State
+	if pr.Merged {
+		state = "merged"
+	}
+	return &PRStatus{
+		ID:    fmt.Sprintf("%d", pr.Number),
+		State: state,
+		URL:   pr.HTMLURL,
+	}, nil
+}
+
 func (c *GitHubClient) GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error) {
 	owner, name := splitRepo(repo)
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%s", owner, name, prID)
