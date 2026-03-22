@@ -105,10 +105,12 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 
 	if msg.Role == "coder" {
 		slot.State = loop.SlotCoding
-	} else {
-		slot.State = loop.SlotReviewing
+		// Poll for PR creation as completion signal (terminal stays open)
+		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
 
+	slot.State = loop.SlotReviewing
+	// Reviewer uses PID monitoring (terminal close = done)
 	return m, m.loopStartWatcherCmd(msg.ProjectID, msg.IssueID, msg.Role)
 }
 
@@ -118,10 +120,7 @@ func (m Model) handleLoopAgentExited(msg LoopAgentExitedMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 
-	if msg.Role == "coder" {
-		slot.State = loop.SlotLaunchingReviewer
-		return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
-	}
+	// Only reviewer uses PID monitoring; coder uses PR polling.
 	slot.State = loop.SlotWaitingPRMerge
 	return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
 }
@@ -137,6 +136,17 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
 
+	// Coding stage: PR appearing = coding done → launch reviewer
+	if slot.State == loop.SlotCoding {
+		if msg.PR != nil {
+			slot.State = loop.SlotLaunchingReviewer
+			return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
+		}
+		// No PR yet, keep polling
+		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
+	}
+
+	// Reviewer stage: PR merged = done → cleanup
 	if msg.PR == nil || msg.PR.State == "open" {
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
