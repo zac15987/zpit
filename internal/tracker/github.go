@@ -31,6 +31,7 @@ type githubLabel struct {
 // githubPR is the JSON shape returned by the GitHub pulls API.
 type githubPR struct {
 	Number  int         `json:"number"`
+	Title   string      `json:"title"`
 	State   string      `json:"state"`
 	Merged  bool        `json:"merged"`
 	HTMLURL string      `json:"html_url"`
@@ -144,6 +145,28 @@ func (c *GitHubClient) GetPRStatus(ctx context.Context, repo string, prID string
 		State: state,
 		URL:   pr.HTMLURL,
 	}, nil
+}
+
+func (c *GitHubClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&per_page=50", owner, name)
+
+	var prs []githubPR
+	if err := c.get(ctx, path, &prs); err != nil {
+		return nil, fmt.Errorf("list open PRs: %w", err)
+	}
+
+	var result []PRInfo
+	for _, pr := range prs {
+		result = append(result, PRInfo{
+			ID:     fmt.Sprintf("%d", pr.Number),
+			Title:  pr.Title,
+			Branch: pr.Head.Ref,
+			State:  pr.State,
+			URL:    pr.HTMLURL,
+		})
+	}
+	return result, nil
 }
 
 func (c *GitHubClient) ListRepoLabels(ctx context.Context, repo string) ([]string, error) {

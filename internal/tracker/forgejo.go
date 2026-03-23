@@ -30,6 +30,7 @@ type forgejoLabel struct {
 // forgejoPR is the JSON shape returned by the Gitea/Forgejo pulls API.
 type forgejoPR struct {
 	Number  int          `json:"number"`
+	Title   string       `json:"title"`
 	State   string       `json:"state"`
 	Merged  bool         `json:"merged"`
 	HTMLURL string       `json:"html_url"`
@@ -140,6 +141,28 @@ func (c *ForgejoClient) GetPRStatus(ctx context.Context, repo string, prID strin
 		State: state,
 		URL:   pr.HTMLURL,
 	}, nil
+}
+
+func (c *ForgejoClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls?state=open&limit=50", owner, name)
+
+	var prs []forgejoPR
+	if err := c.get(ctx, path, &prs); err != nil {
+		return nil, fmt.Errorf("list open PRs: %w", err)
+	}
+
+	var result []PRInfo
+	for _, pr := range prs {
+		result = append(result, PRInfo{
+			ID:     fmt.Sprintf("%d", pr.Number),
+			Title:  pr.Title,
+			Branch: pr.Head.Ref,
+			State:  pr.State,
+			URL:    pr.HTMLURL,
+		})
+	}
+	return result, nil
 }
 
 // forgejoIssueToIssue converts the API response to a canonical Issue.

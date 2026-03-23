@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -244,7 +245,15 @@ func (m Model) renderLoopStatus() string {
 	var b strings.Builder
 	hasContent := false
 
-	for projectID, ls := range m.loops {
+	// Sort project IDs for stable render order.
+	projectIDs := make([]string, 0, len(m.loops))
+	for pid := range m.loops {
+		projectIDs = append(projectIDs, pid)
+	}
+	sort.Strings(projectIDs)
+
+	for _, projectID := range projectIDs {
+		ls := m.loops[projectID]
 		if !ls.Active && len(ls.Slots) == 0 {
 			continue
 		}
@@ -270,7 +279,15 @@ func (m Model) renderLoopStatus() string {
 			continue
 		}
 
-		for _, slot := range ls.Slots {
+		// Sort slot keys for stable render order.
+		slotKeys := make([]string, 0, len(ls.Slots))
+		for k := range ls.Slots {
+			slotKeys = append(slotKeys, k)
+		}
+		sort.Strings(slotKeys)
+
+		for _, key := range slotKeys {
+			slot := ls.Slots[key]
 			icon := iconWorking
 			switch slot.State {
 			case loop.SlotError:

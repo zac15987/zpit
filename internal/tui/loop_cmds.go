@@ -437,6 +437,39 @@ func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
 	})
 }
 
+// loopScanOpenPRsCmd queries open PRs to detect issues waiting for merge.
+func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		prs, err := client.ListOpenPRs(ctx, repo)
+		return LoopOpenPRsMsg{ProjectID: projectID, PRs: prs, Err: err}
+	}
+}
+
+// extractIssueID extracts issue ID from branch name like "feat/19-slug".
+func extractIssueID(branch string) string {
+	after, ok := strings.CutPrefix(branch, "feat/")
+	if !ok {
+		return ""
+	}
+	idx := strings.Index(after, "-")
+	if idx < 0 {
+		return after
+	}
+	return after[:idx]
+}
+
 // loopCheckReviewResultCmd fetches issue labels to determine reviewer verdict.
 func (m Model) loopCheckReviewResultCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)

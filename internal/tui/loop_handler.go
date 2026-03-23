@@ -263,3 +263,35 @@ func findLoopSlotFromWorktree(projectID string, issue tracker.Issue, worktrees [
 	}
 	return nil
 }
+
+func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
+	ls, ok := m.loops[msg.ProjectID]
+	if !ok || !ls.Active {
+		return m, nil
+	}
+	if msg.Err != nil {
+		m.setStatus(fmt.Sprintf("Open PR scan error: %s", msg.Err))
+		return m, nil
+	}
+
+	var cmds []tea.Cmd
+	for _, pr := range msg.PRs {
+		issueID := extractIssueID(pr.Branch)
+		if issueID == "" {
+			continue // not a Zpit-managed branch
+		}
+		key := loop.SlotKey(msg.ProjectID, issueID)
+		if _, exists := ls.Slots[key]; exists {
+			continue // already tracked
+		}
+		ls.Slots[key] = &loop.Slot{
+			ProjectID:  msg.ProjectID,
+			IssueID:    issueID,
+			IssueTitle: pr.Title,
+			BranchName: pr.Branch,
+			State:      loop.SlotWaitingPRMerge,
+		}
+		cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
+	}
+	return m, tea.Batch(cmds...)
+}

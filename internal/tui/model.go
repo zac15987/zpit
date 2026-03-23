@@ -349,6 +349,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoopPRStatus(msg)
 	case LoopCleanupMsg:
 		return m.handleLoopCleanup(msg)
+	case LoopOpenPRsMsg:
+		return m.handleLoopOpenPRs(msg)
 	case loopPollTickMsg:
 		if ls, ok := m.loops[msg.ProjectID]; ok && ls.Active {
 			return m, m.loopPollCmd(msg.ProjectID)
@@ -475,6 +477,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
 		return m, tea.Batch(
 			m.loopCleanupMergedCmd(project.ID),
+			m.loopScanOpenPRsCmd(project.ID),
 			m.loopPollCmd(project.ID),
 		)
 

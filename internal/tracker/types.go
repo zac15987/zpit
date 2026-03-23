@@ -46,6 +46,15 @@ type PRStatus struct {
 	URL   string
 }
 
+// PRInfo contains summary info for an open PR (used by Loop scan).
+type PRInfo struct {
+	ID     string // PR number as string
+	Title  string
+	Branch string // head ref, e.g. "feat/19-docs-readme-md"
+	State  string // "open"
+	URL    string
+}
+
 // LabelDef describes a label that Zpit requires in the tracker.
 type LabelDef struct {
 	Name  string

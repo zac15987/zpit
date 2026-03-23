@@ -120,6 +120,13 @@ type LoopReviewResultMsg struct {
 	Err       error
 }
 
+// LoopOpenPRsMsg carries results of scanning open PRs at loop startup.
+type LoopOpenPRsMsg struct {
+	ProjectID string
+	PRs       []tracker.PRInfo
+	Err       error
+}
+
 // loopPollTickMsg triggers the next poll cycle (unexported).
 type loopPollTickMsg struct{ ProjectID string }
 

@@ -21,6 +21,7 @@ type TrackerClient interface {
 	UpdateLabels(ctx context.Context, repo string, id string, add, remove []string) error
 	GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error)
 	FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error)
+	ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error)
 }
 
 // NewClient creates a TrackerClient for the given provider type.
