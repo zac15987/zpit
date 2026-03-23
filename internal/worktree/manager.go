@@ -92,7 +92,7 @@ func (m *Manager) Remove(repoPath, worktreePath string, deleteBranch bool) error
 		}
 	}
 
-	if _, err := runGit(repoPath, "worktree", "remove", worktreePath); err != nil {
+	if _, err := runGit(repoPath, "worktree", "remove", "--force", worktreePath); err != nil {
 		return fmt.Errorf("removing worktree: %w", err)
 	}
 

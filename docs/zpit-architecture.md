@@ -475,8 +475,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 ## 4. 專案設定檔 (config.toml)
 
+Zpit 的所有資料統一在 `~/.zpit/` 下：
+- `~/.zpit/config.toml` — 設定檔
+- `~/.zpit/logs/` — 日誌（daily rotation，自動清理 30 天以上）
+
+首次啟動時若 config 不存在，自動產生模板（`config.WriteTemplate()`），提示使用者編輯後再啟動。
+
 ```toml
-# ~/.config/zpit/config.toml
+# ~/.zpit/config.toml
 
 # ──────────────────────────────────────────────
 # 終端設定
@@ -700,6 +706,13 @@ done                Done            Done           closed           closed
 每個專案獨立選擇 tracker — 公司機台用 Forgejo/Plane（self-hosted），個人專案用 GitHub Issues。
 新增 tracker 只需：實作 TrackerClient interface + config 加入對應 type + `token_env`。
 Agent 端若需 MCP 操作（推 issue、開 PR），需另外安裝對應 MCP server（`claude mcp add`）。
+
+**Label 自動同步：**
+TUI 啟動時自動檢查每個專案的 tracker repo，確保 Zpit 需要的 6 個 label（pending, todo, wip, review, ai-review, needs-changes）存在。缺少的 label 自動建立（含預設顏色）。失敗不阻塞 TUI，僅在 status bar 顯示警告。同一 tracker+repo 組合只檢查一次（deduplicate）。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
+
+**Agent Tracker 資訊注入**：Zpit 部署 agent 時自動寫入 `.claude/docs/tracker.md`，
+內容依 provider type 產生（Forgejo → gitea MCP / REST API，GitHub → gh CLI / REST API）。
+Agent 讀取此檔案得知該用哪個 API 操作 tracker，`/resume` 也能讀到。
 
 ---
 
@@ -1034,8 +1047,8 @@ CLAUDE.md，自動帶上該專案的架構原則、log 規範、技術棧 contex
 ---
 name: clarifier
 description: 需求釐清與技術顧問。當使用者描述模糊需求時使用。
-tools: Read, Grep, Glob, Bash
-disallowedTools: Write, Edit
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
+disallowedTools: Edit
 ---
 
 你是需求釐清與技術顧問。你的工作是：
@@ -1296,10 +1309,12 @@ disallowedTools: Write, Edit
 
 ## 主動研究行為
 
-Agent（包括 Clarifier 和實作 agent）在以下情況必須主動上網查資料，
-不要用可能過時的訓練資料猜測，也不要等使用者叫你去查：
+Agent（包括 Clarifier 和實作 agent）必須主動上網查資料，
+不要用可能過時的訓練資料猜測，也不要等使用者叫你去查。
+Clarifier agent 每次接到需求都必須用 WebSearch 搜尋最新資訊（強制，非可選）。
 
 ### 必須主動查的情況
+- Clarifier: 每次需求都查（最新文件、最佳實踐、已知問題、版本變更）
 - 不確定某個 API / SDK 的用法或最新版本行為
 - 遇到不認識的錯誤訊息或 exception
 - 使用此專案依賴的第三方函式庫（見下方清單）
@@ -1383,8 +1398,9 @@ D:/Projects/.worktrees/                 ← 所有 worktree 集中管理
 ```
 Issue 進入 In Progress
     │
-    ├─ 1. 從 dev 建立 branch（agent 自行決定 feat/fix 等前綴）
-    │     git branch feat/ASE-47-ethercat-reconnect dev
+    ├─ 1. 從 base branch 建立 feature branch（branch 由 Zpit 統一用 feat/ 前綴）
+    │     git branch feat/ASE-47-ethercat-reconnect {base_branch}
+    │     base branch 來源：Issue Spec ## BRANCH > project config base_branch
     │     （branch 名必須包含 issue ID）
     │
     ├─ 2. 建立 worktree
@@ -1458,7 +1474,8 @@ TUI 按 [l]
 │  │    如果 >= max_per_project → 等待                      │
 │  │                                                        │
 │  │ 3. Zpit 建立 branch + worktree + hook config           │
-│  │    git branch feat/ISSUE-ID-slug dev                   │
+│  │    base branch = Issue Spec ## BRANCH || config        │
+│  │    git branch feat/ISSUE-ID-slug {base_branch}         │
 │  │    git worktree add <path> feat/ISSUE-ID-slug          │
 │  │    SetupHookMode() 配置 settings.local.json            │
 │  │    （branch 統一用 feat/ 前綴，PR title 由 agent 決定  │
@@ -1475,16 +1492,25 @@ TUI 按 [l]
 │  │    Agent 自己負責: build, test, commit,                │
 │  │                    開 PR (MCP), 更新 status (MCP)      │
 │  │                                                        │
-│  │ 6. 等待 coding agent 結束（監控 process exit）         │
+│  │ 6. 輪詢 PR 出現（每 60 秒 FindPRByBranch）             │
+│  │    PR 出現 = coding agent 完成（終端保留不用關）       │
 │  │                                                        │
 │  │ 7. 啟動 reviewer agent（同一 worktree，唯讀）          │
 │  │    Agent 自己負責: 讀 diff, 檢查 AC, 寫 comment (MCP) │
 │  │                                                        │
-│  │ 8. 等待 reviewer 結束                                  │
+│  │ 8. 等待 reviewer 結束（監控 PID exit）                 │
 │  │                                                        │
-│  │ 9. 回到步驟 1 抓下一個 issue                           │
-│  │    （平行化的關鍵：做完一個就去抓下一個，              │
-│  │      不用等你 review 完）                               │
+│  │ 9. 檢查 review 結果（透過 issue labels 判定）          │
+│  │    ├─ ai-review label → PASS → 等待 PR merge           │
+│  │    ├─ needs-changes label → NEEDS CHANGES               │
+│  │    │  └─ round < max_review_rounds?                     │
+│  │    │     ├─ 是 → 回到步驟 4 寫修正版 prompt，重跑 coder│
+│  │    │     └─ 否 → 進入 NeedsHuman 狀態，通知你介入      │
+│  │    └─ 都沒有 → reviewer 可能 crash → Error              │
+│  │                                                        │
+│  │ 10. 回到步驟 1 抓下一個 issue                          │
+│  │     （平行化的關鍵：做完一個就去抓下一個，             │
+│  │       不用等你 review 完）                              │
 │  │                                                        │
 │  └────────────────────────────────────────────────────────┘
 │
@@ -1682,7 +1708,7 @@ WSL 環境下也可以透過 `powershell.exe` 呼叫 Windows 通知系統。
 |------|---------------|------------|-----------|
 | 實作 agent | Read,Write,Edit,Bash,Grep,Glob | ✓ 建議開啟 | ✓ 全部 hook |
 | Review agent | Read,Grep,Glob,Bash | 可開可不開 | ✓ 全部 hook |
-| Clarifier agent | Read,Grep,Glob,Bash | 可開可不開 | ✓ 全部 hook |
+| Clarifier agent | Read,Grep,Glob,Bash,WebSearch,WebFetch | 可開可不開 | ✓ 全部 hook |
 | 你手動介入 | all permissions | ✓ 你自己判斷 | ✓ hook 仍生效（保護你自己的手誤） |
 | agent teams subagent | 繼承 lead agent | 繼承 | ✓ hook 對 subagent 同樣生效 |
 
@@ -2060,10 +2086,17 @@ echo $?   # 應該是 2
 - [x] Slug 工具（issue title → URL-safe slug）
 
 ### M4b: Loop 引擎 + 自動化（自動化核心）
-- [ ] Loop 引擎實作（抓 todo issue → 建 worktree → 啟動 coding agent → 等結束 → 啟動 reviewer → 下一個）
-- [ ] 同一專案多 agent 平行執行
-- [ ] TUI 加入 [l] loop monitor + worktree 狀態顯示
-- [ ] PR merge 偵測 + 自動清理 worktree
+- [x] Loop 引擎實作（抓 todo → 建 worktree → coding agent → PR 出現觸發 reviewer → PR merge 清理）
+- [x] 同一專案多 agent 平行執行（受 max_per_project 限制）
+- [x] TUI [l] toggle + Loop Status 顯示
+- [x] PR merge 偵測（FindPRByBranch）+ 自動清理 worktree
+- [x] LaunchClaudeInDir — worktree path override
+- [x] Coding 完成信號：PR 出現（非 PID 消失），終端保留
+- [x] NEEDS CHANGES 自動重試（reviewer 判定→重跑 coding→再 review，max_review_rounds 限制）
+- [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
+- [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
+- [x] Label 自動同步：TUI 啟動時檢查 + 建立缺少的 required labels（LabelManager interface）
+- [x] Per-issue branch 控制：Issue Spec `## BRANCH` → coding prompt 強制 PR target、reviewer 驗證、trackerdoc 分支策略
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams
@@ -2072,6 +2105,7 @@ echo $?   # 應該是 2
 - [ ] shared-core 跨專案影響偵測
 - [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
 - [ ] Cross-compile: 同一份 code 編譯 Windows + Linux binary
+- [ ] TUI log area（主畫面底部可捲動事件 log，顯示最近 N 筆）
 
 ### Refine: 體驗優化
 - [ ] 專案 CLAUDE.md 模板（TUI 按鍵觸發 claude /init，已有則跳過）

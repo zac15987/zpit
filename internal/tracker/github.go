@@ -30,10 +30,16 @@ type githubLabel struct {
 
 // githubPR is the JSON shape returned by the GitHub pulls API.
 type githubPR struct {
-	Number  int    `json:"number"`
-	State   string `json:"state"`
-	Merged  bool   `json:"merged"`
-	HTMLURL string `json:"html_url"`
+	Number  int         `json:"number"`
+	Title   string      `json:"title"`
+	State   string      `json:"state"`
+	Merged  bool        `json:"merged"`
+	HTMLURL string      `json:"html_url"`
+	Head    githubPRRef `json:"head"`
+}
+
+type githubPRRef struct {
+	Ref string `json:"ref"` // branch name
 }
 
 func (c *GitHubClient) ListIssues(ctx context.Context, repo string) ([]Issue, error) {
@@ -93,6 +99,34 @@ func (c *GitHubClient) UpdateLabels(ctx context.Context, repo string, id string,
 	return nil
 }
 
+func (c *GitHubClient) FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error) {
+	owner, name := splitRepo(repo)
+	head := fmt.Sprintf("%s:%s", owner, branch)
+	path := fmt.Sprintf("/repos/%s/%s/pulls?state=all&head=%s&per_page=10", owner, name, head)
+
+	var prs []githubPR
+	if err := c.get(ctx, path, &prs); err != nil {
+		return nil, fmt.Errorf("find PR by branch: %w", err)
+	}
+
+	// Client-side validation: head.ref must match exactly.
+	for _, pr := range prs {
+		if pr.Head.Ref != branch {
+			continue
+		}
+		state := pr.State
+		if pr.Merged {
+			state = "merged"
+		}
+		return &PRStatus{
+			ID:    fmt.Sprintf("%d", pr.Number),
+			State: state,
+			URL:   pr.HTMLURL,
+		}, nil
+	}
+	return nil, nil // no matching PR
+}
+
 func (c *GitHubClient) GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error) {
 	owner, name := splitRepo(repo)
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%s", owner, name, prID)
@@ -111,6 +145,57 @@ func (c *GitHubClient) GetPRStatus(ctx context.Context, repo string, prID string
 		State: state,
 		URL:   pr.HTMLURL,
 	}, nil
+}
+
+func (c *GitHubClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&per_page=50", owner, name)
+
+	var prs []githubPR
+	if err := c.get(ctx, path, &prs); err != nil {
+		return nil, fmt.Errorf("list open PRs: %w", err)
+	}
+
+	var result []PRInfo
+	for _, pr := range prs {
+		result = append(result, PRInfo{
+			ID:     fmt.Sprintf("%d", pr.Number),
+			Title:  pr.Title,
+			Branch: pr.Head.Ref,
+			State:  pr.State,
+			URL:    pr.HTMLURL,
+		})
+	}
+	return result, nil
+}
+
+func (c *GitHubClient) ListRepoLabels(ctx context.Context, repo string) ([]string, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/labels?per_page=%d", owner, name, githubPageLimit)
+
+	var labels []githubLabel
+	if err := c.get(ctx, path, &labels); err != nil {
+		return nil, fmt.Errorf("list repo labels: %w", err)
+	}
+
+	names := make([]string, len(labels))
+	for i, l := range labels {
+		names[i] = l.Name
+	}
+	return names, nil
+}
+
+func (c *GitHubClient) CreateLabel(ctx context.Context, repo string, label LabelDef) error {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/labels", owner, name)
+
+	color := strings.TrimPrefix(label.Color, "#")
+	body := struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	}{Name: label.Name, Color: color}
+
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
 
 // githubIssueToIssue converts the API response to a canonical Issue.

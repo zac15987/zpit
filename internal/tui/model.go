@@ -3,22 +3,28 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/notify"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
+	"github.com/zac15987/zpit/internal/worktree"
 )
 
 const (
@@ -52,6 +58,7 @@ type Model struct {
 	env      platform.Environment
 	keys     KeyMap
 	notifier *notify.Notifier
+	logger   *log.Logger
 
 	width  int
 	height int
@@ -86,39 +93,140 @@ type Model struct {
 	// Embedded agent templates
 	clarifierMD []byte
 	reviewerMD  []byte
+
+	// Loop engine state
+	loops     map[string]*loop.LoopState
+	wtManager *worktree.Manager
+
+	// Viewport for scrollable content
+	viewport viewport.Model
 }
 
-// NewModel creates the root TUI model.
-func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
+// NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
+func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.Writer) Model {
+	if logWriter == nil {
+		logWriter = io.Discard
+	}
+	logger := log.New(logWriter, "", log.LstdFlags)
+	logger.Println("zpit started")
+
 	clients := make(map[string]tracker.TrackerClient)
 	for name, provider := range cfg.Providers.Tracker {
 		client, err := tracker.NewClient(provider.Type, provider.URL, provider.TokenEnv)
 		if err != nil {
-			// Token not set or unsupported type — skip silently.
-			// User will see error when pressing [s] on a project using this provider.
+			logger.Printf("tracker client %q init failed: %v", name, err)
 			continue
 		}
 		clients[name] = client
 	}
+	vp := viewport.New(0, 0)
+	vp.MouseWheelEnabled = true
+	vp.MouseWheelDelta = 3
+	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
+
 	return Model{
 		cfg:             cfg,
 		env:             platform.Detect(),
 		keys:            DefaultKeyMap(),
 		notifier:        notify.NewNotifier(cfg.Notification),
+		logger:          logger,
 		currentView:     ViewProjects,
 		projects:        cfg.Projects,
 		activeTerminals: make(map[string]*ActiveTerminal),
 		clients:         clients,
 		clarifierMD:     clarifierMD,
 		reviewerMD:      reviewerMD,
+		loops:           make(map[string]*loop.LoopState),
+		wtManager:       worktree.NewManager(cfg.Worktree),
+		viewport:        vp,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tickCmd()
+	cmds := []tea.Cmd{tickCmd()}
+
+	seenTracker := make(map[string]bool)
+	seenPath := make(map[string]bool)
+	seenMissing := make(map[string]bool)
+	var missingProviders []string
+
+	for _, project := range m.projects {
+		// Ensure .gitignore has Zpit-deployed paths (sync, fast).
+		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		if projectPath != "" && !seenPath[projectPath] {
+			seenPath[projectPath] = true
+			ensureGitignore(projectPath)
+		}
+
+		// Ensure required labels exist (background, non-blocking).
+		if project.Tracker == "" || project.Repo == "" {
+			continue
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			if !seenMissing[project.Tracker] {
+				seenMissing[project.Tracker] = true
+				missingProviders = append(missingProviders, project.Tracker)
+			}
+			continue
+		}
+		key := project.Tracker + ":" + project.Repo
+		if seenTracker[key] {
+			continue
+		}
+		seenTracker[key] = true
+		cmds = append(cmds, m.ensureLabelsCmd(project.ID))
+	}
+
+	if len(missingProviders) > 0 {
+		msg := fmt.Sprintf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
+		m.logger.Println(msg)
+		cmds = append(cmds, func() tea.Msg {
+			return StatusMsg{Text: msg}
+		})
+	}
+
+	return tea.Batch(cmds...)
 }
 
+// fixedChromeHeight returns the number of lines used by non-scrollable UI chrome.
+const fixedChromeLines = 6 // header(1) + blank(1) + blank(1) + status(1) + help(1) + blank(1)
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if mdl, ok := model.(Model); ok {
+		mdl.syncViewportContent()
+		return mdl, cmd
+	}
+	return model, cmd
+}
+
+// syncViewportContent re-renders the scrollable area into the viewport.
+func (m *Model) syncViewportContent() {
+	h := m.height - fixedChromeLines
+	if h < 1 {
+		h = 1
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = h
+
+	switch m.currentView {
+	case ViewProjects:
+		m.viewport.SetContent(m.renderProjectsScrollable())
+	case ViewStatus:
+		m.viewport.SetContent(m.renderStatusScrollable())
+	}
+}
+
+// ensureCursorVisible adjusts the viewport offset so the given line is on screen.
+func (m *Model) ensureCursorVisible(cursorLine int) {
+	if cursorLine < m.viewport.YOffset {
+		m.viewport.SetYOffset(cursorLine)
+	} else if cursorLine >= m.viewport.YOffset+m.viewport.Height {
+		m.viewport.SetYOffset(cursorLine - m.viewport.Height + 1)
+	}
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// If confirm dialog is active, route messages to it (but keep tick alive).
 	if m.confirmForm != nil {
 		// Let tick through so the UI stays responsive after confirm closes.
@@ -149,6 +257,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -185,6 +298,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(msg.Text)
 		return m, nil
 
+	case LabelsEnsuredMsg:
+		if msg.Err != nil {
+			m.setStatus(fmt.Sprintf("⚠ %s: label sync failed: %s", m.projectName(msg.ProjectID), msg.Err))
+		} else if len(msg.Created) > 0 {
+			m.setStatus(fmt.Sprintf("Created labels for %s: %s",
+				m.projectName(msg.ProjectID), strings.Join(msg.Created, ", ")))
+		}
+		return m, nil
+
 	case IssuesLoadedMsg:
 		if msg.ProjectID == m.statusProjectID {
 			m.statusLoading = false
@@ -210,6 +332,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Loop engine messages
+	case LoopPollMsg:
+		return m.handleLoopPoll(msg)
+	case LoopWorktreeCreatedMsg:
+		return m.handleLoopWorktreeCreated(msg)
+	case LoopAgentWrittenMsg:
+		return m.handleLoopAgentWritten(msg)
+	case LoopAgentLaunchedMsg:
+		return m.handleLoopAgentLaunched(msg)
+	case LoopAgentExitedMsg:
+		return m.handleLoopAgentExited(msg)
+	case LoopReviewResultMsg:
+		return m.handleLoopReviewResult(msg)
+	case LoopPRStatusMsg:
+		return m.handleLoopPRStatus(msg)
+	case LoopCleanupMsg:
+		return m.handleLoopCleanup(msg)
+	case LoopOpenPRsMsg:
+		return m.handleLoopOpenPRs(msg)
+	case loopPollTickMsg:
+		if ls, ok := m.loops[msg.ProjectID]; ok && ls.Active {
+			return m, m.loopPollCmd(msg.ProjectID)
+		}
+		return m, nil
+	case loopPRPollTickMsg:
+		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+
 	}
 
 	return m, nil
@@ -232,6 +381,7 @@ func (m Model) View() string {
 func (m *Model) setStatus(text string) {
 	m.statusMessage = text
 	m.statusExpiry = time.Now().Add(statusDisplayDuration)
+	m.logger.Println(text)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -246,6 +396,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
+		}
+		for _, ls := range m.loops {
+			ls.Active = false
 		}
 		return m, tea.Quit
 	}
@@ -266,11 +419,13 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.ensureCursorVisible(m.cursor * 3) // each project = 3 lines (name + detail + blank)
 
 	case key.Matches(msg, m.keys.Down):
 		if m.cursor < len(m.projects)-1 {
 			m.cursor++
 		}
+		m.ensureCursorVisible(m.cursor * 3)
 
 	case key.Matches(msg, m.keys.Enter):
 		return m, m.launchClaudeCmd()
@@ -299,7 +454,32 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.launchClarifierCmd()
 
 	case key.Matches(msg, m.keys.Loop):
-		m.setStatus("[l] Loop — coming in M4")
+		project := m.projects[m.cursor]
+		if project.Tracker == "" {
+			m.setStatus("No tracker configured for this project")
+			return m, nil
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus("Tracker token not set")
+			return m, nil
+		}
+		// Toggle loop on/off
+		if ls, ok := m.loops[project.ID]; ok && ls.Active {
+			ls.Active = false
+			m.setStatus(fmt.Sprintf("Loop stopped for %s", project.Name))
+			return m, nil
+		}
+		ls := &loop.LoopState{
+			Active: true,
+			Slots:  make(map[string]*loop.Slot),
+		}
+		m.loops[project.ID] = ls
+		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
+		return m, tea.Batch(
+			m.loopCleanupMergedCmd(project.ID),
+			m.loopScanOpenPRsCmd(project.ID),
+			m.loopPollCmd(project.ID),
+		)
 
 	case key.Matches(msg, m.keys.Review):
 		project := m.projects[m.cursor]
@@ -329,6 +509,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusCursor = 0
 		m.statusLoading = true
 		m.statusError = ""
+		m.viewport.GotoTop()
 		return m, m.loadIssuesCmd()
 
 	case key.Matches(msg, m.keys.Add):
@@ -348,17 +529,20 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Back):
 		m.currentView = ViewProjects
+		m.viewport.GotoTop()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Up):
 		if m.statusCursor > 0 {
 			m.statusCursor--
 		}
+		m.ensureCursorVisible(m.statusCursor + 3) // +3 for title + separator + blank line
 
 	case key.Matches(msg, m.keys.Down):
 		if m.statusCursor < len(m.statusIssues)-1 {
 			m.statusCursor++
 		}
+		m.ensureCursorVisible(m.statusCursor + 3)
 
 	case key.Matches(msg, m.keys.Confirm):
 		return m, m.confirmIssueCmd()
@@ -645,6 +829,8 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	clarifierMD := m.clarifierMD
 	cfg := m.cfg.Terminal
 
+	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
+
 	return func() tea.Msg {
 		// Deploy: create .claude/agents/ and write clarifier.md
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -654,6 +840,10 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		agentPath := filepath.Join(agentDir, "clarifier.md")
 		if err := os.WriteFile(agentPath, clarifierMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+		// Deploy tracker.md
+		if err := deployTracker(); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy tracker doc failed: %s", err)}
 		}
 
 		// Launch
@@ -699,6 +889,75 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 		defer cancel()
 		issues, err := client.ListIssues(ctx, repo)
 		return IssuesLoadedMsg{ProjectID: project.ID, Issues: issues, Err: err}
+	}
+}
+
+// zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
+var zpitIgnoreRules = []string{
+	".claude/agents/",
+	".claude/docs/tracker.md",
+	".claude/settings.local.json",
+}
+
+// ensureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
+func ensureGitignore(projectPath string) {
+	gitignorePath := filepath.Join(projectPath, ".gitignore")
+
+	content, _ := os.ReadFile(gitignorePath)
+	existing := make(map[string]bool)
+	for _, line := range strings.Split(string(content), "\n") {
+		existing[strings.TrimSpace(line)] = true
+	}
+
+	var missing []string
+	for _, rule := range zpitIgnoreRules {
+		if !existing[rule] {
+			missing = append(missing, rule)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	var buf strings.Builder
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		buf.WriteByte('\n')
+	}
+	buf.WriteString("\n# Zpit auto-deploy\n")
+	for _, rule := range missing {
+		buf.WriteString(rule)
+		buf.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(buf.String())
+}
+
+// ensureLabelsCmd checks and creates missing required labels for a project's tracker.
+func (m Model) ensureLabelsCmd(projectID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	lm, ok := client.(tracker.LabelManager)
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		created, err := tracker.EnsureLabels(ctx, lm, repo, tracker.RequiredLabels)
+		return LabelsEnsuredMsg{ProjectID: projectID, Created: created, Err: err}
 	}
 }
 
@@ -792,6 +1051,7 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	reviewerMD := m.reviewerMD
 	cfg := m.cfg.Terminal
+	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
 
 	return func() tea.Msg {
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -802,6 +1062,7 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 		if err := os.WriteFile(agentPath, reviewerMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
+		_ = deployTracker()
 
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
 		return LaunchResultMsg{
@@ -810,6 +1071,20 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 			Err:       err,
 		}
 	}
+}
+
+// deployTrackerDoc writes .claude/docs/tracker.md to the target directory.
+func (m Model) deployTrackerDoc(targetPath string, project *config.ProjectConfig) error {
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return nil // no tracker configured, skip silently
+	}
+	docsDir := filepath.Join(targetPath, ".claude", "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		return fmt.Errorf("creating .claude/docs: %w", err)
+	}
+	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+	return os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(content), 0o644)
 }
 
 // openInBrowser opens a URL in the default browser.

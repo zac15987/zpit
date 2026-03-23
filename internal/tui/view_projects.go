@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/watcher"
 )
 
@@ -33,11 +35,21 @@ var profileIcons = map[string]string{
 
 func (m Model) viewProjects() string {
 	var b strings.Builder
+	b.WriteString(m.renderProjectsHeader())
+	b.WriteString(m.viewport.View())
+	b.WriteString("\n")
+	b.WriteString(m.renderProjectsFooter())
+	return b.String()
+}
 
-	// Header bar
-	header := m.renderHeader()
-	b.WriteString(header)
-	b.WriteString("\n\n")
+// renderProjectsHeader returns the fixed header above the scrollable area.
+func (m Model) renderProjectsHeader() string {
+	return m.renderHeader() + "\n\n"
+}
+
+// renderProjectsScrollable returns the scrollable content for the projects view.
+func (m Model) renderProjectsScrollable() string {
+	var b strings.Builder
 
 	// Two-column: project list + hotkeys
 	left := m.renderProjectList()
@@ -51,14 +63,24 @@ func (m Model) viewProjects() string {
 		b.WriteString(m.renderActiveTerminals())
 	}
 
-	// Status bar
-	b.WriteString("\n\n")
+	// Loop status (if any)
+	loopStatus := m.renderLoopStatus()
+	if loopStatus != "" {
+		b.WriteString("\n\n")
+		b.WriteString(loopStatus)
+	}
+
+	return b.String()
+}
+
+// renderProjectsFooter returns the fixed footer below the scrollable area.
+func (m Model) renderProjectsFooter() string {
+	var b strings.Builder
 	if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
-		b.WriteString(statusBarStyle.Render(" "+m.statusMessage+" "))
+		b.WriteString(statusBarStyle.Render(" " + m.statusMessage + " "))
 	}
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("Press ? for help, q to quit"))
-
 	return b.String()
 }
 
@@ -217,6 +239,86 @@ func formatElapsed(d time.Duration) string {
 	m := int(d.Minutes())
 	s := int(d.Seconds()) % 60
 	return fmt.Sprintf("%02d:%02d", m, s)
+}
+
+func (m Model) renderLoopStatus() string {
+	var b strings.Builder
+	hasContent := false
+
+	// Sort project IDs for stable render order.
+	projectIDs := make([]string, 0, len(m.loops))
+	for pid := range m.loops {
+		projectIDs = append(projectIDs, pid)
+	}
+	sort.Strings(projectIDs)
+
+	for _, projectID := range projectIDs {
+		ls := m.loops[projectID]
+		if !ls.Active && len(ls.Slots) == 0 {
+			continue
+		}
+		if !hasContent {
+			b.WriteString(sectionTitleStyle.Render("Loop Status"))
+			b.WriteString("\n")
+			b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
+			hasContent = true
+		}
+
+		projectName := m.projectName(projectID)
+		status := "running"
+		if !ls.Active {
+			status = "stopping"
+		}
+		b.WriteString(fmt.Sprintf("  %s (%s)\n",
+			selectedStyle.Render(projectName),
+			detailStyle.Render(status),
+		))
+
+		if len(ls.Slots) == 0 {
+			b.WriteString(fmt.Sprintf("    %s\n", detailStyle.Render("polling for issues...")))
+			continue
+		}
+
+		// Sort slot keys for stable render order.
+		slotKeys := make([]string, 0, len(ls.Slots))
+		for k := range ls.Slots {
+			slotKeys = append(slotKeys, k)
+		}
+		sort.Strings(slotKeys)
+
+		for _, key := range slotKeys {
+			slot := ls.Slots[key]
+			icon := iconWorking
+			switch slot.State {
+			case loop.SlotError:
+				icon = "🔴"
+			case loop.SlotCheckingReview:
+				icon = "🔍"
+			case loop.SlotNeedsHuman:
+				icon = "🟠"
+			case loop.SlotWaitingPRMerge:
+				icon = iconWaiting
+			case loop.SlotDone:
+				icon = "✅"
+			}
+			stateText := slot.State.String()
+			if slot.ReviewRound > 0 {
+				stateText += fmt.Sprintf(" (round %d/%d)", slot.ReviewRound, m.cfg.Worktree.MaxReviewRounds)
+			}
+			b.WriteString(fmt.Sprintf("    %s #%s %s  %s\n",
+				icon, slot.IssueID,
+				truncate(slot.IssueTitle, 35),
+				detailStyle.Render(stateText),
+			))
+			if slot.Error != nil {
+				b.WriteString(fmt.Sprintf("      %s\n",
+					detailStyle.Render(slot.Error.Error()),
+				))
+			}
+		}
+	}
+
+	return b.String()
 }
 
 func truncate(s string, maxLen int) string {

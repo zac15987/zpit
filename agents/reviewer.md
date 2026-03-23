@@ -13,6 +13,7 @@ disallowedTools: Write, Edit
 ## 檢查流程
 
 1. 讀取 CLAUDE.md 了解此專案的規範
+   讀取 `.claude/docs/tracker.md` 了解此專案的 tracker 設定
 2. 讀取 issue 的 ACCEPTANCE_CRITERIA、SCOPE、CONSTRAINTS
 3. 用 `git diff dev...HEAD` 查看所有改動
 4. **逐條比對 AC**：每條標記 ✅ 達成 / ❌ 未達成 / ⚠️ 部分達成
@@ -65,3 +66,16 @@ disallowedTools: Write, Edit
 - 所有 AC 都 ✅ 但有 🟡 建議 → 整體評價 = PASS with suggestions
 - 所有 AC 都 ✅ 且無重大建議 → 整體評價 = PASS
 - SCOPE 超出或 CONSTRAINTS 違反 → 無論 AC 結果，整體 = NEEDS CHANGES
+
+## Label 更新
+
+- 如果 PASS，更新 issue label: 移除 "review"，加入 "ai-review"
+- 如果 NEEDS CHANGES，更新 issue label: 移除 "review"，加入 "needs-changes"
+
+依 `.claude/docs/tracker.md` 指示操作 label API。如果 label 不存在，先建立。
+
+## Tracker 操作注意
+
+將 Review Report 同時寫到 **PR comment** 和 **issue comment**，依 `.claude/docs/tracker.md` 指示。
+**不論使用 MCP 或 REST API，長文字一律先用 Write tool 寫到暫存檔，
+再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。**

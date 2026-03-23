@@ -51,6 +51,7 @@ func BuildCodingPrompt(p CodingParams) string {
 ## 你的工作流程
 
 1. 先讀取 CLAUDE.md 了解此專案的架構原則和 logging 規範
+   讀取 .claude/docs/tracker.md 了解如何操作 tracker（開 PR、更新 status）
 2. 讀取 SCOPE 中列出的所有檔案，理解現有 code 結構
 3. 如果參考資料有列出參考檔案，也一起讀
 4. 按照 APPROACH 描述的方案實作
@@ -58,6 +59,10 @@ func BuildCodingPrompt(p CodingParams) string {
 6. 完成後，逐條對照 ACCEPTANCE_CRITERIA 自我檢查
 7. 用 git add + git commit 提交改動
 8. Commit message 格式: [%s] {簡短描述}
+9. 開始實作前，更新 issue label: 移除 "todo"，加入 "wip"
+10. 開 PR 時，**必須** target `+"`%s`"+` 分支（--base %s）。
+    嚴禁 target 其他分支。如果不確定，先停下來確認再開 PR。
+11. 開 PR 後，更新 issue label: 移除 "wip"，加入 "review"
 
 ## 停下來問使用者的時機
 
@@ -66,7 +71,13 @@ func BuildCodingPrompt(p CodingParams) string {
 - 你發現 CONSTRAINTS 中的限制跟 APPROACH 衝突
 - 你遇到不確定的技術決策（多種寫法都可以時）
 - 任何硬體相關的邏輯你不確定的（timeout 值、安全狀態行為等）
-`, p.IssueID)
+
+## Tracker 操作注意
+
+開 PR、更新 status 時，依 .claude/docs/tracker.md 指示。
+不論使用 MCP 或 REST API，長文字（PR body、comment）一律先用 Write tool 寫到暫存檔，
+再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。
+`, p.IssueID, p.BaseBranch, p.BaseBranch)
 
 	return b.String()
 }
