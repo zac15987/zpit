@@ -37,22 +37,23 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 	result := BuildCodingPrompt(p)
 
 	checks := []string{
+		"Always respond in Traditional Chinese (zh-TW).",
 		"ASE-47",
 		"EtherCAT reconnect backoff",
-		"EtherCAT reconnect 沒有 backoff",     // CONTEXT
-		"ReconnectAsync",                       // APPROACH
-		"AC-1:",                                // AC
-		"AC-3:",                                // AC
-		"[modify] src/EtherCatService.cs",      // SCOPE
-		"[create] src/RetryPolicy.cs",          // SCOPE
-		"不可改動",                                // CONSTRAINTS
-		"PlcService.cs",                        // REFERENCES
-		"所有 Service 方法必須有進出 log",             // log policy strict
-		"Commit message 格式: [ASE-47]",         // workflow
-		"超出此範圍的檔案不要碰",                       // scope warning
-		"停下來問使用者的時機",                          // stop conditions
-		"必須",                                   // PR target branch
-		"--base dev",                            // PR target branch flag
+		"EtherCAT reconnect 沒有 backoff",                      // CONTEXT
+		"ReconnectAsync",                                       // APPROACH
+		"AC-1:",                                                // AC
+		"AC-3:",                                                // AC
+		"[modify] src/EtherCatService.cs",                      // SCOPE
+		"[create] src/RetryPolicy.cs",                          // SCOPE
+		"不可改動",                                                // CONSTRAINTS
+		"PlcService.cs",                                        // REFERENCES
+		"All Service methods must have entry/exit logs",        // log policy strict
+		"Commit message format: [ASE-47]",                      // workflow
+		"Do not touch files outside this scope",                // scope warning
+		"When to Stop and Ask the User",                        // stop conditions
+		"must",                                                 // PR target branch
+		"--base dev",                                           // PR target branch flag
 	}
 
 	for _, c := range checks {
@@ -74,7 +75,7 @@ func TestBuildCodingPrompt_NoReferences(t *testing.T) {
 		BaseBranch: "dev",
 	})
 
-	if strings.Contains(result, "## 參考資料") {
+	if strings.Contains(result, "## References") {
 		t.Error("should not contain references section when empty")
 	}
 }
@@ -84,9 +85,9 @@ func TestBuildCodingPrompt_LogPolicies(t *testing.T) {
 		policy string
 		expect string
 	}{
-		{"strict", "所有 Service 方法必須有進出 log"},
-		{"standard", "Service 方法有進出 log"},
-		{"minimal", "只需記錄錯誤和關鍵操作"},
+		{"strict", "All Service methods must have entry/exit logs"},
+		{"standard", "Service methods must have entry/exit logs"},
+		{"minimal", "Only log errors and critical operations"},
 	}
 
 	for _, tt := range tests {
@@ -132,18 +133,19 @@ func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 	result := BuildReviewerPrompt(p)
 
 	checks := []string{
+		"Always respond in Traditional Chinese (zh-TW).",
 		"ASE-47",
-		"review issue",
-		"原始需求",
-		"預期方案",
-		"驗收標準",
+		"review",
+		"Original Requirements",
+		"Expected Approach",
+		"Acceptance Criteria",
 		"AC-1:",
 		"[modify] src/EtherCatService.cs",
-		"限制條件",
-		"git diff dev...HEAD",                    // uses base branch
-		"target branch",                          // branch verification step
-		"code-construction-principles.md",        // quality check
-		"所有 Service 方法必須有進出 log",               // log policy
+		"Constraints",
+		"git diff dev...HEAD",                            // uses base branch
+		"target branch",                                  // branch verification step
+		"code-construction-principles.md",                // quality check
+		"All Service methods must have entry/exit logs",  // log policy
 	}
 
 	for _, c := range checks {

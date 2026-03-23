@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/notify"
 	"github.com/zac15987/zpit/internal/platform"
@@ -439,7 +440,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Clarify):
 		project := m.projects[m.cursor]
 		if project.Tracker == "" {
-			m.setStatus("No tracker configured for this project")
+			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
 		agentPath := filepath.Join(
@@ -456,11 +457,11 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Loop):
 		project := m.projects[m.cursor]
 		if project.Tracker == "" {
-			m.setStatus("No tracker configured for this project")
+			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
 		if _, ok := m.clients[project.Tracker]; !ok {
-			m.setStatus("Tracker token not set")
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
 			return m, nil
 		}
 		// Toggle loop on/off
@@ -484,7 +485,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Review):
 		project := m.projects[m.cursor]
 		if project.Tracker == "" {
-			m.setStatus("No tracker configured for this project")
+			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
 		agentPath := filepath.Join(
@@ -500,7 +501,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Status):
 		project := m.projects[m.cursor]
 		if project.Tracker == "" {
-			m.setStatus("No tracker configured for this project")
+			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
 		m.currentView = ViewStatus
@@ -513,13 +514,13 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadIssuesCmd()
 
 	case key.Matches(msg, m.keys.Add):
-		m.setStatus("[a] Add Project — coming in M5")
+		m.setStatus(locale.T(locale.KeyAddProjectStub))
 
 	case key.Matches(msg, m.keys.EditConfig):
-		m.setStatus("[e] Edit Config — coming in M5")
+		m.setStatus(locale.T(locale.KeyEditConfigStub))
 
 	case key.Matches(msg, m.keys.Help):
-		m.setStatus("[?] Help — coming soon")
+		m.setStatus(locale.T(locale.KeyHelpStub))
 	}
 
 	return m, nil
@@ -811,9 +812,9 @@ func (m *Model) showDeployConfirm() {
 	m.confirmForm = huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Clarifier agent 未部署至此專案，是否部署？").
-				Affirmative("部署並啟動").
-				Negative("取消").
+				Title(locale.T(locale.KeyClarifierNotDeployed)).
+				Affirmative(locale.T(locale.KeyDeployAndLaunch)).
+				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),
 	)
@@ -862,7 +863,7 @@ func (m Model) openTrackerCmd() tea.Cmd {
 	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
 	if !ok {
 		return func() tea.Msg {
-			return StatusMsg{Text: "No tracker configured for this project"}
+			return StatusMsg{Text: locale.T(locale.KeyNoTrackerConfigured)}
 		}
 	}
 	url := tracker.BuildTrackerURL(provider, project.Repo)
@@ -1034,9 +1035,9 @@ func (m *Model) showReviewerDeployConfirm() {
 	m.confirmForm = huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Reviewer agent 未部署至此專案，是否部署？").
-				Affirmative("部署並啟動").
-				Negative("取消").
+				Title(locale.T(locale.KeyReviewerNotDeployed)).
+				Affirmative(locale.T(locale.KeyDeployAndLaunch)).
+				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),
 	)

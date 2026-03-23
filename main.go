@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/tui"
 )
 
@@ -47,6 +48,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Config at: %s\n", cfgPath)
 		os.Exit(1)
 	}
+
+	locale.SetLanguage(cfg.Language)
 
 	if len(cfg.Projects) == 0 {
 		fmt.Fprintf(os.Stderr, "No projects defined in %s\n", cfgPath)
