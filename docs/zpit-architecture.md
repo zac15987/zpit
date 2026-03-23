@@ -701,6 +701,9 @@ done                Done            Done           closed           closed
 新增 tracker 只需：實作 TrackerClient interface + config 加入對應 type + `token_env`。
 Agent 端若需 MCP 操作（推 issue、開 PR），需另外安裝對應 MCP server（`claude mcp add`）。
 
+**Label 自動同步：**
+TUI 啟動時自動檢查每個專案的 tracker repo，確保 Zpit 需要的 6 個 label（pending, todo, wip, review, ai-review, needs-changes）存在。缺少的 label 自動建立（含預設顏色）。失敗不阻塞 TUI，僅在 status bar 顯示警告。同一 tracker+repo 組合只檢查一次（deduplicate）。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
+
 **Agent Tracker 資訊注入**：Zpit 部署 agent 時自動寫入 `.claude/docs/tracker.md`，
 內容依 provider type 產生（Forgejo → gitea MCP / REST API，GitHub → gh CLI / REST API）。
 Agent 讀取此檔案得知該用哪個 API 操作 tracker，`/resume` 也能讀到。
@@ -1300,10 +1303,12 @@ disallowedTools: Write, Edit
 
 ## 主動研究行為
 
-Agent（包括 Clarifier 和實作 agent）在以下情況必須主動上網查資料，
-不要用可能過時的訓練資料猜測，也不要等使用者叫你去查：
+Agent（包括 Clarifier 和實作 agent）必須主動上網查資料，
+不要用可能過時的訓練資料猜測，也不要等使用者叫你去查。
+Clarifier agent 每次接到需求都必須用 WebSearch 搜尋最新資訊（強制，非可選）。
 
 ### 必須主動查的情況
+- Clarifier: 每次需求都查（最新文件、最佳實踐、已知問題、版本變更）
 - 不確定某個 API / SDK 的用法或最新版本行為
 - 遇到不認識的錯誤訊息或 exception
 - 使用此專案依賴的第三方函式庫（見下方清單）
@@ -1695,7 +1700,7 @@ WSL 環境下也可以透過 `powershell.exe` 呼叫 Windows 通知系統。
 |------|---------------|------------|-----------|
 | 實作 agent | Read,Write,Edit,Bash,Grep,Glob | ✓ 建議開啟 | ✓ 全部 hook |
 | Review agent | Read,Grep,Glob,Bash | 可開可不開 | ✓ 全部 hook |
-| Clarifier agent | Read,Grep,Glob,Bash | 可開可不開 | ✓ 全部 hook |
+| Clarifier agent | Read,Grep,Glob,Bash,WebSearch,WebFetch | 可開可不開 | ✓ 全部 hook |
 | 你手動介入 | all permissions | ✓ 你自己判斷 | ✓ hook 仍生效（保護你自己的手誤） |
 | agent teams subagent | 繼承 lead agent | 繼承 | ✓ hook 對 subagent 同樣生效 |
 
@@ -2082,6 +2087,7 @@ echo $?   # 應該是 2
 - [x] NEEDS CHANGES 自動重試（reviewer 判定→重跑 coding→再 review，max_review_rounds 限制）
 - [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
 - [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
+- [x] Label 自動同步：TUI 啟動時檢查 + 建立缺少的 required labels（LabelManager interface）
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams

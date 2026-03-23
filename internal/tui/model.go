@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -123,7 +124,26 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tickCmd()
+	cmds := []tea.Cmd{tickCmd()}
+
+	// Ensure required labels exist for each project's tracker (background, non-blocking).
+	seen := make(map[string]bool)
+	for _, project := range m.projects {
+		if project.Tracker == "" || project.Repo == "" {
+			continue
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			continue
+		}
+		key := project.Tracker + ":" + project.Repo
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		cmds = append(cmds, m.ensureLabelsCmd(project.ID))
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -191,6 +211,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StatusMsg:
 		m.setStatus(msg.Text)
+		return m, nil
+
+	case LabelsEnsuredMsg:
+		if msg.Err != nil {
+			m.setStatus(fmt.Sprintf("⚠ %s: label sync failed: %s", m.projectName(msg.ProjectID), msg.Err))
+		} else if len(msg.Created) > 0 {
+			m.setStatus(fmt.Sprintf("Created labels for %s: %s",
+				m.projectName(msg.ProjectID), strings.Join(msg.Created, ", ")))
+		}
 		return m, nil
 
 	case IssuesLoadedMsg:
@@ -765,6 +794,30 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 		defer cancel()
 		issues, err := client.ListIssues(ctx, repo)
 		return IssuesLoadedMsg{ProjectID: project.ID, Issues: issues, Err: err}
+	}
+}
+
+// ensureLabelsCmd checks and creates missing required labels for a project's tracker.
+func (m Model) ensureLabelsCmd(projectID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	lm, ok := client.(tracker.LabelManager)
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		created, err := tracker.EnsureLabels(ctx, lm, repo, tracker.RequiredLabels)
+		return LabelsEnsuredMsg{ProjectID: projectID, Created: created, Err: err}
 	}
 }
 

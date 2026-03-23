@@ -45,3 +45,19 @@ type PRStatus struct {
 	State string // "open", "merged", "closed"
 	URL   string
 }
+
+// LabelDef describes a label that Zpit requires in the tracker.
+type LabelDef struct {
+	Name  string
+	Color string // hex with #, e.g. "#0075ca"
+}
+
+// RequiredLabels is the set of labels Zpit expects in every project's tracker.
+var RequiredLabels = []LabelDef{
+	{Name: "pending", Color: "#bfd4f2"},
+	{Name: "todo", Color: "#0075ca"},
+	{Name: "wip", Color: "#e4e669"},
+	{Name: "review", Color: "#d876e3"},
+	{Name: "ai-review", Color: "#0e8a16"},
+	{Name: "needs-changes", Color: "#d93f0b"},
+}

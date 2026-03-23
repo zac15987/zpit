@@ -189,3 +189,31 @@ func resolveNewLabelIDs(current, repoLabels []forgejoLabel, add, remove []string
 	}
 	return ids
 }
+
+func (c *ForgejoClient) ListRepoLabels(ctx context.Context, repo string) ([]string, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/labels?limit=%d", owner, name, forgejoPageLimit)
+
+	var labels []forgejoLabel
+	if err := c.get(ctx, path, &labels); err != nil {
+		return nil, fmt.Errorf("list repo labels: %w", err)
+	}
+
+	names := make([]string, len(labels))
+	for i, l := range labels {
+		names[i] = l.Name
+	}
+	return names, nil
+}
+
+func (c *ForgejoClient) CreateLabel(ctx context.Context, repo string, label LabelDef) error {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/labels", owner, name)
+
+	body := struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	}{Name: label.Name, Color: label.Color}
+
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
+}

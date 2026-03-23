@@ -59,6 +59,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
 - Loop Status display in TUI main view
 - Multi-agent parallel execution (max_per_project worktrees)
+- Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
 
 ### What's stubbed (shows "coming in MX" message)
 - `[a]` Add Project → M5
@@ -125,12 +126,14 @@ internal/
 │   ├── revision.go              # BuildRevisionPrompt() — Issue Spec → revision coding prompt (NEEDS CHANGES retry)
 │   └── prompt_test.go           # 5 prompt assembly tests
 └── tracker/
-    ├── types.go                 # Issue/PR structs + canonical status constants
+    ├── types.go                 # Issue/PR structs + canonical status constants + LabelDef + RequiredLabels
     ├── client.go                # TrackerClient interface + NewClient factory + MapLabelsToStatus
+    ├── labels.go                # LabelManager interface + EnsureLabels (startup label sync)
     ├── restapi.go               # Shared REST HTTP helper (restClient, doJSON, splitRepo)
     ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API v1
     ├── github.go                # GitHubClient: GitHub REST API
     ├── client_test.go           # 14 client tests (httptest mock)
+    ├── labels_test.go           # 9 label tests (mock + httptest)
     ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec
     ├── issuespec_test.go        # 12 tests
     ├── urls.go                  # BuildIssueURL + BuildTrackerURL

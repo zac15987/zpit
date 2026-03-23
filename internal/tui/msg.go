@@ -49,6 +49,13 @@ type IssueConfirmedMsg struct {
 	Err       error
 }
 
+// LabelsEnsuredMsg carries the result of ensuring required labels exist in a project's tracker.
+type LabelsEnsuredMsg struct {
+	ProjectID string
+	Created   []string
+	Err       error
+}
+
 // --- Loop engine messages ---
 
 // LoopPollMsg carries results of polling tracker for todo issues.

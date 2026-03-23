@@ -146,6 +146,35 @@ func (c *GitHubClient) GetPRStatus(ctx context.Context, repo string, prID string
 	}, nil
 }
 
+func (c *GitHubClient) ListRepoLabels(ctx context.Context, repo string) ([]string, error) {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/labels?per_page=%d", owner, name, githubPageLimit)
+
+	var labels []githubLabel
+	if err := c.get(ctx, path, &labels); err != nil {
+		return nil, fmt.Errorf("list repo labels: %w", err)
+	}
+
+	names := make([]string, len(labels))
+	for i, l := range labels {
+		names[i] = l.Name
+	}
+	return names, nil
+}
+
+func (c *GitHubClient) CreateLabel(ctx context.Context, repo string, label LabelDef) error {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/labels", owner, name)
+
+	color := strings.TrimPrefix(label.Color, "#")
+	body := struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	}{Name: label.Name, Color: color}
+
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
+}
+
 // githubIssueToIssue converts the API response to a canonical Issue.
 func githubIssueToIssue(item githubIssue) Issue {
 	labels := make([]string, len(item.Labels))
