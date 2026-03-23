@@ -199,6 +199,11 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Only poll PR in states that need it; ignore stale ticks from other states.
+	if slot.State != loop.SlotCoding && slot.State != loop.SlotWaitingPRMerge {
+		return m, nil
+	}
+
 	if msg.Err != nil {
 		m.setStatus(fmt.Sprintf("PR poll error #%s: %s", msg.IssueID, msg.Err))
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
