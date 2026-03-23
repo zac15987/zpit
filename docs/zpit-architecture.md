@@ -475,8 +475,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 ## 4. 專案設定檔 (config.toml)
 
+Zpit 的所有資料統一在 `~/.zpit/` 下：
+- `~/.zpit/config.toml` — 設定檔
+- `~/.zpit/logs/` — 日誌（daily rotation，自動清理 30 天以上）
+
+首次啟動時若 config 不存在，自動產生模板（`config.WriteTemplate()`），提示使用者編輯後再啟動。
+
 ```toml
-# ~/.config/zpit/config.toml
+# ~/.zpit/config.toml
 
 # ──────────────────────────────────────────────
 # 終端設定

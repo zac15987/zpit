@@ -31,21 +31,32 @@ func main() {
 		cfgPath = envPath
 	}
 
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		if err := config.WriteTemplate(cfgPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created config template at: %s\n", cfgPath)
+		fmt.Println("Please edit it and add your projects, then run zpit again.")
+		os.Exit(0)
+	}
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Expected config at: %s\n", cfgPath)
-		fmt.Fprintf(os.Stderr, "Set ZPIT_CONFIG env var to override.\n")
+		fmt.Fprintf(os.Stderr, "Config at: %s\n", cfgPath)
 		os.Exit(1)
 	}
 
 	if len(cfg.Projects) == 0 {
 		fmt.Fprintf(os.Stderr, "No projects defined in %s\n", cfgPath)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Please add at least one [[projects]] section, then run zpit again.\n")
+		os.Exit(0)
 	}
 
 	// Open daily log file.
-	logDir := filepath.Join(filepath.Dir(cfgPath), "logs")
+	baseDir, _ := config.BaseDir()
+	logDir := filepath.Join(baseDir, "logs")
 	_ = os.MkdirAll(logDir, 0o755)
 	today := time.Now().Format("2006-01-02")
 	logFile, err := os.OpenFile(

@@ -15,7 +15,7 @@ go build ./...           # Build
 go test ./...            # Run all tests
 go test ./internal/...   # Run a specific package's tests
 go test -run TestName    # Run a single test
-go run .                 # Run (reads ~/.config/zpit/config.toml)
+go run .                 # Run (reads ~/.zpit/config.toml)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ```
 
@@ -23,7 +23,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 
 ### What works now
 - TUI project list with ↑↓ navigation and profile icons
-- Config loading from `~/.config/zpit/config.toml` (TOML, with defaults)
+- Config loading from `~/.zpit/config.toml` (TOML, with defaults)
 - Environment detection (Windows Terminal / WSL / Linux tmux)
 - Terminal Launcher: `Enter` opens Claude Code in new WT tab or tmux window
 - `[o]` opens project folder in file manager
@@ -75,13 +75,13 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ## Package Structure
 
 ```
-main.go                          # Entry point: load config, embed agents, run Bubble Tea
+main.go                          # Entry point: config template, log file, embed agents, run Bubble Tea
 Makefile                         # build, test, test-hooks, test-all targets
 agents/
 ├── clarifier.md                 # Clarifier agent template (go:embed → auto-deploy)
 └── reviewer.md                  # Reviewer agent template (go:embed → auto-deploy)
 internal/
-├── config/config.go             # Config structs + Load() + defaults + ProfileConfig
+├── config/config.go             # Config structs + Load() + BaseDir() + WriteTemplate() + defaults
 ├── platform/detect.go           # Environment detection + ResolvePath()
 ├── loop/
 │   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, verdict constants
@@ -198,7 +198,11 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 
 ## Config Location
 
-`~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
+`~/.zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
+
+First run: if config doesn't exist, Zpit auto-creates a template and exits. User edits it, then runs again.
+
+Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, auto-cleanup after 30 days.
 
 Provider entries include `token_env` field pointing to environment variable name for API auth (e.g. `token_env = "FORGEJO_TOKEN"`).
 

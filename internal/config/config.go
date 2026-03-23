@@ -88,13 +88,80 @@ type ProjectPathConfig struct {
 	WSL     string `toml:"wsl"`
 }
 
-// DefaultConfigPath returns ~/.config/zpit/config.toml.
-func DefaultConfigPath() (string, error) {
+// BaseDir returns the Zpit data directory (~/.zpit/).
+func BaseDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home directory: %w", err)
 	}
-	return filepath.Join(home, ".config", "zpit", "config.toml"), nil
+	return filepath.Join(home, ".zpit"), nil
+}
+
+func DefaultConfigPath() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "config.toml"), nil
+}
+
+const configTemplate = `# Zpit Configuration
+# Docs: https://github.com/zac15987/zpit
+
+[terminal]
+windows_mode = "new_tab"    # new_tab | new_window
+tmux_mode = "new_window"    # new_window | new_pane
+
+[notification]
+tui_alert = true
+windows_toast = true
+sound = true
+re_remind_minutes = 15
+
+[worktree]
+base_dir_windows = ""       # e.g. "D:/worktrees"
+base_dir_wsl = ""           # e.g. "/mnt/d/worktrees"
+max_per_project = 5
+
+# --- Providers ---
+# Uncomment and fill in your tracker provider(s).
+
+# [providers.tracker.my-forgejo]
+# type = "forgejo_issues"
+# url = "https://your-forgejo.example.com"
+# token_env = "FORGEJO_TOKEN"
+
+# [providers.tracker.my-github]
+# type = "github_issues"
+# token_env = "GITHUB_TOKEN"
+
+# --- Profiles ---
+
+# [profiles.default]
+# log_policy = "standard"   # strict | standard | minimal
+
+# --- Projects ---
+# Add at least one project to get started.
+
+# [[projects]]
+# name = "My Project"
+# id = "my-project"
+# profile = "default"
+# hook_mode = "standard"    # strict | standard | relaxed
+# tracker = "my-github"
+# repo = "owner/repo"
+# base_branch = "dev"
+# tags = ["go"]
+#
+# [projects.path]
+# windows = "D:/Projects/my-project"
+# wsl = "/mnt/d/Projects/my-project"
+`
+
+// WriteTemplate creates a config file with a starter template.
+func WriteTemplate(path string) error {
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	return os.WriteFile(path, []byte(configTemplate), 0o644)
 }
 
 // Load reads and parses the TOML config file.

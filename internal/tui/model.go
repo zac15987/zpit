@@ -170,8 +170,9 @@ func (m Model) Init() tea.Cmd {
 	if len(missingProviders) > 0 {
 		msg := fmt.Sprintf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
 		m.logger.Println(msg)
-		m.statusMessage = msg
-		m.statusExpiry = time.Now().Add(10 * time.Second)
+		cmds = append(cmds, func() tea.Msg {
+			return StatusMsg{Text: msg}
+		})
 	}
 
 	return tea.Batch(cmds...)
