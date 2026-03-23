@@ -7,6 +7,7 @@ import "fmt"
 func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv, baseBranch string) string {
 	switch providerType {
 	case "forgejo_issues":
+		owner, repoName := splitRepo(repo)
 		apiBase := baseURL + "/api/v1/repos/" + repo
 		authHeader := "Authorization: token $" + tokenEnv
 		return fmt.Sprintf(`# Tracker 設定
@@ -23,15 +24,37 @@ func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv, baseBranch string) s
 
 ## 操作方式
 
-優先使用 Gitea/Forgejo MCP server（名稱通常為 "gitea"，如已安裝）。
-如果 MCP 不可用，改用 curl + Forgejo REST API v1。
+**優先使用 Gitea MCP server**（tool 名稱前綴為 "gitea"）。
+只有在 MCP 不可用時，才改用 curl + REST API。
 **不要使用 gh CLI**（此專案不是 GitHub）。
 
 **重要：不論使用 MCP 或 REST API，長文字內容（issue body、PR body、comment）
-一律先用 Write tool 寫到暫存檔（如 /tmp/issue_body.md），再用 Read tool 讀取內容傳入 API。
-絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。**
+一律先用 Write tool 寫到暫存檔（如 /tmp/issue_body.md），再用 Read tool 讀取內容傳入。
+絕對不要在 MCP 參數或 bash 命令裡直接內嵌長文字。**
 
-## REST API 範例
+## MCP 操作（優先）
+
+如果 gitea MCP server 已連線，使用以下 MCP tools（owner="%s", repo="%s"）：
+
+建立 issue:
+  → issue_write tool: owner="%s", repo="%s", title="...", body="..."（body 先寫暫存檔再讀取傳入）
+  → 建立後用 label_write 設定 label
+
+建立 PR:
+  → pull_request_write tool: owner="%s", repo="%s", title="...", body="...", head="feat/ISSUE-ID-slug", base="%s"
+
+新增 comment:
+  → issue_write tool（comment 功能）: owner="%s", repo="%s", index={number}, body="..."
+
+查詢 issue:
+  → list_issues 或 issue_read tool: owner="%s", repo="%s"
+
+管理 label:
+  → label_read tool 查詢、label_write tool 建立/設定
+
+## REST API fallback
+
+只在 MCP 不可用時使用。
 
 建立 issue:
 `+"```"+`
@@ -75,6 +98,11 @@ curl -X POST "%s/labels" \
   -d '{"name":"wip","color":"#0E8A16"}'
 `+"```"+`
 `, baseURL, repo, tokenEnv, baseBranch,
+			owner, repoName,
+			owner, repoName,
+			owner, repoName, baseBranch,
+			owner, repoName,
+			owner, repoName,
 			apiBase, authHeader,
 			apiBase, authHeader, baseBranch,
 			apiBase, authHeader,
