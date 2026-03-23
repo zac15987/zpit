@@ -4,6 +4,16 @@ A TUI-based AI development cockpit that orchestrates [Claude Code](https://claud
 
 > **Key principle:** Claude Code runs in independent terminal windows. Zpit never wraps or embeds it — it monitors via session logs and coordinates via issue trackers.
 
+## Status
+
+> **This project is under active development.** Core features are functional but some areas remain untested.
+
+| Area | Status |
+|------|--------|
+| Clarifier agent → Coding agent → Reviewer agent | ✅ Working |
+| Reviewer agent auto-retry (NEEDS CHANGES → Coding agent) | ⚠️ Not yet tested end-to-end |
+| Worktree cleanup after PR merge | ⚠️ Not fully tested |
+
 ## How It Works
 
 ```
@@ -191,6 +201,27 @@ Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 ## Architecture
 
 See [docs/zpit-architecture.md](docs/zpit-architecture.md) for the full architecture document.
+
+## Open Source Attributions
+
+Zpit is built on top of the following open source libraries:
+
+| Library | Purpose | License |
+|---------|---------|---------|
+| [Bubble Tea](https://github.com/charmbracelet/bubbletea) | TUI framework | MIT |
+| [Bubbles](https://github.com/charmbracelet/bubbles) | TUI components (list, text input, etc.) | MIT |
+| [Lip Gloss](https://github.com/charmbracelet/lipgloss) | TUI styling and layout | MIT |
+| [Huh](https://github.com/charmbracelet/huh) | Form and confirm dialogs | MIT |
+| [BurntSushi/toml](https://github.com/BurntSushi/toml) | TOML config parser | MIT |
+| [fsnotify](https://github.com/fsnotify/fsnotify) | Filesystem watcher (session log monitoring) | BSD-3-Clause |
+| [go-colorful](https://github.com/lucasb-eyer/go-colorful) | Color math for terminal rendering | MIT |
+| [muesli/termenv](https://github.com/muesli/termenv) | Terminal environment detection | MIT |
+| [rivo/uniseg](https://github.com/rivo/uniseg) | Unicode text segmentation | MIT |
+| [mattn/go-runewidth](https://github.com/mattn/go-runewidth) | Rune display width calculation | MIT |
+| [golang.org/x/sys, x/text, x/sync](https://pkg.go.dev/golang.org/x) | Go extended standard library | BSD-3-Clause |
+
+All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
+`fsnotify` and `golang.org/x/*` are BSD-3-Clause; their copyright notices are retained as required.
 
 ## License
 
