@@ -16,6 +16,8 @@ base_dir_wsl = "/mnt/d/Documents/.worktrees"
 dir_format = "{project_id}/{issue_id}--{slug}"
 auto_cleanup = true
 max_per_project = 5
+poll_seconds = 15
+pr_poll_seconds = 30
 
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
@@ -87,6 +89,7 @@ git = "forgejo-leyu"
 repo = "Leyu-LGBT/ENR_DUC"
 shared_core = true
 log_level = "strict"
+base_branch = "dev"
 tags = ["wpf", "secsgem"]
 
 [projects.path]
@@ -104,6 +107,7 @@ git = "github"
 repo = "zac15987/DisplayProfileManager"
 shared_core = false
 log_level = "standard"
+base_branch = "dev"
 tags = ["wpf", "nlog"]
 
 [projects.path]
@@ -121,6 +125,7 @@ git = "github"
 repo = "zac15987/zpit"
 shared_core = false
 log_level = "minimal"
+base_branch = "dev"
 tags = ["go", "bubbletea"]
 
 [projects.path]
