@@ -3,8 +3,8 @@ package loop
 import "time"
 
 const (
-	PollInterval           = 30 * time.Second // how often to poll tracker for todo issues
-	PRPollInterval         = 60 * time.Second // how often to poll for PR merge
+	DefaultPollSeconds   = 15 // how often to poll tracker for todo issues (seconds)
+	DefaultPRPollSeconds = 30 // how often to poll for PR merge (seconds)
 	LivenessInterval       = 5 * time.Second  // how often to check agent PID liveness
 	DefaultMaxReviewRounds = 2                // max coding↔review cycles before human intervention
 )

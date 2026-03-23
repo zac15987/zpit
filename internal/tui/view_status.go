@@ -92,7 +92,7 @@ func renderStatusBadge(status string) string {
 	case tracker.StatusInProgress:
 		return workingStyle.Render("[wip]    ")
 	case tracker.StatusAIReview:
-		return detailStyle.Render("[review] ")
+		return workingStyle.Render("[ai-review]")
 	case tracker.StatusWaitingReview:
 		return detailStyle.Render("[review] ")
 	case tracker.StatusNeedsVerify:

@@ -54,6 +54,8 @@ type WorktreeConfig struct {
 	AutoCleanup     bool   `toml:"auto_cleanup"`
 	MaxPerProject   int    `toml:"max_per_project"`
 	MaxReviewRounds int    `toml:"max_review_rounds"`
+	PollSeconds     int    `toml:"poll_seconds"`    // todo issue polling interval
+	PRPollSeconds   int    `toml:"pr_poll_seconds"` // PR merge polling interval
 }
 
 type ProvidersConfig struct {
@@ -122,6 +124,8 @@ re_remind_minutes = 15
 base_dir_windows = ""       # e.g. "D:/worktrees"
 base_dir_wsl = ""           # e.g. "/mnt/d/worktrees"
 max_per_project = 5
+# poll_seconds = 15         # todo issue polling interval (seconds)
+# pr_poll_seconds = 30      # PR merge polling interval (seconds)
 
 # --- Providers ---
 # Uncomment and fill in your tracker provider(s).
@@ -193,6 +197,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Worktree.MaxReviewRounds == 0 {
 		cfg.Worktree.MaxReviewRounds = loop.DefaultMaxReviewRounds
+	}
+	if cfg.Worktree.PollSeconds == 0 {
+		cfg.Worktree.PollSeconds = loop.DefaultPollSeconds
+	}
+	if cfg.Worktree.PRPollSeconds == 0 {
+		cfg.Worktree.PRPollSeconds = loop.DefaultPRPollSeconds
 	}
 	for i := range cfg.Projects {
 		if cfg.Projects[i].BaseBranch == "" {

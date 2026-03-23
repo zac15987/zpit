@@ -421,16 +421,18 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 	}
 }
 
-// loopSchedulePoll schedules the next tracker poll after PollInterval.
+// loopSchedulePoll schedules the next tracker poll after configured interval.
 func (m Model) loopSchedulePoll(projectID string) tea.Cmd {
-	return tea.Tick(loop.PollInterval, func(t time.Time) tea.Msg {
+	interval := time.Duration(m.cfg.Worktree.PollSeconds) * time.Second
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopPollTickMsg{ProjectID: projectID}
 	})
 }
 
-// loopSchedulePRPoll schedules the next PR status poll after PRPollInterval.
+// loopSchedulePRPoll schedules the next PR status poll after configured interval.
 func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
-	return tea.Tick(loop.PRPollInterval, func(t time.Time) tea.Msg {
+	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopPRPollTickMsg{ProjectID: projectID, IssueID: issueID}
 	})
 }
