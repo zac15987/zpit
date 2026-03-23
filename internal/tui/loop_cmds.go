@@ -54,7 +54,13 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 		return nil
 	}
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	if slot == nil {
+		return nil
+	}
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	slug := worktree.Slugify(issueTitle, 40)
 	branchName := fmt.Sprintf("feat/%s-%s", issueID, slug)
@@ -93,8 +99,17 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
-	client := m.clients[project.Tracker]
+	if slot == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
 	repo := project.Repo
 	wtPath := slot.WorktreePath
 	logPolicy := ""
@@ -167,7 +182,13 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	if slot == nil {
+		return nil
+	}
 	wtPath := slot.WorktreePath
 	cfg := m.cfg.Terminal
 	agentName := fmt.Sprintf("coding-%s", issueID)
@@ -194,8 +215,17 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		return nil
 	}
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
-	client := m.clients[project.Tracker]
+	if slot == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
 	repo := project.Repo
 	wtPath := slot.WorktreePath
 	cfg := m.cfg.Terminal
@@ -249,7 +279,13 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 // loopStartWatcherCmd finds the session PID and monitors until exit.
 func (m Model) loopStartWatcherCmd(projectID, issueID, role string) tea.Cmd {
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	if slot == nil {
+		return nil
+	}
 	wtPath := slot.WorktreePath
 
 	return func() tea.Msg {
@@ -296,8 +332,17 @@ func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
-	client := m.clients[project.Tracker]
+	if slot == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
 	repo := project.Repo
 	branch := slot.BranchName
 
@@ -317,7 +362,13 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	}
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	if slot == nil {
+		return nil
+	}
 	wtPath := slot.WorktreePath
 	mgr := m.wtManager
 
@@ -433,7 +484,13 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	ls := m.loops[projectID]
+	if ls == nil {
+		return nil
+	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	if slot == nil {
+		return nil
+	}
 	repo := project.Repo
 	wtPath := slot.WorktreePath
 	logPolicy := ""
