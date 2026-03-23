@@ -61,6 +61,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Multi-agent parallel execution (max_per_project worktrees)
 - Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
 - Per-issue branch control: Issue Spec `## BRANCH` → coding agent PR 必須 target 指定 branch，reviewer 驗證 target branch
+- i18n: all prompts/agents in English, TUI strings via locale package (en + zh-TW), config `language` field
 
 ### What's stubbed (shows "coming in MX" message)
 - `[a]` Add Project → M5
@@ -84,6 +85,11 @@ agents/
 internal/
 ├── config/config.go             # Config structs + Load() + BaseDir() + WriteTemplate() + defaults
 ├── platform/detect.go           # Environment detection + ResolvePath()
+├── locale/
+│   ├── locale.go                # SetLanguage() + T() + ResponseInstruction()
+│   ├── keys.go                  # Key constants for all TUI display strings
+│   ├── en.go                    # English translations
+│   └── zh_tw.go                 # Traditional Chinese translations
 ├── loop/
 │   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, verdict constants
 ├── terminal/
@@ -208,6 +214,8 @@ Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, auto-cleanup after 
 Provider entries include `token_env` field pointing to environment variable name for API auth (e.g. `token_env = "FORGEJO_TOKEN"`).
 
 Each project has `base_branch` (default `"dev"`) — worktree feature branches are created from this branch.
+
+Top-level `language` field (default `"en"`) controls TUI display language and agent response language. Supported: `"en"`, `"zh-TW"`. All agent prompts and .md templates are written in English; response language is injected dynamically via `locale.ResponseInstruction()`.
 
 ## Conventions
 
