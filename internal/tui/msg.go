@@ -105,6 +105,14 @@ type LoopCleanupMsg struct {
 	Err       error
 }
 
+// LoopReviewResultMsg carries the verdict after checking issue labels post-review.
+type LoopReviewResultMsg struct {
+	ProjectID string
+	IssueID   string
+	Verdict   string // loop.VerdictApproved / VerdictNeedsChanges / VerdictUnknown
+	Err       error
+}
+
 // loopPollTickMsg triggers the next poll cycle (unexported).
 type loopPollTickMsg struct{ ProjectID string }
 

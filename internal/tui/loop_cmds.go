@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -170,8 +171,13 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
 
+	initMsg := "開始實作"
+	if slot.ReviewRound > 0 {
+		initMsg = "讀取 PR review comment，修正問題"
+	}
+
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, "開始實作")
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "coder", Result: result, Err: err,
@@ -374,4 +380,99 @@ func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
 	return tea.Tick(loop.PRPollInterval, func(t time.Time) tea.Msg {
 		return loopPRPollTickMsg{ProjectID: projectID, IssueID: issueID}
 	})
+}
+
+// loopCheckReviewResultCmd fetches issue labels to determine reviewer verdict.
+func (m Model) loopCheckReviewResultCmd(projectID, issueID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		issue, err := client.GetIssue(ctx, repo, issueID)
+		if err != nil {
+			return LoopReviewResultMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		verdict := loop.VerdictUnknown
+		for _, label := range issue.Labels {
+			lower := strings.ToLower(label)
+			if lower == "ai-review" {
+				verdict = loop.VerdictApproved
+				break
+			}
+			if lower == "needs-changes" {
+				verdict = loop.VerdictNeedsChanges
+				break
+			}
+		}
+
+		return LoopReviewResultMsg{ProjectID: projectID, IssueID: issueID, Verdict: verdict}
+	}
+}
+
+// loopWriteRevisionAgentCmd writes a revision coding agent prompt and returns LoopAgentWrittenMsg.
+func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	ls := m.loops[projectID]
+	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	repo := project.Repo
+	wtPath := slot.WorktreePath
+	logPolicy := ""
+	if p, ok := m.cfg.Profiles[project.Profile]; ok {
+		logPolicy = p.LogPolicy
+	}
+	baseBranch := project.BaseBranch
+	reviewRound := slot.ReviewRound
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		issue, err := client.GetIssue(ctx, repo, issueID)
+		if err != nil {
+			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		spec, err := tracker.ParseIssueSpec(issue.Body)
+		if err != nil {
+			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		promptText := prompt.BuildRevisionPrompt(prompt.RevisionParams{
+			IssueID:     issueID,
+			IssueTitle:  issue.Title,
+			Spec:        spec,
+			LogPolicy:   logPolicy,
+			BaseBranch:  baseBranch,
+			ReviewRound: reviewRound,
+		})
+
+		agentDir := filepath.Join(wtPath, ".claude", "agents")
+		_ = os.MkdirAll(agentDir, 0o755)
+		agentFile := fmt.Sprintf("coding-%s.md", issueID)
+		content := fmt.Sprintf("---\nname: coding-%s\ndescription: Revision coding agent for issue %s (round %d)\n---\n\n%s",
+			issueID, issueID, reviewRound, promptText)
+		if err := os.WriteFile(filepath.Join(agentDir, agentFile), []byte(content), 0o644); err != nil {
+			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID}
+	}
 }

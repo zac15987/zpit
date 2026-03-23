@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/zac15987/zpit/internal/loop"
 )
 
 // Default values for config fields.
@@ -46,11 +48,12 @@ type NotificationConfig struct {
 }
 
 type WorktreeConfig struct {
-	BaseDirWindows string `toml:"base_dir_windows"`
-	BaseDirWSL     string `toml:"base_dir_wsl"`
-	DirFormat      string `toml:"dir_format"`
-	AutoCleanup    bool   `toml:"auto_cleanup"`
-	MaxPerProject  int    `toml:"max_per_project"`
+	BaseDirWindows  string `toml:"base_dir_windows"`
+	BaseDirWSL      string `toml:"base_dir_wsl"`
+	DirFormat       string `toml:"dir_format"`
+	AutoCleanup     bool   `toml:"auto_cleanup"`
+	MaxPerProject   int    `toml:"max_per_project"`
+	MaxReviewRounds int    `toml:"max_review_rounds"`
 }
 
 type ProvidersConfig struct {
@@ -120,6 +123,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Worktree.DirFormat == "" {
 		cfg.Worktree.DirFormat = defaultDirFormat
+	}
+	if cfg.Worktree.MaxReviewRounds == 0 {
+		cfg.Worktree.MaxReviewRounds = loop.DefaultMaxReviewRounds
 	}
 	for i := range cfg.Projects {
 		if cfg.Projects[i].BaseBranch == "" {

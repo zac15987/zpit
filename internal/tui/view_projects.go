@@ -262,15 +262,23 @@ func (m Model) renderLoopStatus() string {
 			switch slot.State {
 			case loop.SlotError:
 				icon = "🔴"
+			case loop.SlotCheckingReview:
+				icon = "🔍"
+			case loop.SlotNeedsHuman:
+				icon = "🟠"
 			case loop.SlotWaitingPRMerge:
 				icon = iconWaiting
 			case loop.SlotDone:
 				icon = "✅"
 			}
+			stateText := slot.State.String()
+			if slot.ReviewRound > 0 {
+				stateText += fmt.Sprintf(" (round %d/%d)", slot.ReviewRound, m.cfg.Worktree.MaxReviewRounds)
+			}
 			b.WriteString(fmt.Sprintf("    %s #%s %s  %s\n",
 				icon, slot.IssueID,
 				truncate(slot.IssueTitle, 35),
-				detailStyle.Render(slot.State.String()),
+				detailStyle.Render(stateText),
 			))
 			if slot.Error != nil {
 				b.WriteString(fmt.Sprintf("      %s\n",

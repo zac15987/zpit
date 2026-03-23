@@ -67,6 +67,13 @@ disallowedTools: Write, Edit
 - 所有 AC 都 ✅ 且無重大建議 → 整體評價 = PASS
 - SCOPE 超出或 CONSTRAINTS 違反 → 無論 AC 結果，整體 = NEEDS CHANGES
 
+## Label 更新
+
+- 如果 PASS，更新 issue label: 移除 "review"，加入 "ai-review"
+- 如果 NEEDS CHANGES，更新 issue label: 移除 "review"，加入 "needs-changes"
+
+依 `.claude/docs/tracker.md` 指示操作 label API。如果 label 不存在，先建立。
+
 ## Tracker 操作注意
 
 將 Review Report 同時寫到 **PR comment** 和 **issue comment**，依 `.claude/docs/tracker.md` 指示。

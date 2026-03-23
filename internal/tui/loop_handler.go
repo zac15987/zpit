@@ -140,9 +140,49 @@ func (m Model) handleLoopAgentExited(msg LoopAgentExitedMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 
-	// Only reviewer uses PID monitoring; coder uses PR polling.
-	slot.State = loop.SlotWaitingPRMerge
-	return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+	// Reviewer PID died → check labels to determine verdict.
+	slot.State = loop.SlotCheckingReview
+	return m, m.loopCheckReviewResultCmd(msg.ProjectID, msg.IssueID)
+}
+
+func (m Model) handleLoopReviewResult(msg LoopReviewResultMsg) (tea.Model, tea.Cmd) {
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
+		return m, nil
+	}
+
+	if msg.Err != nil {
+		slot.State = loop.SlotError
+		slot.Error = fmt.Errorf("check review result: %w", msg.Err)
+		return m, nil
+	}
+
+	switch msg.Verdict {
+	case loop.VerdictApproved:
+		slot.State = loop.SlotWaitingPRMerge
+		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+
+	case loop.VerdictNeedsChanges:
+		maxRounds := m.cfg.Worktree.MaxReviewRounds
+		if slot.ReviewRound >= maxRounds {
+			slot.State = loop.SlotNeedsHuman
+			m.setStatus(fmt.Sprintf("Issue #%s: %d review rounds exhausted, needs human", msg.IssueID, maxRounds))
+			projectName := m.projectName(msg.ProjectID)
+			m.notifier.NotifyWaiting(msg.ProjectID, projectName,
+				fmt.Sprintf("Issue #%s exceeded %d review rounds", msg.IssueID, maxRounds))
+			return m, nil
+		}
+		slot.ReviewRound++
+		slot.State = loop.SlotWritingAgent
+		m.setStatus(fmt.Sprintf("Issue #%s needs changes (round %d/%d), re-launching coder",
+			msg.IssueID, slot.ReviewRound, maxRounds))
+		return m, m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID)
+
+	default: // VerdictUnknown
+		slot.State = loop.SlotError
+		slot.Error = fmt.Errorf("reviewer exited without setting verdict label")
+		return m, nil
+	}
 }
 
 func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {

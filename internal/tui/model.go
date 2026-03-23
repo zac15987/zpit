@@ -229,6 +229,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoopAgentLaunched(msg)
 	case LoopAgentExitedMsg:
 		return m.handleLoopAgentExited(msg)
+	case LoopReviewResultMsg:
+		return m.handleLoopReviewResult(msg)
 	case LoopPRStatusMsg:
 		return m.handleLoopPRStatus(msg)
 	case LoopCleanupMsg:

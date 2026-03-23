@@ -1487,9 +1487,17 @@ TUI 按 [l]
 │  │                                                        │
 │  │ 8. 等待 reviewer 結束（監控 PID exit）                 │
 │  │                                                        │
-│  │ 9. 回到步驟 1 抓下一個 issue                           │
-│  │    （平行化的關鍵：做完一個就去抓下一個，              │
-│  │      不用等你 review 完）                               │
+│  │ 9. 檢查 review 結果（透過 issue labels 判定）          │
+│  │    ├─ ai-review label → PASS → 等待 PR merge           │
+│  │    ├─ needs-changes label → NEEDS CHANGES               │
+│  │    │  └─ round < max_review_rounds?                     │
+│  │    │     ├─ 是 → 回到步驟 4 寫修正版 prompt，重跑 coder│
+│  │    │     └─ 否 → 進入 NeedsHuman 狀態，通知你介入      │
+│  │    └─ 都沒有 → reviewer 可能 crash → Error              │
+│  │                                                        │
+│  │ 10. 回到步驟 1 抓下一個 issue                          │
+│  │     （平行化的關鍵：做完一個就去抓下一個，             │
+│  │       不用等你 review 完）                              │
 │  │                                                        │
 │  └────────────────────────────────────────────────────────┘
 │
@@ -2071,6 +2079,9 @@ echo $?   # 應該是 2
 - [x] PR merge 偵測（FindPRByBranch）+ 自動清理 worktree
 - [x] LaunchClaudeInDir — worktree path override
 - [x] Coding 完成信號：PR 出現（非 PID 消失），終端保留
+- [x] NEEDS CHANGES 自動重試（reviewer 判定→重跑 coding→再 review，max_review_rounds 限制）
+- [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
+- [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams

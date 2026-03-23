@@ -54,6 +54,7 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 8. 產出 Review Report（見下方格式）
 9. 將 Review Report 同時寫到 PR comment 和 issue comment
 10. 如果 PASS，更新 issue label: 移除 "review"，加入 "ai-review"
+11. 如果 NEEDS CHANGES，更新 issue label: 移除 "review"，加入 "needs-changes"
 
 ## Tracker 操作注意
 

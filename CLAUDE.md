@@ -48,11 +48,12 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
 - Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
 - Worktree Manager: Create / Remove / List worktrees, hook mode auto-config (settings.local.json)
-- Prompt assembly: BuildCodingPrompt + BuildReviewerPrompt (Issue Spec → agent prompt with log_policy injection)
+- Prompt assembly: BuildCodingPrompt + BuildReviewerPrompt + BuildRevisionPrompt (Issue Spec → agent prompt with log_policy injection)
 - Profile config: `[profiles.*]` with `log_policy` (strict/standard/minimal)
 - Per-project `base_branch` config (default "dev")
 - Makefile with `test-hooks` target
-- Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → PR merge → cleanup
+- Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → NEEDS CHANGES auto-retry → PR merge → cleanup
+- NEEDS CHANGES auto-retry: reviewer 判定 NEEDS CHANGES → 自動重跑 coding agent → 再次 review（max_review_rounds 預設 2）
 - LaunchClaudeInDir: worktree path override for loop launches
 - FindPRByBranch: PR detection by branch name (Forgejo + GitHub)
 - TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
@@ -82,7 +83,7 @@ internal/
 ├── config/config.go             # Config structs + Load() + defaults + ProfileConfig
 ├── platform/detect.go           # Environment detection + ResolvePath()
 ├── loop/
-│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, constants
+│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, verdict constants
 ├── terminal/
 │   ├── launcher.go              # LaunchClaude() + LaunchClaudeInDir() dispatch + arg builders
 │   ├── launcher_windows.go      # wt.exe (build tag: windows)
@@ -121,6 +122,7 @@ internal/
 ├── prompt/
 │   ├── coding.go                # BuildCodingPrompt() — Issue Spec → coding agent prompt
 │   ├── reviewer.go              # BuildReviewerPrompt() — Issue Spec → reviewer prompt
+│   ├── revision.go              # BuildRevisionPrompt() — Issue Spec → revision coding prompt (NEEDS CHANGES retry)
 │   └── prompt_test.go           # 5 prompt assembly tests
 └── tracker/
     ├── types.go                 # Issue/PR structs + canonical status constants
@@ -205,6 +207,7 @@ Each project has `base_branch` (default `"dev"`) — worktree feature branches a
 - Git branching model: `main` ← `dev` ← feature branches（所有功能從 dev 分出，完成合併回 dev，穩定後 dev 合併至 main）
 - Commit messages: `[ISSUE-ID] short description`
 - Issue statuses flow: pending_confirm → todo → in_progress → ai_review → waiting_review → (needs_verify) → done
+- Loop label flow: todo → wip → review → ai-review (PASS) / needs-changes (NEEDS CHANGES → auto-retry up to max_review_rounds)
 - Agents must stop and ask on uncertain technical decisions, even with bypass-all-permissions enabled
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
 - Code quality baseline: `docs/code-construction-principles.md` — Reviewer agent checks against this
