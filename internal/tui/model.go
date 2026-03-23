@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +57,7 @@ type Model struct {
 	env      platform.Environment
 	keys     KeyMap
 	notifier *notify.Notifier
+	logger   *log.Logger
 
 	width  int
 	height int
@@ -95,14 +98,19 @@ type Model struct {
 	wtManager *worktree.Manager
 }
 
-// NewModel creates the root TUI model.
-func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
+// NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
+func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.Writer) Model {
+	if logWriter == nil {
+		logWriter = io.Discard
+	}
+	logger := log.New(logWriter, "", log.LstdFlags)
+	logger.Println("zpit started")
+
 	clients := make(map[string]tracker.TrackerClient)
 	for name, provider := range cfg.Providers.Tracker {
 		client, err := tracker.NewClient(provider.Type, provider.URL, provider.TokenEnv)
 		if err != nil {
-			// Token not set or unsupported type — skip silently.
-			// User will see error when pressing [s] on a project using this provider.
+			logger.Printf("tracker client %q init failed: %v", name, err)
 			continue
 		}
 		clients[name] = client
@@ -112,6 +120,7 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
 		env:             platform.Detect(),
 		keys:            DefaultKeyMap(),
 		notifier:        notify.NewNotifier(cfg.Notification),
+		logger:          logger,
 		currentView:     ViewProjects,
 		projects:        cfg.Projects,
 		activeTerminals: make(map[string]*ActiveTerminal),
@@ -128,6 +137,8 @@ func (m Model) Init() tea.Cmd {
 
 	seenTracker := make(map[string]bool)
 	seenPath := make(map[string]bool)
+	seenMissing := make(map[string]bool)
+	var missingProviders []string
 
 	for _, project := range m.projects {
 		// Ensure .gitignore has Zpit-deployed paths (sync, fast).
@@ -142,6 +153,10 @@ func (m Model) Init() tea.Cmd {
 			continue
 		}
 		if _, ok := m.clients[project.Tracker]; !ok {
+			if !seenMissing[project.Tracker] {
+				seenMissing[project.Tracker] = true
+				missingProviders = append(missingProviders, project.Tracker)
+			}
 			continue
 		}
 		key := project.Tracker + ":" + project.Repo
@@ -150,6 +165,13 @@ func (m Model) Init() tea.Cmd {
 		}
 		seenTracker[key] = true
 		cmds = append(cmds, m.ensureLabelsCmd(project.ID))
+	}
+
+	if len(missingProviders) > 0 {
+		msg := fmt.Sprintf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
+		m.logger.Println(msg)
+		m.statusMessage = msg
+		m.statusExpiry = time.Now().Add(10 * time.Second)
 	}
 
 	return tea.Batch(cmds...)
@@ -303,6 +325,7 @@ func (m Model) View() string {
 func (m *Model) setStatus(text string) {
 	m.statusMessage = text
 	m.statusExpiry = time.Now().Add(statusDisplayDuration)
+	m.logger.Println(text)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

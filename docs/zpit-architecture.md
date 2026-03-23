@@ -2096,6 +2096,7 @@ echo $?   # 應該是 2
 - [ ] shared-core 跨專案影響偵測
 - [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
 - [ ] Cross-compile: 同一份 code 編譯 Windows + Linux binary
+- [ ] TUI log area（主畫面底部可捲動事件 log，顯示最近 N 筆）
 
 ### Refine: 體驗優化
 - [ ] 專案 CLAUDE.md 模板（TUI 按鍵觸發 claude /init，已有則跳過）
