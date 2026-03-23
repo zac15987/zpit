@@ -10,10 +10,24 @@ import (
 
 func (m Model) viewStatus() string {
 	var b strings.Builder
+	b.WriteString(m.renderStatusHeader())
+	b.WriteString(m.viewport.View())
+	b.WriteString("\n")
+	b.WriteString(m.renderStatusFooter())
+	return b.String()
+}
 
-	// Header
+// renderStatusHeader returns the fixed header for the status view.
+func (m Model) renderStatusHeader() string {
+	var b strings.Builder
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n\n")
+	return b.String()
+}
+
+// renderStatusScrollable returns the scrollable content for the status view.
+func (m Model) renderStatusScrollable() string {
+	var b strings.Builder
 
 	projectName := m.projectName(m.statusProjectID)
 	b.WriteString(sectionTitleStyle.Render(fmt.Sprintf("Issues — %s", projectName)))
@@ -45,8 +59,12 @@ func (m Model) viewStatus() string {
 		}
 	}
 
-	// Hotkeys
-	b.WriteString("\n")
+	return b.String()
+}
+
+// renderStatusFooter returns the fixed footer for the status view.
+func (m Model) renderStatusFooter() string {
+	var b strings.Builder
 	hotkeys := []struct{ key, desc string }{
 		{"y", "Confirm (pending→todo)"},
 		{"p", "Open in browser"},
@@ -58,14 +76,10 @@ func (m Model) viewStatus() string {
 		b.WriteString(" ")
 		b.WriteString(hotkeyDescStyle.Render(h.desc))
 	}
-	b.WriteString("\n")
-
-	// Status bar
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
 		b.WriteString(statusBarStyle.Render(" " + m.statusMessage + " "))
 	}
-
 	return b.String()
 }
 

@@ -34,11 +34,21 @@ var profileIcons = map[string]string{
 
 func (m Model) viewProjects() string {
 	var b strings.Builder
+	b.WriteString(m.renderProjectsHeader())
+	b.WriteString(m.viewport.View())
+	b.WriteString("\n")
+	b.WriteString(m.renderProjectsFooter())
+	return b.String()
+}
 
-	// Header bar
-	header := m.renderHeader()
-	b.WriteString(header)
-	b.WriteString("\n\n")
+// renderProjectsHeader returns the fixed header above the scrollable area.
+func (m Model) renderProjectsHeader() string {
+	return m.renderHeader() + "\n\n"
+}
+
+// renderProjectsScrollable returns the scrollable content for the projects view.
+func (m Model) renderProjectsScrollable() string {
+	var b strings.Builder
 
 	// Two-column: project list + hotkeys
 	left := m.renderProjectList()
@@ -59,14 +69,17 @@ func (m Model) viewProjects() string {
 		b.WriteString(loopStatus)
 	}
 
-	// Status bar
-	b.WriteString("\n\n")
+	return b.String()
+}
+
+// renderProjectsFooter returns the fixed footer below the scrollable area.
+func (m Model) renderProjectsFooter() string {
+	var b strings.Builder
 	if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
-		b.WriteString(statusBarStyle.Render(" "+m.statusMessage+" "))
+		b.WriteString(statusBarStyle.Render(" " + m.statusMessage + " "))
 	}
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("Press ? for help, q to quit"))
-
 	return b.String()
 }
 

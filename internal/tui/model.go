@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charmbracelet/huh"
@@ -96,6 +97,9 @@ type Model struct {
 	// Loop engine state
 	loops     map[string]*loop.LoopState
 	wtManager *worktree.Manager
+
+	// Viewport for scrollable content
+	viewport viewport.Model
 }
 
 // NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
@@ -115,6 +119,11 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.W
 		}
 		clients[name] = client
 	}
+	vp := viewport.New(0, 0)
+	vp.MouseWheelEnabled = true
+	vp.MouseWheelDelta = 3
+	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
+
 	return Model{
 		cfg:             cfg,
 		env:             platform.Detect(),
@@ -129,6 +138,7 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.W
 		reviewerMD:      reviewerMD,
 		loops:           make(map[string]*loop.LoopState),
 		wtManager:       worktree.NewManager(cfg.Worktree),
+		viewport:        vp,
 	}
 }
 
@@ -178,7 +188,45 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// fixedChromeHeight returns the number of lines used by non-scrollable UI chrome.
+const fixedChromeLines = 6 // header(1) + blank(1) + blank(1) + status(1) + help(1) + blank(1)
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if mdl, ok := model.(Model); ok {
+		mdl.syncViewportContent()
+		return mdl, cmd
+	}
+	return model, cmd
+}
+
+// syncViewportContent re-renders the scrollable area into the viewport.
+func (m *Model) syncViewportContent() {
+	h := m.height - fixedChromeLines
+	if h < 1 {
+		h = 1
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = h
+
+	switch m.currentView {
+	case ViewProjects:
+		m.viewport.SetContent(m.renderProjectsScrollable())
+	case ViewStatus:
+		m.viewport.SetContent(m.renderStatusScrollable())
+	}
+}
+
+// ensureCursorVisible adjusts the viewport offset so the given line is on screen.
+func (m *Model) ensureCursorVisible(cursorLine int) {
+	if cursorLine < m.viewport.YOffset {
+		m.viewport.SetYOffset(cursorLine)
+	} else if cursorLine >= m.viewport.YOffset+m.viewport.Height {
+		m.viewport.SetYOffset(cursorLine - m.viewport.Height + 1)
+	}
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// If confirm dialog is active, route messages to it (but keep tick alive).
 	if m.confirmForm != nil {
 		// Let tick through so the UI stays responsive after confirm closes.
@@ -209,6 +257,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -364,11 +417,13 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.ensureCursorVisible(m.cursor * 3) // each project = 3 lines (name + detail + blank)
 
 	case key.Matches(msg, m.keys.Down):
 		if m.cursor < len(m.projects)-1 {
 			m.cursor++
 		}
+		m.ensureCursorVisible(m.cursor * 3)
 
 	case key.Matches(msg, m.keys.Enter):
 		return m, m.launchClaudeCmd()
@@ -451,6 +506,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusCursor = 0
 		m.statusLoading = true
 		m.statusError = ""
+		m.viewport.GotoTop()
 		return m, m.loadIssuesCmd()
 
 	case key.Matches(msg, m.keys.Add):
@@ -470,17 +526,20 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Back):
 		m.currentView = ViewProjects
+		m.viewport.GotoTop()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Up):
 		if m.statusCursor > 0 {
 			m.statusCursor--
 		}
+		m.ensureCursorVisible(m.statusCursor + 3) // +3 for title + separator + blank line
 
 	case key.Matches(msg, m.keys.Down):
 		if m.statusCursor < len(m.statusIssues)-1 {
 			m.statusCursor++
 		}
+		m.ensureCursorVisible(m.statusCursor + 3)
 
 	case key.Matches(msg, m.keys.Confirm):
 		return m, m.confirmIssueCmd()
