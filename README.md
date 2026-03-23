@@ -4,6 +4,32 @@ A TUI-based AI development cockpit that orchestrates [Claude Code](https://claud
 
 > **Key principle:** Claude Code runs in independent terminal windows. Zpit never wraps or embeds it — it monitors via session logs and coordinates via issue trackers.
 
+## TUI Preview
+
+```
+  Zpit v0.1                                    03/23 22:24  Windows Terminal
+
+  Projects                                Hotkeys
+  ────────────────────────────────        ──────────────────────────
+
+ › ⚙️ AI Inspection Cleaning Demo         [Enter] Launch Claude Code
+     machine │ wpf, ethercat, basler      [c] Clarify requirement
+                                          [l] Loop auto-implement
+   ⚙️ ENR DUC                             [r] Review changes
+     machine │ wpf, secsgem               [s] Status overview
+                                          [o] Open project folder
+   🖥️ DisplayProfileManager               [p] Open Issue Tracker
+     desktop │ wpf, nlog
+                                          [a] Add project
+   🖥️ Zpit                                [e] Edit config
+     desktop │ go, bubbletea
+                                          [?] Help
+                                          [q] Quit
+
+
+  Press ? for help, q to quit
+```
+
 ## Status
 
 > **This project is under active development.** Core features are functional but some areas remain untested.
