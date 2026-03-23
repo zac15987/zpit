@@ -24,6 +24,9 @@ AC-3: 3 次全部失敗後觸發 alarm
 ## CONSTRAINTS
 不引入新的 NuGet 套件
 
+## BRANCH
+dev
+
 ## REFERENCES
 [官方文件] https://example.com — EtherCAT 文件
 `
@@ -190,5 +193,37 @@ func TestParseScopeEntry_MalformedLine(t *testing.T) {
 	entry := parseScopeEntry("not a scope line")
 	if entry.Action != "" {
 		t.Errorf("expected empty action for malformed line, got %q", entry.Action)
+	}
+}
+
+func TestParseIssueSpec_BranchSection(t *testing.T) {
+	spec, err := ParseIssueSpec(fullIssueBody)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.Branch != "dev" {
+		t.Errorf("Branch = %q, want %q", spec.Branch, "dev")
+	}
+}
+
+func TestParseIssueSpec_BranchEmpty(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] f.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.Branch != "" {
+		t.Errorf("expected empty branch when ## BRANCH absent, got %q", spec.Branch)
+	}
+}
+
+func TestParseIssueSpec_BranchCustom(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] f.go (reason)\n\n## CONSTRAINTS\nnone\n\n## BRANCH\nmain\n"
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.Branch != "main" {
+		t.Errorf("Branch = %q, want %q", spec.Branch, "main")
 	}
 }

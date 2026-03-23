@@ -53,12 +53,14 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	if project == nil {
 		return nil
 	}
+	ls := m.loops[projectID]
+	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	slug := worktree.Slugify(issueTitle, 40)
 	branchName := fmt.Sprintf("feat/%s-%s", issueID, slug)
 	mgr := m.wtManager
 	hookMode := project.HookMode
-	baseBranch := project.BaseBranch
+	baseBranch := slot.BaseBranch
 
 	return func() tea.Msg {
 		wtPath, err := mgr.Create(worktree.CreateParams{
@@ -99,12 +101,12 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	if p, ok := m.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
-	baseBranch := project.BaseBranch
+	baseBranch := slot.BaseBranch
 
 	// Build tracker doc content outside closure (avoid accessing m.cfg inside goroutine)
 	var trackerDocContent string
 	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
-		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv)
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
 
 	return func() tea.Msg {
@@ -201,7 +203,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	if p, ok := m.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
-	baseBranch := project.BaseBranch
+	baseBranch := slot.BaseBranch
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
 
 	return func() tea.Msg {
@@ -438,7 +440,7 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	if p, ok := m.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
-	baseBranch := project.BaseBranch
+	baseBranch := slot.BaseBranch
 	reviewRound := slot.ReviewRound
 
 	return func() tea.Msg {

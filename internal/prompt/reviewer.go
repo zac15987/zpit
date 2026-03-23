@@ -48,20 +48,21 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 2. 用 git diff %s...HEAD 查看所有改動
 3. 逐條比對 ACCEPTANCE_CRITERIA，每條標記 ✅ 或 ❌
 4. 檢查是否有改動超出 SCOPE 範圍的檔案
-5. 檢查是否違反 CONSTRAINTS
-6. 檢查 logging 是否符合 CLAUDE.md 規範
-7. 讀取 `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`，抽樣檢查 code 品質
-8. 產出 Review Report（見下方格式）
-9. 將 Review Report 同時寫到 PR comment 和 issue comment
-10. 如果 PASS，更新 issue label: 移除 "review"，加入 "ai-review"
-11. 如果 NEEDS CHANGES，更新 issue label: 移除 "review"，加入 "needs-changes"
+5. 檢查 PR 的 target branch 是否為 `+"`%s`"+`，如果不是則標記為 ❌ 並在 Review Report 中指出
+6. 檢查是否違反 CONSTRAINTS
+7. 檢查 logging 是否符合 CLAUDE.md 規範
+8. 讀取 `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`，抽樣檢查 code 品質
+9. 產出 Review Report（見下方格式）
+10. 將 Review Report 同時寫到 PR comment 和 issue comment
+11. 如果 PASS，更新 issue label: 移除 "review"，加入 "ai-review"
+12. 如果 NEEDS CHANGES，更新 issue label: 移除 "review"，加入 "needs-changes"
 
 ## Tracker 操作注意
 
 將 Review Report 寫到 tracker（comment）時，依 .claude/docs/tracker.md 指示。
 不論使用 MCP 或 REST API，長文字一律先用 Write tool 寫到暫存檔，
 再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。
-`, p.BaseBranch)
+`, p.BaseBranch, p.BaseBranch)
 
 	return b.String()
 }

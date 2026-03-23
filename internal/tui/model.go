@@ -1021,7 +1021,7 @@ func (m Model) deployTrackerDoc(targetPath string, project *config.ProjectConfig
 	if err := os.MkdirAll(docsDir, 0o755); err != nil {
 		return fmt.Errorf("creating .claude/docs: %w", err)
 	}
-	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv)
+	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	return os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(content), 0o644)
 }
 

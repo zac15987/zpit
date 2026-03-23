@@ -52,8 +52,15 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			break // at capacity
 		}
 
+		// Resolve effective base branch: Issue Spec > project config.
+		effectiveBranch := project.BaseBranch
+		if spec, err := tracker.ParseIssueSpec(issue.Body); err == nil && spec.Branch != "" {
+			effectiveBranch = spec.Branch
+		}
+
 		// Check if a worktree already exists for this issue (resumed from previous session).
 		if slot := findLoopSlotFromWorktree(msg.ProjectID, issue, existingWorktrees); slot != nil {
+			slot.BaseBranch = effectiveBranch
 			ls.Slots[key] = slot
 			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issue.ID))
 			continue
@@ -63,6 +70,7 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			ProjectID:  msg.ProjectID,
 			IssueID:    issue.ID,
 			IssueTitle: issue.Title,
+			BaseBranch: effectiveBranch,
 			State:      loop.SlotCreatingWorktree,
 		}
 		ls.Slots[key] = slot

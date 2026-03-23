@@ -70,7 +70,8 @@ type Slot struct {
 	ProjectID    string
 	IssueID      string
 	IssueTitle   string
-	BranchName   string
+	BranchName   string    // feature branch name, e.g. "feat/ISSUE-ID-slug"
+	BaseBranch   string    // PR target branch, resolved from Issue Spec or project config
 	WorktreePath string
 	State        SlotState
 	ReviewRound  int // 0-based; incremented on each NEEDS CHANGES retry

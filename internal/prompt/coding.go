@@ -60,7 +60,9 @@ func BuildCodingPrompt(p CodingParams) string {
 7. 用 git add + git commit 提交改動
 8. Commit message 格式: [%s] {簡短描述}
 9. 開始實作前，更新 issue label: 移除 "todo"，加入 "wip"
-10. 開 PR 後，更新 issue label: 移除 "wip"，加入 "review"
+10. 開 PR 時，**必須** target `+"`%s`"+` 分支（--base %s）。
+    嚴禁 target 其他分支。如果不確定，先停下來確認再開 PR。
+11. 開 PR 後，更新 issue label: 移除 "wip"，加入 "review"
 
 ## 停下來問使用者的時機
 
@@ -75,7 +77,7 @@ func BuildCodingPrompt(p CodingParams) string {
 開 PR、更新 status 時，依 .claude/docs/tracker.md 指示。
 不論使用 MCP 或 REST API，長文字（PR body、comment）一律先用 Write tool 寫到暫存檔，
 再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。
-`, p.IssueID)
+`, p.IssueID, p.BaseBranch, p.BaseBranch)
 
 	return b.String()
 }

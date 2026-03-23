@@ -60,6 +60,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Loop Status display in TUI main view
 - Multi-agent parallel execution (max_per_project worktrees)
 - Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
+- Per-issue branch control: Issue Spec `## BRANCH` → coding agent PR 必須 target 指定 branch，reviewer 驗證 target branch
 
 ### What's stubbed (shows "coming in MX" message)
 - `[a]` Add Project → M5
@@ -134,11 +135,11 @@ internal/
     ├── github.go                # GitHubClient: GitHub REST API
     ├── client_test.go           # 14 client tests (httptest mock)
     ├── labels_test.go           # 9 label tests (mock + httptest)
-    ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec
-    ├── issuespec_test.go        # 12 tests
+    ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec (IssueSpec.Branch for per-issue PR target)
+    ├── issuespec_test.go        # 15 tests
     ├── urls.go                  # BuildIssueURL + BuildTrackerURL
     ├── urls_test.go             # 6 tests
-    └── trackerdoc.go            # BuildTrackerDoc() → .claude/docs/tracker.md content
+    └── trackerdoc.go            # BuildTrackerDoc(baseBranch) → .claude/docs/tracker.md content + branch strategy
 hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands
@@ -211,6 +212,7 @@ Each project has `base_branch` (default `"dev"`) — worktree feature branches a
 ## Conventions
 
 - Branch naming: `feat/ISSUE-ID-slug` — Zpit Loop 統一用 `feat/` 前綴建 branch，PR title 由 agent 決定 feat/fix 分類。branch 名必須包含 issue ID，slug 從 issue title 自動產生
+- Per-issue branch control: Issue Spec `## BRANCH` section 指定 PR target branch（optional）。Clarifier 問使用者，Loop engine 優先用 Issue Spec 的值，fallback 到 project config 的 `base_branch`。Coding agent prompt 明確禁止 target 錯誤 branch。
 - Git branching model: `main` ← `dev` ← feature branches（所有功能從 dev 分出，完成合併回 dev，穩定後 dev 合併至 main）
 - Commit messages: `[ISSUE-ID] short description`
 - Issue statuses flow: pending_confirm → todo → in_progress → ai_review → waiting_review → (needs_verify) → done

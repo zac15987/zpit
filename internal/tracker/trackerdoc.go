@@ -4,7 +4,7 @@ import "fmt"
 
 // BuildTrackerDoc generates a markdown document describing the tracker configuration.
 // Agents read this file to know which API to use for issue/PR operations.
-func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv string) string {
+func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv, baseBranch string) string {
 	switch providerType {
 	case "forgejo_issues":
 		apiBase := baseURL + "/api/v1/repos/" + repo
@@ -15,6 +15,11 @@ func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv string) string {
 - URL: %s
 - Repo: %s
 - Auth: 環境變數 %s
+
+## 分支策略
+
+本專案預設 base branch: %s
+開 PR 時，base（target）branch 必須設為此值，除非 issue 的 ## BRANCH section 另有指定。
 
 ## 操作方式
 
@@ -41,7 +46,7 @@ curl -X POST "%s/issues" \
 curl -X POST "%s/pulls" \
   -H "%s" \
   -H "Content-Type: application/json" \
-  -d '{"title":"...","body":"...","head":"feat/ISSUE-ID-slug","base":"dev"}'
+  -d '{"title":"...","body":"...","head":"feat/ISSUE-ID-slug","base":"%s"}'
 `+"```"+`
 
 新增 comment:
@@ -69,9 +74,9 @@ curl -X POST "%s/labels" \
   -H "Content-Type: application/json" \
   -d '{"name":"wip","color":"#0E8A16"}'
 `+"```"+`
-`, baseURL, repo, tokenEnv,
+`, baseURL, repo, tokenEnv, baseBranch,
 			apiBase, authHeader,
-			apiBase, authHeader,
+			apiBase, authHeader, baseBranch,
 			apiBase, authHeader,
 			apiBase, authHeader,
 			apiBase, authHeader)
@@ -82,6 +87,11 @@ curl -X POST "%s/labels" \
 - 類型: GitHub
 - Repo: %s
 - Auth: 環境變數 %s
+
+## 分支策略
+
+本專案預設 base branch: %s
+開 PR 時，base（target）branch 必須設為此值，除非 issue 的 ## BRANCH section 另有指定。
 
 ## 操作方式
 
@@ -101,7 +111,7 @@ gh issue create --repo %s --title "..." --body "..." --label "pending"
 
 建立 PR:
 `+"```"+`
-gh pr create --repo %s --title "..." --body "..." --head feat/ISSUE-ID-slug --base dev
+gh pr create --repo %s --title "..." --body "..." --head feat/ISSUE-ID-slug --base %s
 `+"```"+`
 
 新增 comment:
@@ -126,9 +136,9 @@ curl -X POST "https://api.github.com/repos/%s/issues" \
   -H "Accept: application/vnd.github+json" \
   -d '{"title":"...","body":"...","labels":["pending"]}'
 `+"```"+`
-`, repo, tokenEnv,
+`, repo, tokenEnv, baseBranch,
 			repo,
-			repo, repo, repo,
+			repo, baseBranch, repo, repo,
 			repo, tokenEnv)
 
 	default:

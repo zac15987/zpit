@@ -1047,8 +1047,8 @@ CLAUDE.md，自動帶上該專案的架構原則、log 規範、技術棧 contex
 ---
 name: clarifier
 description: 需求釐清與技術顧問。當使用者描述模糊需求時使用。
-tools: Read, Grep, Glob, Bash
-disallowedTools: Write, Edit
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
+disallowedTools: Edit
 ---
 
 你是需求釐清與技術顧問。你的工作是：
@@ -1398,8 +1398,9 @@ D:/Projects/.worktrees/                 ← 所有 worktree 集中管理
 ```
 Issue 進入 In Progress
     │
-    ├─ 1. 從 dev 建立 branch（agent 自行決定 feat/fix 等前綴）
-    │     git branch feat/ASE-47-ethercat-reconnect dev
+    ├─ 1. 從 base branch 建立 feature branch（branch 由 Zpit 統一用 feat/ 前綴）
+    │     git branch feat/ASE-47-ethercat-reconnect {base_branch}
+    │     base branch 來源：Issue Spec ## BRANCH > project config base_branch
     │     （branch 名必須包含 issue ID）
     │
     ├─ 2. 建立 worktree
@@ -1473,7 +1474,8 @@ TUI 按 [l]
 │  │    如果 >= max_per_project → 等待                      │
 │  │                                                        │
 │  │ 3. Zpit 建立 branch + worktree + hook config           │
-│  │    git branch feat/ISSUE-ID-slug dev                   │
+│  │    base branch = Issue Spec ## BRANCH || config        │
+│  │    git branch feat/ISSUE-ID-slug {base_branch}         │
 │  │    git worktree add <path> feat/ISSUE-ID-slug          │
 │  │    SetupHookMode() 配置 settings.local.json            │
 │  │    （branch 統一用 feat/ 前綴，PR title 由 agent 決定  │
@@ -2094,6 +2096,7 @@ echo $?   # 應該是 2
 - [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
 - [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
 - [x] Label 自動同步：TUI 啟動時檢查 + 建立缺少的 required labels（LabelManager interface）
+- [x] Per-issue branch 控制：Issue Spec `## BRANCH` → coding prompt 強制 PR target、reviewer 驗證、trackerdoc 分支策略
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams

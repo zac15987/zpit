@@ -20,6 +20,7 @@ type IssueSpec struct {
 	Scope              []ScopeEntry
 	Constraints        string
 	References         string // optional section
+	Branch             string // optional: PR target branch (from ## BRANCH section)
 }
 
 // ScopeEntry represents a single file scope line.
@@ -49,6 +50,7 @@ func ParseIssueSpec(body string) (*IssueSpec, error) {
 		Approach:    sections["APPROACH"],
 		Constraints: sections["CONSTRAINTS"],
 		References:  sections["REFERENCES"],
+		Branch:      sections["BRANCH"],
 	}
 
 	// Parse AC entries

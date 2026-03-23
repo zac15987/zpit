@@ -51,6 +51,8 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 		"Commit message 格式: [ASE-47]",         // workflow
 		"超出此範圍的檔案不要碰",                       // scope warning
 		"停下來問使用者的時機",                          // stop conditions
+		"必須",                                   // PR target branch
+		"--base dev",                            // PR target branch flag
 	}
 
 	for _, c := range checks {
@@ -101,6 +103,23 @@ func TestBuildCodingPrompt_LogPolicies(t *testing.T) {
 	}
 }
 
+func TestBuildCodingPrompt_BaseBranch(t *testing.T) {
+	result := BuildCodingPrompt(CodingParams{
+		IssueID:    "TEST-1",
+		IssueTitle: "test",
+		Spec:       testSpec(),
+		LogPolicy:  "minimal",
+		BaseBranch: "main",
+	})
+
+	if !strings.Contains(result, "`main`") {
+		t.Error("coding prompt should contain target branch name")
+	}
+	if !strings.Contains(result, "--base main") {
+		t.Error("coding prompt should contain --base flag with branch")
+	}
+}
+
 func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 	p := ReviewerParams{
 		IssueID:    "ASE-47",
@@ -122,6 +141,7 @@ func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 		"[modify] src/EtherCatService.cs",
 		"限制條件",
 		"git diff dev...HEAD",                    // uses base branch
+		"target branch",                          // branch verification step
 		"code-construction-principles.md",        // quality check
 		"所有 Service 方法必須有進出 log",               // log policy
 	}

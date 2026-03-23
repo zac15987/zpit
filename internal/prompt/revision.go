@@ -58,6 +58,9 @@ func BuildRevisionPrompt(p RevisionParams) string {
 9. 開始修正前，更新 issue label: 移除 "needs-changes"，加入 "wip"
 10. 修正完成後，更新 issue label: 移除 "wip"，加入 "review"
 
+注意：此 PR 的 target branch 是 `+"`%s`"+`。如果發現 PR target 了錯誤的分支，
+立即停下來通知使用者，不要繼續作業。
+
 ## 停下來問使用者的時機
 
 - reviewer 指出的問題你不確定如何修正
@@ -69,7 +72,7 @@ func BuildRevisionPrompt(p RevisionParams) string {
 更新 label、讀取 comment 時，依 .claude/docs/tracker.md 指示。
 不論使用 MCP 或 REST API，長文字一律先用 Write tool 寫到暫存檔，
 再用 Read tool 讀取內容傳入 API。絕對不要在 bash 命令或 MCP 參數裡直接內嵌長文字。
-`, p.IssueID)
+`, p.IssueID, p.BaseBranch)
 
 	return b.String()
 }
