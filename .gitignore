@@ -30,3 +30,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Zpit auto-deploy
+.claude/agents/
+.claude/docs/tracker.md
+.claude/settings.local.json

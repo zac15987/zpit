@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Zpit is a TUI-based AI development cockpit written in Go with Bubble Tea. It acts as a **dispatch center** (not a wrapper) — it selects projects, launches Claude Code agents in separate terminal windows, monitors their progress via session logs, and coordinates the full issue lifecycle from requirement clarification to PR.
 
-Key design principle: Claude Code runs in independent terminal windows. The TUI monitors via `tail` on session logs (`~/.claude/projects/<hash>/sessions/*.jsonl`), never wrapping or embedding Claude Code directly.
+Key design principle: Claude Code runs in independent terminal windows. The TUI monitors via fsnotify on session logs (`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`), never wrapping or embedding Claude Code directly.
 
 ## Build & Run
 
@@ -15,66 +15,180 @@ go build ./...           # Build
 go test ./...            # Run all tests
 go test ./internal/...   # Run a specific package's tests
 go test -run TestName    # Run a single test
+go run .                 # Run (reads ~/.zpit/config.toml)
+ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
+```
+
+## Current State (M4b Complete)
+
+### What works now
+- TUI project list with ↑↓ navigation and profile icons
+- Config loading from `~/.zpit/config.toml` (TOML, with defaults)
+- Environment detection (Windows Terminal / WSL / Linux tmux)
+- Terminal Launcher: `Enter` opens Claude Code in new WT tab or tmux window
+- `[o]` opens project folder in file manager
+- Session Log Watcher: fsnotify monitors JSONL logs, detects agent state (Working/Waiting/Ended)
+- Active Terminals area: 🟢 Working / 🟡 Waiting for input / ⚫ Session ended (auto-removes after 10s)
+- Agent waiting detection: extracts question text from session log, shows preview in TUI
+- Windows Toast notification when agent waits for input (via PowerShell)
+- Sound alert (SystemSounds.Asterisk)
+- Notification cooldown (re_remind_minutes, per-project)
+- Session liveness check: PID monitoring every 10s, detects closed sessions
+- 3 PreToolUse hook scripts with 29 tests
+- Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
+- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
+- 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
+- TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
+- Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
+- `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
+- `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
+- `[p]` Open Tracker: opens project issue tracker in browser
+- `[r]` Review: opens new terminal with `claude --agent reviewer` (auto-deploys if missing, huh confirm dialog)
+- `[l]` Loop: auto-dispatch coding + reviewer agents per todo issue
+- Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
+- Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
+- Worktree Manager: Create / Remove / List worktrees, hook mode auto-config (settings.local.json)
+- Prompt assembly: BuildCodingPrompt + BuildReviewerPrompt + BuildRevisionPrompt (Issue Spec → agent prompt with log_policy injection)
+- Profile config: `[profiles.*]` with `log_policy` (strict/standard/minimal)
+- Per-project `base_branch` config (default "dev")
+- Makefile with `test-hooks` target
+- Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → NEEDS CHANGES auto-retry → PR merge → cleanup
+- NEEDS CHANGES auto-retry: reviewer 判定 NEEDS CHANGES → 自動重跑 coding agent → 再次 review（max_review_rounds 預設 2）
+- LaunchClaudeInDir: worktree path override for loop launches
+- FindPRByBranch: PR detection by branch name (Forgejo + GitHub)
+- TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
+- Loop Status display in TUI main view
+- Multi-agent parallel execution (max_per_project worktrees)
+- Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
+- Per-issue branch control: Issue Spec `## BRANCH` → coding agent PR 必須 target 指定 branch，reviewer 驗證 target branch
+- i18n: all prompts/agents in English, TUI strings via locale package (en + zh-TW), config `language` field
+
+### What's stubbed (shows "coming in MX" message)
+- `[a]` Add Project → M5
+- `[e]` Edit Config → M5
+- `[?]` Help → TBD
+
+### What's not implemented yet
+- Agent teams (M5)
+- Machine push → auto review trigger (M5)
+- Recent activity feed (M5)
+- shared-core cross-project detection (M5)
+
+## Package Structure
+
+```
+main.go                          # Entry point: config template, log file, embed agents, run Bubble Tea
+Makefile                         # build, test, test-hooks, test-all targets
+agents/
+├── clarifier.md                 # Clarifier agent template (go:embed → auto-deploy)
+└── reviewer.md                  # Reviewer agent template (go:embed → auto-deploy)
+internal/
+├── config/config.go             # Config structs + Load() + BaseDir() + WriteTemplate() + defaults
+├── platform/detect.go           # Environment detection + ResolvePath()
+├── locale/
+│   ├── locale.go                # SetLanguage() + T() + ResponseInstruction()
+│   ├── keys.go                  # Key constants for all TUI display strings
+│   ├── en.go                    # English translations
+│   └── zh_tw.go                 # Traditional Chinese translations
+├── loop/
+│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, verdict constants
+├── terminal/
+│   ├── launcher.go              # LaunchClaude() + LaunchClaudeInDir() dispatch + arg builders
+│   ├── launcher_windows.go      # wt.exe (build tag: windows)
+│   └── launcher_unix.go         # tmux (build tag: !windows)
+├── watcher/
+│   ├── encode.go                # EncodeCwd() path encoding + ClaudeHome()
+│   ├── parse.go                 # AgentState enum + ParseLine() JSONL parser
+│   ├── session.go               # FindActiveSessions() + IsProcessAlive() + LogFilePath()
+│   ├── watcher.go               # Watcher: fsnotify tail + WatchOnce()
+│   ├── process_windows.go       # PID liveness check (Windows tasklist)
+│   ├── process_unix.go          # PID liveness check (Unix signal 0)
+│   └── watcher_test.go          # 22 tests
+├── notify/
+│   ├── notify.go                # Notifier: cooldown logic + dispatch
+│   ├── toast_windows.go         # Windows Toast via PowerShell
+│   ├── toast_unix.go            # no-op on non-Windows
+│   ├── sound_windows.go         # SystemSounds.Asterisk via PowerShell
+│   ├── sound_unix.go            # paplay/aplay fallback
+│   └── notify_test.go           # 6 tests
+├── tui/
+│   ├── model.go                 # Root Bubble Tea model, Update, key routing, confirm dialog (huh)
+│   ├── keymap.go                # Key bindings (incl. Back, Confirm)
+│   ├── styles.go                # Lip Gloss styles with named color constants
+│   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals + loop status
+│   ├── view_status.go           # Status sub-view: issue list + [y] confirm + [p] browser
+│   ├── msg.go                   # Custom tea.Msg types (IssuesLoadedMsg, Loop*Msg, etc.)
+│   ├── loop_cmds.go             # Loop tea.Cmd functions (poll, create worktree, launch, cleanup)
+│   └── loop_handler.go          # Loop message handlers (state machine transitions)
+├── worktree/
+│   ├── slug.go                  # Slugify() issue title → URL-safe slug
+│   ├── manager.go               # Worktree Manager: Create/Remove/List + runGit helper
+│   ├── hooks.go                 # SetupHookMode() → settings.local.json per hook_mode
+│   ├── slug_test.go             # 11 slug tests
+│   ├── manager_test.go          # Worktree lifecycle tests (real git)
+│   └── hooks_test.go            # 5 hook config tests
+├── prompt/
+│   ├── coding.go                # BuildCodingPrompt() — Issue Spec → coding agent prompt
+│   ├── reviewer.go              # BuildReviewerPrompt() — Issue Spec → reviewer prompt
+│   ├── revision.go              # BuildRevisionPrompt() — Issue Spec → revision coding prompt (NEEDS CHANGES retry)
+│   └── prompt_test.go           # 5 prompt assembly tests
+└── tracker/
+    ├── types.go                 # Issue/PR structs + canonical status constants + LabelDef + RequiredLabels
+    ├── client.go                # TrackerClient interface + NewClient factory + MapLabelsToStatus
+    ├── labels.go                # LabelManager interface + EnsureLabels (startup label sync)
+    ├── restapi.go               # Shared REST HTTP helper (restClient, doJSON, splitRepo)
+    ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API v1
+    ├── github.go                # GitHubClient: GitHub REST API
+    ├── client_test.go           # 14 client tests (httptest mock)
+    ├── labels_test.go           # 9 label tests (mock + httptest)
+    ├── issuespec.go             # ValidateIssueSpec + ParseIssueSpec (IssueSpec.Branch for per-issue PR target)
+    ├── issuespec_test.go        # 15 tests
+    ├── urls.go                  # BuildIssueURL + BuildTrackerURL
+    ├── urls_test.go             # 6 tests
+    └── trackerdoc.go            # BuildTrackerDoc(baseBranch) → .claude/docs/tracker.md content + branch strategy
+hooks/
+├── path-guard.sh                # Confine Write/Edit to worktree dir
+├── bash-firewall.sh             # Block destructive commands
+├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
+└── hooks_test.go                # Go tests shelling out to each hook (29 tests)
+scripts/setup-hooks.sh           # Deploy hooks + docs + agents to a project's .claude/
+testdata/
+├── config.toml                  # Real project config used for tests + manual TUI testing
+├── config_minimal.toml          # Minimal config for defaults testing
+├── session_working.jsonl        # JSONL fixture: agent working (tool_use)
+└── session_waiting.jsonl        # JSONL fixture: agent waiting (end_turn)
+docs/
+├── zpit-architecture.md         # Full architecture document
+└── code-construction-principles.md  # Code quality baseline for agent review
 ```
 
 ## Architecture
 
-### Core Engine Modules
+### Session Log Monitoring (M2)
 
-The system is composed of four core modules under the TUI:
+The TUI monitors Claude Code sessions via their JSONL log files:
 
-- **ProjectMgr** — reads `~/.config/zpit/config.toml`, manages project definitions with per-OS paths (`windows` / `wsl`)
-- **Tracker Provider** — abstract `IssueTracker` interface with implementations for Plane, Linear, GitHub Issues, and Forgejo Issues. Internal status constants (`todo`, `in_progress`, `ai_review`, `waiting_review`, `needs_verify`, `done`) are mapped per-provider.
-- **Terminal Launcher** — detects environment (Windows Terminal vs tmux) and launches Claude Code in new tabs/windows. Behavior controlled by `config.toml [terminal]` section.
-- **LogTail (Session Log Watcher)** — uses fsnotify to watch Claude Code session logs, parses events (`tool_use`, `bash`, `thinking`), and feeds them into Bubble Tea's Update loop as `AgentEvent` messages.
+1. **Path encoding**: `EncodeCwd()` converts project path to Claude's directory name (non-alphanumeric → `-`)
+2. **Session discovery**: scans `~/.claude/sessions/{pid}.json` for matching project + alive PID
+3. **Two-phase startup**: finds session PID immediately (enables liveness check), then waits for JSONL file creation (happens on first user input)
+4. **State detection**: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
+5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
+6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
 
-### Provider Abstraction
+### TrackerClient (M3)
 
-Two key interfaces drive extensibility:
+Zpit 透過直接 REST API 與各 tracker 互動（TrackerClient interface）：
 
-```go
-type IssueTracker interface {
-    ListIssues, GetIssue, CreateIssue, UpdateStatus, AddComment
-}
-
-type GitHost interface {
-    CreatePR, GetPRStatus
-}
+```
+Zpit (Go) → TrackerClient interface
+                ├─ ForgejoClient → Forgejo/Gitea REST API
+                └─ GitHubClient  → GitHub REST API
 ```
 
-Each project in `config.toml` references a tracker and git provider by key. Providers are defined under `[providers.tracker.*]` and `[providers.git.*]`.
-
-### Project Profiles
-
-Each project has a `profile` field (`machine` | `web` | `desktop` | `android`) that determines:
-- Build/verify commands (msbuild, npm, gradlew)
-- Log policy strictness (strict/standard/minimal)
-- Post-implementation steps (ai_review, open_pr, auto_deploy)
-- Auto-applied issue labels (e.g., "needs hardware verification")
-
-### Git Worktree Parallel Development
-
-Multiple agents can work on the same project simultaneously using git worktrees:
-- Worktrees are created under a centralized `base_dir` (e.g., `D:/Projects/.worktrees/{project_id}/{issue_id}--{slug}`)
-- Each agent gets its own worktree directory and branch
-- `.claude/` directory (agents, hooks, settings) is inherited automatically
-- Loop engine checks for file-level conflicts before assigning concurrent issues
-- Cleanup (worktree remove + branch delete) happens automatically after PR merge
-
-### Issue Spec — The Agent Communication Contract
-
-Issues use a strict structured format (§6.2) with mandatory sections: `## CONTEXT`, `## APPROACH`, `## ACCEPTANCE_CRITERIA`, `## SCOPE`, `## CONSTRAINTS`, and optional `## REFERENCES`. This is the **only** communication interface between Clarifier, Coding Agent, and Reviewer agents. Zpit validates completeness before pushing to any tracker.
-
-### Agent Roles
-
-Three agent types live in each managed project's `.claude/agents/`:
-- **Clarifier** (`clarifier.md`) — read-only, turns vague requirements into structured Issue Specs, proposes and compares technical approaches, pushes issues as "pending_confirm"
-- **Reviewer** (`reviewer.md`) — read-only, checks implementation against AC criteria item-by-item, outputs structured Review Report with PASS/NEEDS CHANGES verdict
-- **Coding Agent** — launched by Loop via `claude -p` with a prompt assembled from the Issue Spec template (§6.5)
-
-### Automation Loop Flow
-
-`[l]` key triggers: poll tracker for Todo issues → conflict precheck → create branch + worktree → launch Claude Code in new terminal → verify (build) → AI review → open PR → update tracker → move to next issue without waiting for human review.
+- 直接 API < 1 秒回應，適合 `[s]` status 即時顯示和 Loop 頻繁 poll
+- Auth 透過 `token_env` 指向環境變數，不在 config 存明文
+- Agent（Clarifier/Coding/Reviewer）仍透過 MCP 操作 tracker（推 issue、開 PR、寫 comment）
+- TUI `[s]` status 透過 TrackerClient 拉 issue 列表，`[y]` 改 label
 
 ### Hook-Based Safety System (5 Layers)
 
@@ -91,12 +205,26 @@ Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard`
 
 ## Config Location
 
-`~/.config/zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions.
+`~/.zpit/config.toml` — terminal settings, notification preferences, provider credentials (via env var references), and all project definitions. Override with `ZPIT_CONFIG` env var.
+
+First run: if config doesn't exist, Zpit auto-creates a template and exits. User edits it, then runs again.
+
+Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, auto-cleanup after 30 days.
+
+Provider entries include `token_env` field pointing to environment variable name for API auth (e.g. `token_env = "FORGEJO_TOKEN"`).
+
+Each project has `base_branch` (default `"dev"`) — worktree feature branches are created from this branch.
+
+Top-level `language` field (default `"en"`) controls TUI display language and agent response language. Supported: `"en"`, `"zh-TW"`. All agent prompts and .md templates are written in English; response language is injected dynamically via `locale.ResponseInstruction()`.
 
 ## Conventions
 
-- Branch naming: `feat/ISSUE-ID-description` or `fix/ISSUE-ID-description`
+- Branch naming: `feat/ISSUE-ID-slug` — Zpit Loop 統一用 `feat/` 前綴建 branch，PR title 由 agent 決定 feat/fix 分類。branch 名必須包含 issue ID，slug 從 issue title 自動產生
+- Per-issue branch control: Issue Spec `## BRANCH` section 指定 PR target branch（optional）。Clarifier 問使用者，Loop engine 優先用 Issue Spec 的值，fallback 到 project config 的 `base_branch`。Coding agent prompt 明確禁止 target 錯誤 branch。
+- Git branching model: `main` ← `dev` ← feature branches（所有功能從 dev 分出，完成合併回 dev，穩定後 dev 合併至 main）
 - Commit messages: `[ISSUE-ID] short description`
 - Issue statuses flow: pending_confirm → todo → in_progress → ai_review → waiting_review → (needs_verify) → done
+- Loop label flow: todo → wip → review → ai-review (PASS) / needs-changes (NEEDS CHANGES → auto-retry up to max_review_rounds)
 - Agents must stop and ask on uncertain technical decisions, even with bypass-all-permissions enabled
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
+- Code quality baseline: `docs/code-construction-principles.md` — Reviewer agent checks against this
