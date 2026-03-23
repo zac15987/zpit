@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/watcher"
 )
@@ -80,7 +81,7 @@ func (m Model) renderProjectsFooter() string {
 		b.WriteString(statusBarStyle.Render(" " + m.statusMessage + " "))
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("Press ? for help, q to quit"))
+	b.WriteString(helpStyle.Render(locale.T(locale.KeyHelpFooter)))
 	return b.String()
 }
 
@@ -93,7 +94,7 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderProjectList() string {
 	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render("Projects"))
+	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyProjects)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 32) + "\n\n")
 
@@ -134,7 +135,7 @@ func (m Model) renderProjectList() string {
 
 func (m Model) renderHotkeys() string {
 	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render("Hotkeys"))
+	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyHotkeys)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 26) + "\n\n")
 
@@ -143,17 +144,17 @@ func (m Model) renderHotkeys() string {
 		desc string
 		sep  bool // insert blank line before this entry
 	}{
-		{"Enter", "Launch Claude Code", false},
-		{"c", "Clarify requirement", false},
-		{"l", "Loop auto-implement", false},
-		{"r", "Review changes", false},
-		{"s", "Status overview", false},
-		{"o", "Open project folder", false},
-		{"p", "Open Issue Tracker", false},
-		{"a", "Add project", true},
-		{"e", "Edit config", false},
-		{"?", "Help", true},
-		{"q", "Quit", false},
+		{"Enter", locale.T(locale.KeyLaunchClaude), false},
+		{"c", locale.T(locale.KeyClarifyReq), false},
+		{"l", locale.T(locale.KeyLoopAutoImpl), false},
+		{"r", locale.T(locale.KeyReviewChanges), false},
+		{"s", locale.T(locale.KeyStatusOverview), false},
+		{"o", locale.T(locale.KeyOpenFolder), false},
+		{"p", locale.T(locale.KeyOpenTracker), false},
+		{"a", locale.T(locale.KeyAddProject), true},
+		{"e", locale.T(locale.KeyEditConfig), false},
+		{"?", locale.T(locale.KeyHelp), true},
+		{"q", locale.T(locale.KeyQuit), false},
 	}
 
 	for _, h := range hotkeys {
@@ -179,7 +180,7 @@ func (m Model) projectName(id string) string {
 
 func (m Model) renderActiveTerminals() string {
 	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render("Active Terminals"))
+	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyActiveTerminals)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
@@ -223,15 +224,15 @@ func (m Model) renderActiveTerminals() string {
 func renderAgentStatus(at *ActiveTerminal) (string, string) {
 	switch at.State {
 	case watcher.StateEnded:
-		return iconEnded, detailStyle.Render(iconEnded + " Session ended")
+		return iconEnded, detailStyle.Render(iconEnded + " " + locale.T(locale.KeySessionEnded))
 	case watcher.StateWaiting:
-		return iconWaiting, waitingStyle.Render(iconWaiting + " Waiting for input")
+		return iconWaiting, waitingStyle.Render(iconWaiting + " " + locale.T(locale.KeyWaitingForInput))
 	case watcher.StateWorking:
-		return iconWorking, workingStyle.Render(iconWorking + " Working")
+		return iconWorking, workingStyle.Render(iconWorking + " " + locale.T(locale.KeyWorking))
 	case watcher.StateStreaming:
-		return iconWorking, workingStyle.Render(iconWorking + " Working")
+		return iconWorking, workingStyle.Render(iconWorking + " " + locale.T(locale.KeyWorking))
 	default:
-		return iconWorking, detailStyle.Render(iconWorking + " Launched")
+		return iconWorking, detailStyle.Render(iconWorking + " " + locale.T(locale.KeyLaunched))
 	}
 }
 
@@ -258,16 +259,16 @@ func (m Model) renderLoopStatus() string {
 			continue
 		}
 		if !hasContent {
-			b.WriteString(sectionTitleStyle.Render("Loop Status"))
+			b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyLoopStatus)))
 			b.WriteString("\n")
 			b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 			hasContent = true
 		}
 
 		projectName := m.projectName(projectID)
-		status := "running"
+		status := locale.T(locale.KeyLoopRunning)
 		if !ls.Active {
-			status = "stopping"
+			status = locale.T(locale.KeyLoopStopping)
 		}
 		b.WriteString(fmt.Sprintf("  %s (%s)\n",
 			selectedStyle.Render(projectName),
@@ -275,7 +276,7 @@ func (m Model) renderLoopStatus() string {
 		))
 
 		if len(ls.Slots) == 0 {
-			b.WriteString(fmt.Sprintf("    %s\n", detailStyle.Render("polling for issues...")))
+			b.WriteString(fmt.Sprintf("    %s\n", detailStyle.Render(locale.T(locale.KeyPollingIssues))))
 			continue
 		}
 

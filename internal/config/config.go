@@ -27,6 +27,7 @@ type ProfileConfig struct {
 }
 
 type Config struct {
+	Language     string                    `toml:"language"`
 	Terminal     TerminalConfig            `toml:"terminal"`
 	Notification NotificationConfig        `toml:"notification"`
 	Worktree     WorktreeConfig            `toml:"worktree"`
@@ -180,6 +181,9 @@ func Load(path string) (*Config, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	if cfg.Language == "" {
+		cfg.Language = "en"
+	}
 	if cfg.Terminal.WindowsMode == "" {
 		cfg.Terminal.WindowsMode = defaultWindowsMode
 	}

@@ -10,53 +10,53 @@ func BuildTrackerDoc(providerType, baseURL, repo, tokenEnv, baseBranch string) s
 		owner, repoName := splitRepo(repo)
 		apiBase := baseURL + "/api/v1/repos/" + repo
 		authHeader := "Authorization: token $" + tokenEnv
-		return fmt.Sprintf(`# Tracker 設定
+		return fmt.Sprintf(`# Tracker Configuration
 
-- 類型: Forgejo
+- Type: Forgejo
 - URL: %s
 - Repo: %s
-- Auth: 環境變數 %s
+- Auth: environment variable %s
 
-## 分支策略
+## Branch Strategy
 
-本專案預設 base branch: %s
-開 PR 時，base（target）branch 必須設為此值，除非 issue 的 ## BRANCH section 另有指定。
+Default base branch for this project: %s
+When creating a PR, the base (target) branch must be set to this value, unless the issue's ## BRANCH section specifies otherwise.
 
-## 操作方式
+## How to Operate
 
-**優先使用 Gitea MCP server**（tool 名稱前綴為 "gitea"）。
-只有在 MCP 不可用時，才改用 curl + REST API。
-**不要使用 gh CLI**（此專案不是 GitHub）。
+**Prefer the Gitea MCP server** (tool name prefix: "gitea").
+Only fall back to curl + REST API when MCP is unavailable.
+**Do not use gh CLI** (this project is not on GitHub).
 
-**重要：不論使用 MCP 或 REST API，長文字內容（issue body、PR body、comment）
-一律先用 Write tool 寫到暫存檔（如 /tmp/issue_body.md），再用 Read tool 讀取內容傳入。
-絕對不要在 MCP 參數或 bash 命令裡直接內嵌長文字。**
+**Important: Whether using MCP or REST API, always write long text content (issue body, PR body, comment)
+to a temporary file first (e.g. /tmp/issue_body.md) using the Write tool, then read it back with the Read tool before passing it in.
+Never embed long text directly in MCP parameters or bash commands.**
 
-## MCP 操作（優先）
+## MCP Operations (Preferred)
 
-如果 gitea MCP server 已連線，使用以下 MCP tools（owner="%s", repo="%s"）：
+If the gitea MCP server is connected, use these MCP tools (owner="%s", repo="%s"):
 
-建立 issue:
-  → issue_write tool: owner="%s", repo="%s", title="...", body="..."（body 先寫暫存檔再讀取傳入）
-  → 建立後用 label_write 設定 label
+Create issue:
+  → issue_write tool: owner="%s", repo="%s", title="...", body="..." (write body to temp file first, then read and pass in)
+  → After creation, use label_write to set labels
 
-建立 PR:
+Create PR:
   → pull_request_write tool: owner="%s", repo="%s", title="...", body="...", head="feat/ISSUE-ID-slug", base="%s"
 
-新增 comment:
-  → issue_write tool（comment 功能）: owner="%s", repo="%s", index={number}, body="..."
+Add comment:
+  → issue_write tool (comment function): owner="%s", repo="%s", index={number}, body="..."
 
-查詢 issue:
-  → list_issues 或 issue_read tool: owner="%s", repo="%s"
+Query issues:
+  → list_issues or issue_read tool: owner="%s", repo="%s"
 
-管理 label:
-  → label_read tool 查詢、label_write tool 建立/設定
+Manage labels:
+  → label_read tool to query, label_write tool to create/set
 
-## REST API fallback
+## REST API Fallback
 
-只在 MCP 不可用時使用。
+Use only when MCP is unavailable.
 
-建立 issue:
+Create issue:
 `+"```"+`
 curl -X POST "%s/issues" \
   -H "%s" \
@@ -64,7 +64,7 @@ curl -X POST "%s/issues" \
   -d '{"title":"...","body":"...","labels":["pending"]}'
 `+"```"+`
 
-建立 PR:
+Create PR:
 `+"```"+`
 curl -X POST "%s/pulls" \
   -H "%s" \
@@ -72,7 +72,7 @@ curl -X POST "%s/pulls" \
   -d '{"title":"...","body":"...","head":"feat/ISSUE-ID-slug","base":"%s"}'
 `+"```"+`
 
-新增 comment:
+Add comment:
 `+"```"+`
 curl -X POST "%s/issues/{number}/comments" \
   -H "%s" \
@@ -80,17 +80,17 @@ curl -X POST "%s/issues/{number}/comments" \
   -d '{"body":"..."}'
 `+"```"+`
 
-## Label 管理
+## Label Management
 
-操作 label 前，先查詢該 label 是否存在。如果不存在，先建立再使用。
-不要因為 label 不存在就跳過或報錯。
+Before operating on a label, first check whether it exists. If it does not exist, create it before using it.
+Do not skip or error out just because a label does not exist.
 
-查詢所有 label:
+List all labels:
 `+"```"+`
 curl -s "%s/labels" -H "%s"
 `+"```"+`
 
-建立 label:
+Create label:
 `+"```"+`
 curl -X POST "%s/labels" \
   -H "%s" \
@@ -110,53 +110,53 @@ curl -X POST "%s/labels" \
 			apiBase, authHeader)
 
 	case "github_issues":
-		return fmt.Sprintf(`# Tracker 設定
+		return fmt.Sprintf(`# Tracker Configuration
 
-- 類型: GitHub
+- Type: GitHub
 - Repo: %s
-- Auth: 環境變數 %s
+- Auth: environment variable %s
 
-## 分支策略
+## Branch Strategy
 
-本專案預設 base branch: %s
-開 PR 時，base（target）branch 必須設為此值，除非 issue 的 ## BRANCH section 另有指定。
+Default base branch for this project: %s
+When creating a PR, the base (target) branch must be set to this value, unless the issue's ## BRANCH section specifies otherwise.
 
-## 操作方式
+## How to Operate
 
-優先使用 gh CLI（如已安裝）。
-如果 gh 不可用，改用 curl + GitHub REST API。
+Prefer gh CLI (if installed).
+If gh is unavailable, fall back to curl + GitHub REST API.
 
-**重要：不論使用 gh CLI 或 REST API，長文字內容（issue body、PR body、comment）
-一律先用 Write tool 寫到暫存檔（如 /tmp/issue_body.md），再用 Read tool 讀取內容傳入 API。
-絕對不要在 bash 命令裡直接內嵌長文字。**
+**Important: Whether using gh CLI or REST API, always write long text content (issue body, PR body, comment)
+to a temporary file first (e.g. /tmp/issue_body.md) using the Write tool, then read it back before passing it to the API.
+Never embed long text directly in bash commands.**
 
-## gh CLI 範例
+## gh CLI Examples
 
-建立 issue:
+Create issue:
 `+"```"+`
 gh issue create --repo %s --title "..." --body "..." --label "pending"
 `+"```"+`
 
-建立 PR:
+Create PR:
 `+"```"+`
 gh pr create --repo %s --title "..." --body "..." --head feat/ISSUE-ID-slug --base %s
 `+"```"+`
 
-新增 comment:
+Add comment:
 `+"```"+`
 gh issue comment {number} --repo %s --body "..."
 `+"```"+`
 
-## Label 管理
+## Label Management
 
-操作 label 前，先確認該 label 是否存在。如果不存在，先建立再使用。
-不要因為 label 不存在就跳過或報錯。
+Before operating on a label, first confirm whether it exists. If it does not exist, create it before using it.
+Do not skip or error out just because a label does not exist.
 
 `+"```"+`
 gh label create "wip" --repo %s --color "0E8A16" 2>/dev/null || true
 `+"```"+`
 
-## REST API fallback
+## REST API Fallback
 
 `+"```"+`
 curl -X POST "https://api.github.com/repos/%s/issues" \
@@ -170,6 +170,6 @@ curl -X POST "https://api.github.com/repos/%s/issues" \
 			repo, tokenEnv)
 
 	default:
-		return fmt.Sprintf("# Tracker 設定\n\n未知的 tracker 類型: %s\n", providerType)
+		return fmt.Sprintf("# Tracker Configuration\n\nUnknown tracker type: %s\n", providerType)
 	}
 }

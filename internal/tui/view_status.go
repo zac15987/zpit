@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/tracker"
 )
 
@@ -30,16 +31,16 @@ func (m Model) renderStatusScrollable() string {
 	var b strings.Builder
 
 	projectName := m.projectName(m.statusProjectID)
-	b.WriteString(sectionTitleStyle.Render(fmt.Sprintf("Issues — %s", projectName)))
+	b.WriteString(sectionTitleStyle.Render(fmt.Sprintf("%s — %s", locale.T(locale.KeyIssues), projectName)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 60) + "\n\n")
 
 	if m.statusLoading {
-		b.WriteString("  Loading issues...\n")
+		b.WriteString("  " + locale.T(locale.KeyLoadingIssues) + "\n")
 	} else if m.statusError != "" {
 		b.WriteString(fmt.Sprintf("  Error: %s\n", m.statusError))
 	} else if len(m.statusIssues) == 0 {
-		b.WriteString("  No issues found.\n")
+		b.WriteString("  " + locale.T(locale.KeyNoIssuesFound) + "\n")
 	} else {
 		for i, issue := range m.statusIssues {
 			cursor := "   "
@@ -66,9 +67,9 @@ func (m Model) renderStatusScrollable() string {
 func (m Model) renderStatusFooter() string {
 	var b strings.Builder
 	hotkeys := []struct{ key, desc string }{
-		{"y", "Confirm (pending→todo)"},
-		{"p", "Open in browser"},
-		{"Esc", "Back"},
+		{"y", locale.T(locale.KeyConfirmPending)},
+		{"p", locale.T(locale.KeyOpenInBrowser)},
+		{"Esc", locale.T(locale.KeyBack)},
 	}
 	for _, h := range hotkeys {
 		b.WriteString("  ")
