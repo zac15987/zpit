@@ -126,9 +126,18 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte) Model {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
 
-	// Ensure required labels exist for each project's tracker (background, non-blocking).
-	seen := make(map[string]bool)
+	seenTracker := make(map[string]bool)
+	seenPath := make(map[string]bool)
+
 	for _, project := range m.projects {
+		// Ensure .gitignore has Zpit-deployed paths (sync, fast).
+		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		if projectPath != "" && !seenPath[projectPath] {
+			seenPath[projectPath] = true
+			ensureGitignore(projectPath)
+		}
+
+		// Ensure required labels exist (background, non-blocking).
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -136,10 +145,10 @@ func (m Model) Init() tea.Cmd {
 			continue
 		}
 		key := project.Tracker + ":" + project.Repo
-		if seen[key] {
+		if seenTracker[key] {
 			continue
 		}
-		seen[key] = true
+		seenTracker[key] = true
 		cmds = append(cmds, m.ensureLabelsCmd(project.ID))
 	}
 
@@ -795,6 +804,51 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 		issues, err := client.ListIssues(ctx, repo)
 		return IssuesLoadedMsg{ProjectID: project.ID, Issues: issues, Err: err}
 	}
+}
+
+// zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
+var zpitIgnoreRules = []string{
+	".claude/agents/",
+	".claude/docs/tracker.md",
+	".claude/settings.local.json",
+}
+
+// ensureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
+func ensureGitignore(projectPath string) {
+	gitignorePath := filepath.Join(projectPath, ".gitignore")
+
+	content, _ := os.ReadFile(gitignorePath)
+	existing := make(map[string]bool)
+	for _, line := range strings.Split(string(content), "\n") {
+		existing[strings.TrimSpace(line)] = true
+	}
+
+	var missing []string
+	for _, rule := range zpitIgnoreRules {
+		if !existing[rule] {
+			missing = append(missing, rule)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	var buf strings.Builder
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		buf.WriteByte('\n')
+	}
+	buf.WriteString("\n# Zpit auto-deploy\n")
+	for _, rule := range missing {
+		buf.WriteString(rule)
+		buf.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(buf.String())
 }
 
 // ensureLabelsCmd checks and creates missing required labels for a project's tracker.
