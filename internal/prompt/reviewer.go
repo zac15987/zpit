@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/tracker"
 )
 
@@ -20,7 +21,7 @@ type ReviewerParams struct {
 func BuildReviewerPrompt(p ReviewerParams) string {
 	var b strings.Builder
 
-	b.WriteString("Always respond in Traditional Chinese (zh-TW).\n\n")
+	b.WriteString(locale.ResponseInstruction())
 
 	fmt.Fprintf(&b, "You are reviewing the implementation of issue %s: %s.\n", p.IssueID, p.IssueTitle)
 

@@ -37,7 +37,6 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 	result := BuildCodingPrompt(p)
 
 	checks := []string{
-		"Always respond in Traditional Chinese (zh-TW).",
 		"ASE-47",
 		"EtherCAT reconnect backoff",
 		"EtherCAT reconnect 沒有 backoff",                      // CONTEXT
@@ -133,7 +132,6 @@ func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 	result := BuildReviewerPrompt(p)
 
 	checks := []string{
-		"Always respond in Traditional Chinese (zh-TW).",
 		"ASE-47",
 		"review",
 		"Original Requirements",

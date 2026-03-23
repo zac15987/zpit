@@ -827,7 +827,7 @@ func (m *Model) showDeployConfirm() {
 func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	project := m.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	clarifierMD := m.clarifierMD
+	clarifierMD := injectLangInstruction(m.clarifierMD)
 	cfg := m.cfg.Terminal
 
 	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
@@ -1050,7 +1050,7 @@ func (m *Model) showReviewerDeployConfirm() {
 func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	project := m.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	reviewerMD := m.reviewerMD
+	reviewerMD := injectLangInstruction(m.reviewerMD)
 	cfg := m.cfg.Terminal
 	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
 
@@ -1072,6 +1072,28 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 			Err:       err,
 		}
 	}
+}
+
+// injectLangInstruction prepends the locale response instruction after YAML frontmatter.
+func injectLangInstruction(md []byte) []byte {
+	instruction := locale.ResponseInstruction()
+	if instruction == "" {
+		return md
+	}
+	s := string(md)
+	// Insert after closing "---\n"
+	const marker = "---\n"
+	// Find second "---" (closing frontmatter)
+	first := strings.Index(s, marker)
+	if first < 0 {
+		return append([]byte(instruction), md...)
+	}
+	second := strings.Index(s[first+len(marker):], marker)
+	if second < 0 {
+		return append([]byte(instruction), md...)
+	}
+	insertPos := first + len(marker) + second + len(marker)
+	return []byte(s[:insertPos] + "\n" + instruction + s[insertPos:])
 }
 
 // deployTrackerDoc writes .claude/docs/tracker.md to the target directory.
