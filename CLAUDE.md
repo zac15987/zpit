@@ -62,6 +62,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
 - Per-issue branch control: Issue Spec `## BRANCH` → coding agent PR 必須 target 指定 branch，reviewer 驗證 target branch
 - i18n: all prompts/agents in English, TUI strings via locale package (en + zh-TW), config `language` field
+- Focus Panel: `Tab` switches focus to Loop Status area, `↑↓` selects slot, `Enter` opens plain Claude Code in slot's worktree (only launchable states: coding/reviewing/waitingPRMerge/needsHuman/error)
 
 ### What's stubbed (shows "coming in MX" message)
 - `[a]` Add Project → M5
@@ -113,7 +114,7 @@ internal/
 │   └── notify_test.go           # 6 tests
 ├── tui/
 │   ├── model.go                 # Root Bubble Tea model, Update, key routing, confirm dialog (huh)
-│   ├── keymap.go                # Key bindings (incl. Back, Confirm)
+│   ├── keymap.go                # Key bindings (incl. Back, Confirm, FocusSwitch)
 │   ├── styles.go                # Lip Gloss styles with named color constants
 │   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals + loop status
 │   ├── view_status.go           # Status sub-view: issue list + [y] confirm + [p] browser
