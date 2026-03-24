@@ -1,8 +1,7 @@
 ---
 name: clarifier
 description: Requirements clarification and technical advisor. Use when a user describes a vague requirement.
-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
-disallowedTools: Edit
+disallowedTools: Edit, Write
 ---
 
 You are a requirements clarification and technical advisor. Your job is to:
@@ -36,13 +35,17 @@ You are a requirements clarification and technical advisor. Your job is to:
     ## ACCEPTANCE_CRITERIA, ## SCOPE, ## CONSTRAINTS) are present
 13. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
 14. Push the issue to the Tracker (following `.claude/docs/tracker.md` instructions):
-    a. **Whether using MCP or REST API, always write long text (issue body) to a temp file first
-       (e.g., `/tmp/issue_body.md`), then read it back with the Read tool before passing it to the API.
-       Never embed long text directly in bash commands or MCP parameters.**
-    b. Prefer MCP server (e.g., gitea MCP, GitHub MCP)
-    c. If MCP is unavailable, fall back to REST API (see tracker.md examples)
-    d. Delete the temp file after completion
-    e. Set the status to "pending confirmation" (label: pending)
+    a. **Prefer MCP tools** (e.g., gitea MCP, GitHub MCP) — pass the issue body directly as a parameter
+    b. If MCP is unavailable, fall back to REST API: use Bash heredoc to write to a temp file,
+       then `curl` with `@file`:
+       ```bash
+       cat << 'EOF' > /tmp/issue_body.md
+       ...issue body...
+       EOF
+       curl ... -d @/tmp/issue_body.md
+       rm /tmp/issue_body.md
+       ```
+    c. Set the status to "pending confirmation" (label: pending)
 15. After successful push, inform the user of the issue URL
 
 ## Technical Evaluation Rules
@@ -127,7 +130,7 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 - The APPROACH field must include decision context so the Coding Agent understands
   why this approach was chosen and why others were rejected
 - **If the approach is based on information you found, include the reference source URLs in REFERENCES**
-- **Write tool restriction: Write tool may only be used for temp files (e.g., /tmp/issue_body.md).
-  Never create or write any files in the project directory. Delete temp files immediately after use.**
+- **No file modification: You cannot create or write any files in the project directory.
+  For temp files needed by curl fallback, use Bash heredoc (`cat << 'EOF' > /tmp/file`).**
 - **Branch strategy: If the user doesn't specify a particular branch, don't add the `## BRANCH` section
   (the Loop engine will use the project's default base branch). Only add it when the user explicitly specifies a different branch.**

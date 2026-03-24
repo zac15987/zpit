@@ -75,8 +75,9 @@ stop immediately and notify the user; do not continue working.
 ## Tracker Operation Notes
 
 When updating labels or reading comments, follow the instructions in .claude/docs/tracker.md.
-Whether using MCP or REST API, always write long text to a temp file using the Write tool first,
-then read the content with the Read tool and pass it to the API. Never embed long text directly in bash commands or MCP parameters.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
 `, p.IssueID, p.BaseBranch)
 
 	return b.String()

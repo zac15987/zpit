@@ -1554,11 +1554,11 @@ WSL 環境下也可以透過 `powershell.exe` 呼叫 Windows 通知系統。
 
 ### 13.2 權限控制
 
-| 角色 | --allowedTools | bypass 模式 | Hook 保護 |
-|------|---------------|------------|-----------|
-| 實作 agent | Read,Write,Edit,Bash,Grep,Glob | ✓ 建議開啟 | ✓ 全部 hook |
-| Review agent | Read,Grep,Glob,Bash | 可開可不開 | ✓ 全部 hook |
-| Clarifier agent | Read,Grep,Glob,Bash,WebSearch,WebFetch | 可開可不開 | ✓ 全部 hook |
+| 角色 | 權限模式 | bypass 模式 | Hook 保護 |
+|------|---------|------------|-----------|
+| 實作 agent | 無限制（frontmatter 不設 tools） | ✓ 建議開啟 | ✓ 全部 hook |
+| Review agent | disallowedTools: Write, Edit | 可開可不開 | ✓ 全部 hook |
+| Clarifier agent | disallowedTools: Edit, Write | 可開可不開 | ✓ 全部 hook |
 | 你手動介入 | all permissions | ✓ 你自己判斷 | ✓ hook 仍生效（保護你自己的手誤） |
 | agent teams subagent | 繼承 lead agent | 繼承 | ✓ hook 對 subagent 同樣生效 |
 

@@ -64,8 +64,9 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 ## Tracker Operation Notes
 
 When writing the Review Report to the tracker (comment), follow the instructions in .claude/docs/tracker.md.
-Whether using MCP or REST API, always write long text to a temp file using the Write tool first,
-then read the content with the Read tool and pass it to the API. Never embed long text directly in bash commands or MCP parameters.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
 `, p.BaseBranch, p.BaseBranch)
 
 	return b.String()

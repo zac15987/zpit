@@ -41,11 +41,19 @@ Never proceed with an uncertain technical decision on your own.
 
 ## Tracker Operations
 
-- Write long text (PR body, issue body, comments) to a temp file first,
-  then read it back with the Read tool before passing to the API
-- Never embed long text directly in bash commands or MCP parameters
-- Delete temp files after use
-- Follow `.claude/docs/tracker.md` for API-specific instructions
+- **Prefer MCP tools** for tracker operations (create issue, post comment, update label).
+  MCP accepts structured parameters directly — no temp files needed.
+- If MCP is unavailable, use Bash heredoc to write content to a temp file,
+  then use `curl` with `@file`:
+  ```bash
+  cat << 'EOF' > /tmp/body.md
+  ...content...
+  EOF
+  curl ... -d @/tmp/body.md
+  rm /tmp/body.md
+  ```
+- Never embed long text directly in bash commands.
+- Follow `.claude/docs/tracker.md` for API-specific instructions.
 
 ## Commit Messages
 

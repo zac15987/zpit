@@ -261,7 +261,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		_ = os.MkdirAll(agentDir, 0o755)
 		agentFile := fmt.Sprintf("reviewer-%s.md", issueID)
-		content := fmt.Sprintf("---\nname: reviewer-%s\ndescription: Reviewer agent for issue %s\ntools: Read, Grep, Glob, Bash\ndisallowedTools: Write, Edit\n---\n\n%s",
+		content := fmt.Sprintf("---\nname: reviewer-%s\ndescription: Reviewer agent for issue %s\ndisallowedTools: Write, Edit\n---\n\n%s",
 			issueID, issueID, promptText)
 		if err := os.WriteFile(filepath.Join(agentDir, agentFile), []byte(content), 0o644); err != nil {
 			return LoopAgentLaunchedMsg{ProjectID: projectID, IssueID: issueID, Role: "reviewer", Err: err}
