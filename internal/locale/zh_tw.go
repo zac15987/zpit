@@ -56,4 +56,10 @@ var zhTW = map[Key]string{
 	KeyDeployAndLaunch:      "部署並啟動",
 	KeyCancel:               "取消",
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
+
+	// Focus panel
+	KeyFocusSlot:      "切換至 Slot",
+	KeyCannotLaunch:   "此狀態無法啟動",
+	KeyNoWorktreePath: "Slot 無 worktree 路徑",
+	KeyLoopSlotHelp:   "Enter: 開啟 Claude  \u2191\u2193: 選擇  Tab/Esc: 返回",
 }
