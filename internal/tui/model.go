@@ -472,7 +472,6 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			".claude", "agents", "clarifier.md",
 		)
 		if _, err := os.Stat(agentPath); err != nil {
-			// Agent not deployed — show confirm dialog
 			m.showDeployConfirm()
 			return m, m.confirmForm.Init()
 		}
@@ -1216,20 +1215,26 @@ func injectLangInstruction(md []byte) []byte {
 	if instruction == "" {
 		return md
 	}
+	// Normalize CRLF → LF for reliable marker search, then restore original line endings.
 	s := string(md)
-	// Insert after closing "---\n"
+	hasCRLF := strings.Contains(s, "\r\n")
+	normalized := strings.ReplaceAll(s, "\r\n", "\n")
+
 	const marker = "---\n"
-	// Find second "---" (closing frontmatter)
-	first := strings.Index(s, marker)
+	first := strings.Index(normalized, marker)
 	if first < 0 {
-		return append([]byte(instruction), md...)
+		return md // no frontmatter found — return unchanged
 	}
-	second := strings.Index(s[first+len(marker):], marker)
+	second := strings.Index(normalized[first+len(marker):], marker)
 	if second < 0 {
-		return append([]byte(instruction), md...)
+		return md // malformed frontmatter — return unchanged
 	}
 	insertPos := first + len(marker) + second + len(marker)
-	return []byte(s[:insertPos] + "\n" + instruction + s[insertPos:])
+	result := normalized[:insertPos] + "\n" + instruction + normalized[insertPos:]
+	if hasCRLF {
+		result = strings.ReplaceAll(result, "\n", "\r\n")
+	}
+	return []byte(result)
 }
 
 // deployTrackerDoc writes .claude/docs/tracker.md to the target directory.
