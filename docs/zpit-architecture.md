@@ -1522,9 +1522,9 @@ WSL 環境下也可以透過 `powershell.exe` 呼叫 Windows 通知系統。
 ┌─────────────────────────────────────────────────────────────┐
 │  安全防線層次（由軟到硬）                                    │
 │                                                             │
-│  Layer 1: CLAUDE.md 行為原則（軟約束）                       │
-│    → agent「應該」怎麼做                                     │
-│    → 靠 LLM 遵守，不可靠但有用                               │
+│  Layer 1: agent-guidelines.md 行為原則（軟約束）              │
+│    → .claude/docs/agent-guidelines.md                       │
+│    → agent「應該」怎麼做，靠 LLM 遵守，不可靠但有用           │
 │                                                             │
 │  Layer 2: --allowedTools 權限（中約束）                       │
 │    → agent「能用」哪些 tool                                  │

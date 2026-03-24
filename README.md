@@ -76,7 +76,7 @@ You (TUI)                    Claude Code Agents
 - **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Ended)
 - **Notifications** — Windows Toast + sound when an agent needs your input
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
-- **5-layer safety system** — CLAUDE.md guidelines, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
+- **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
 
@@ -181,7 +181,7 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 
 | Layer | Mechanism | Scope |
 |-------|-----------|-------|
-| 1 | CLAUDE.md behavioral guidelines | Soft — agent reads on startup |
+| 1 | agent-guidelines.md behavioral rules | Soft — agent reads on startup |
 | 2 | `--allowedTools` per agent role | Medium — Claude Code enforced |
 | 3 | PreToolUse hooks | Hard — enforced even with `--bypass-all-permissions` |
 | 4 | Git worktree isolation | Physical — agents can't touch main repo |

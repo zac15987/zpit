@@ -51,6 +51,7 @@ func BuildRevisionPrompt(p RevisionParams) string {
 
 1. Read CLAUDE.md to understand the project's architecture principles and logging policy
    Read .claude/docs/tracker.md to understand how to operate the tracker
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
    Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read the latest Review Report comment on the PR (find the one with NEEDS CHANGES)
 3. List each issue raised by the reviewer (prioritize MUST FIX items)

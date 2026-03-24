@@ -160,6 +160,7 @@ testdata/
 └── session_waiting.jsonl        # JSONL fixture: agent waiting (end_turn)
 docs/
 ├── zpit-architecture.md         # Full architecture document
+├── agent-guidelines.md          # Agent behavioral rules (Layer 1 soft constraints, deployed to .claude/docs/)
 └── code-construction-principles.md  # Code quality baseline for agent review
 ```
 
@@ -193,12 +194,12 @@ Zpit (Go) → TrackerClient interface
 
 ### Hook-Based Safety System (5 Layers)
 
-1. **CLAUDE.md behavioral guidelines** (soft)
+1. **agent-guidelines.md behavioral rules** (soft — `.claude/docs/agent-guidelines.md`, deployed by `setup-hooks.sh`)
 2. **--allowedTools per agent role** (medium)
 3. **PreToolUse hooks** (hard — enforced even with bypass-all-permissions):
    - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
-   - `git-guard.sh` — blocks push, merge, rebase, branch delete; agents only commit
+   - `git-guard.sh` — push whitelist (only `feat/*` branches allowed), blocks merge, rebase, branch delete
 4. **Git worktree isolation** (physical)
 5. **Human PR review** (final gate)
 
@@ -228,4 +229,5 @@ Top-level `language` field (default `"en"`) controls TUI display language and ag
 - Loop label flow: todo → wip → review → ai-review (PASS) / needs-changes (NEEDS CHANGES → auto-retry up to max_review_rounds)
 - Agents must stop and ask on uncertain technical decisions, even with bypass-all-permissions enabled
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
-- Code quality baseline: `docs/code-construction-principles.md` — Reviewer agent checks against this
+- Agent behavioral rules: `docs/agent-guidelines.md` — deployed to `.claude/docs/`, all agents read on startup
+- Code quality baseline: `docs/code-construction-principles.md` — all agents reference during implementation and review

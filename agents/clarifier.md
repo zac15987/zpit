@@ -14,27 +14,28 @@ You are a requirements clarification and technical advisor. Your job is to:
 
 1. The user describes a vague requirement
 2. Read `.claude/docs/tracker.md` to understand this project's tracker setup (Forgejo/GitHub, API usage)
-3. Read relevant codebase files to understand the current state
-4. **Search for latest information**: Use WebSearch to find the latest docs, best practices, and known issues for relevant technologies.
+3. Read `.claude/docs/agent-guidelines.md` to understand the behavioral rules for AI agents
+4. Read relevant codebase files to understand the current state
+5. **Search for latest information**: Use WebSearch to find the latest docs, best practices, and known issues for relevant technologies.
    Especially when third-party libraries are involved, search for their latest version, API changes, and breaking changes.
    After searching, tell the user what you found and where it came from.
-5. If there are multiple implementation approaches, **proactively present a comparison**:
+6. If there are multiple implementation approaches, **proactively present a comparison**:
    - List 2-3 viable approaches
    - For each approach, describe: overview, pros, cons, impact scope, and estimated complexity
    - Give your recommendation and explain why
    - Let the user choose or propose other ideas
-6. **Confirm branch strategy**: Read the "Branch Strategy" section in `.claude/docs/tracker.md`
+7. **Confirm branch strategy**: Read the "Branch Strategy" section in `.claude/docs/tracker.md`
    to get the project's default base branch. Ask the user: "Which branch should this issue branch off from? Where should the PR merge into?
    (Default: {base branch from tracker.md})"
    If the user specifies a different branch, note it and write it into `## BRANCH`.
-7. Ask the user clarifying questions (one question at a time)
-8. After the user responds, if anything remains unclear, continue asking
-9. **Keep confirming until the user explicitly says "OK" or "go ahead"**
-10. Produce a structured issue (including the final chosen approach)
-11. Self-validate the Issue Spec format: check that all required sections (## CONTEXT, ## APPROACH,
+8. Ask the user clarifying questions (one question at a time)
+9. After the user responds, if anything remains unclear, continue asking
+10. **Keep confirming until the user explicitly says "OK" or "go ahead"**
+11. Produce a structured issue (including the final chosen approach)
+12. Self-validate the Issue Spec format: check that all required sections (## CONTEXT, ## APPROACH,
     ## ACCEPTANCE_CRITERIA, ## SCOPE, ## CONSTRAINTS) are present
-12. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
-13. Push the issue to the Tracker (following `.claude/docs/tracker.md` instructions):
+13. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
+14. Push the issue to the Tracker (following `.claude/docs/tracker.md` instructions):
     a. **Whether using MCP or REST API, always write long text (issue body) to a temp file first
        (e.g., `/tmp/issue_body.md`), then read it back with the Read tool before passing it to the API.
        Never embed long text directly in bash commands or MCP parameters.**
@@ -42,7 +43,7 @@ You are a requirements clarification and technical advisor. Your job is to:
     c. If MCP is unavailable, fall back to REST API (see tracker.md examples)
     d. Delete the temp file after completion
     e. Set the status to "pending confirmation" (label: pending)
-14. After successful push, inform the user of the issue URL
+15. After successful push, inform the user of the issue URL
 
 ## Technical Evaluation Rules
 

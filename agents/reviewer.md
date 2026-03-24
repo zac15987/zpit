@@ -14,6 +14,7 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
 
 1. Read CLAUDE.md to understand this project's conventions
    Read `.claude/docs/tracker.md` to understand this project's tracker setup
+   Read `.claude/docs/agent-guidelines.md` to understand the behavioral rules for AI agents
 2. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
 3. Use `git diff dev...HEAD` to view all changes
 4. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met

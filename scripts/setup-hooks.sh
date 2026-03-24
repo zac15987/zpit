@@ -31,6 +31,7 @@ echo "Hooks copied to $HOOKS_DST"
 # Copy shared docs (code quality baseline for agents)
 mkdir -p "$DOCS_DST"
 cp "$DOCS_SRC/code-construction-principles.md" "$DOCS_DST/"
+cp "$DOCS_SRC/agent-guidelines.md" "$DOCS_DST/"
 echo "Docs copied to $DOCS_DST"
 
 # Copy agent definitions

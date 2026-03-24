@@ -48,6 +48,7 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 
 1. Read CLAUDE.md to understand the project's conventions
    Read .claude/docs/tracker.md to understand how to operate the tracker (write comment, update label)
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
 2. Use git diff %s...HEAD to view all changes
 3. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
 4. Check whether any changes touch files outside the SCOPE
