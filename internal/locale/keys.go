@@ -57,4 +57,10 @@ const (
 	KeyDeployAndLaunch      Key = "deploy_and_launch"
 	KeyCancel               Key = "cancel"
 	KeyReviewerNotDeployed  Key = "reviewer_not_deployed"
+
+	// Focus panel (loop slot selection)
+	KeyFocusSlot      Key = "focus_slot"
+	KeyCannotLaunch   Key = "cannot_launch"
+	KeyNoWorktreePath Key = "no_worktree_path"
+	KeyLoopSlotHelp   Key = "loop_slot_help"
 )

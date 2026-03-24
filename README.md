@@ -20,14 +20,22 @@ A TUI-based AI development cockpit that orchestrates [Claude Code](https://claud
                                           [o] Open project folder
    🖥️ DisplayProfileManager               [p] Open Issue Tracker
      desktop │ wpf, nlog
-                                          [a] Add project
-   🖥️ Zpit                                [e] Edit config
-     desktop │ go, bubbletea
-                                          [?] Help
-                                          [q] Quit
+                                          [Tab] Switch to slots
+   🖥️ Zpit                                [?] Help
+     desktop │ go, bubbletea              [q] Quit
 
 
-  Press ? for help, q to quit
+  Active Terminals
+  ──────────────────────────────────────────────────
+  [1] AI Inspection Cleaning Demo │ 🟢 Working 02:15
+
+  Loop Status
+  ──────────────────────────────────────────────────
+  AI Inspection Cleaning Demo (running)
+   › 🟡 #17 Refactor config to TOML  waiting PR merge
+    🟢 #19 Write README docs         coding
+
+  Enter: open Claude  ↑↓: navigate  Tab/Esc: back
 ```
 
 ## Status
@@ -150,6 +158,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
+| `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
 | `q` | Quit |
 
 ## Loop Engine

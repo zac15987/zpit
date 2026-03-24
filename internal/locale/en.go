@@ -56,4 +56,10 @@ var en = map[Key]string{
 	KeyDeployAndLaunch:      "Deploy & Launch",
 	KeyCancel:               "Cancel",
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
+
+	// Focus panel
+	KeyFocusSlot:      "Switch to slots",
+	KeyCannotLaunch:   "Cannot launch in this state",
+	KeyNoWorktreePath: "Slot has no worktree",
+	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
 }

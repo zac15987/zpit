@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,6 +42,14 @@ type View int
 const (
 	ViewProjects View = iota
 	ViewStatus
+)
+
+// FocusedPanel indicates which panel has keyboard focus in ViewProjects.
+type FocusedPanel int
+
+const (
+	FocusProjects  FocusedPanel = iota
+	FocusLoopSlots
 )
 
 // ActiveTerminal tracks a launched terminal and its agent state.
@@ -98,6 +107,11 @@ type Model struct {
 	// Loop engine state
 	loops     map[string]*loop.LoopState
 	wtManager *worktree.Manager
+
+	// Focus panel state (loop slot selection)
+	focusedPanel   FocusedPanel
+	loopCursor     int
+	focusProjectID string
 
 	// Viewport for scrollable content
 	viewport viewport.Model
@@ -415,6 +429,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Tab: toggle focus between project list and loop slots.
+	if key.Matches(msg, m.keys.FocusSwitch) {
+		return m.handleFocusSwitch()
+	}
+
+	// If focused on loop slots, delegate key handling.
+	if m.focusedPanel == FocusLoopSlots {
+		return m.handleLoopSlotsKey(msg)
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Up):
 		if m.cursor > 0 {
@@ -504,6 +528,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
+		m.focusedPanel = FocusProjects
 		m.currentView = ViewStatus
 		m.statusProjectID = project.ID
 		m.statusIssues = nil
@@ -555,6 +580,110 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// --- Focus panel: loop slot selection ---
+
+func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
+	if m.focusedPanel == FocusLoopSlots {
+		m.focusedPanel = FocusProjects
+		return m, nil
+	}
+	project := m.projects[m.cursor]
+	keys := m.sortedSlotKeys(project.ID)
+	if len(keys) == 0 {
+		return m, nil
+	}
+	m.focusedPanel = FocusLoopSlots
+	m.focusProjectID = project.ID
+	m.loopCursor = 0
+	return m, nil
+}
+
+func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	keys := m.sortedSlotKeys(m.focusProjectID)
+	if len(keys) == 0 {
+		m.focusedPanel = FocusProjects
+		return m, nil
+	}
+	if m.loopCursor >= len(keys) {
+		m.loopCursor = len(keys) - 1
+	}
+
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.focusedPanel = FocusProjects
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		if m.loopCursor > 0 {
+			m.loopCursor--
+		}
+
+	case key.Matches(msg, m.keys.Down):
+		if m.loopCursor < len(keys)-1 {
+			m.loopCursor++
+		}
+
+	case key.Matches(msg, m.keys.Enter):
+		return m.launchFocusClaudeCmd(keys[m.loopCursor])
+	}
+
+	return m, nil
+}
+
+// launchableSlotStates defines which slot states allow manual Claude launch.
+var launchableSlotStates = map[loop.SlotState]bool{
+	loop.SlotCoding:        true,
+	loop.SlotReviewing:     true,
+	loop.SlotWaitingPRMerge: true,
+	loop.SlotNeedsHuman:    true,
+	loop.SlotError:         true,
+}
+
+func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
+	ls, ok := m.loops[m.focusProjectID]
+	if !ok {
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok || slot.WorktreePath == "" {
+		m.setStatus(locale.T(locale.KeyNoWorktreePath))
+		return m, nil
+	}
+	if !launchableSlotStates[slot.State] {
+		m.setStatus(locale.T(locale.KeyCannotLaunch))
+		return m, nil
+	}
+
+	cfg := m.cfg.Terminal
+	tabTitle := fmt.Sprintf("Focus #%s", slot.IssueID)
+	wtPath := slot.WorktreePath
+	trackingKey := "focus:" + m.focusProjectID + ":" + slot.IssueID
+
+	return m, func() tea.Msg {
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg)
+		return LaunchResultMsg{
+			ProjectID:   m.focusProjectID,
+			TrackingKey: trackingKey,
+			WorkDir:     wtPath,
+			Result:      result,
+			Err:         err,
+		}
+	}
+}
+
+func (m Model) sortedSlotKeys(projectID string) []string {
+	ls, ok := m.loops[projectID]
+	if !ok || len(ls.Slots) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(ls.Slots))
+	for k := range ls.Slots {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
 		m.setStatus(fmt.Sprintf("Launch failed: %s", msg.Err))
@@ -563,14 +692,22 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 
 	m.setStatus(fmt.Sprintf("Launched! %s", msg.Result.SwitchHint))
 
+	trackKey := msg.ProjectID
+	if msg.TrackingKey != "" {
+		trackKey = msg.TrackingKey
+	}
+
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}
-	m.activeTerminals[msg.ProjectID] = at
+	m.activeTerminals[trackKey] = at
 
 	// Try to start watching the session log.
+	if msg.WorkDir != "" {
+		return m, m.startWatcherDirCmd(trackKey, msg.WorkDir)
+	}
 	return m, m.startWatcherCmd(msg.ProjectID)
 }
 
@@ -647,26 +784,29 @@ const (
 	logWaitMax           = 60 // 60 * 2s = 120s max wait for JSONL
 )
 
-// startWatcherCmd phase 1: find the session PID, return immediately.
+// startWatcherCmd phase 1: find the session PID by project config path.
 func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	workDir := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	return m.startWatcherDirCmd(projectID, workDir)
+}
 
+// startWatcherDirCmd is like startWatcherCmd but uses a raw directory path (for worktree launches).
+func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
-			return WatcherErrorMsg{ProjectID: projectID, Err: err}
+			return WatcherErrorMsg{ProjectID: trackingKey, Err: err}
 		}
 
-		// Retry: Claude Code needs time to start after wt.exe opens.
 		var sessions []watcher.SessionInfo
 		for attempt := range sessionRetryMax {
-			sessions, err = watcher.FindActiveSessions(claudeHome, projectPath)
+			sessions, err = watcher.FindActiveSessions(claudeHome, workDir)
 			if err != nil {
-				return WatcherErrorMsg{ProjectID: projectID, Err: err}
+				return WatcherErrorMsg{ProjectID: trackingKey, Err: err}
 			}
 			if len(sessions) > 0 {
 				break
@@ -677,10 +817,9 @@ func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 		}
 
 		if len(sessions) == 0 {
-			return StatusMsg{Text: fmt.Sprintf("No active session found for %s (waited 30s)", projectID)}
+			return StatusMsg{Text: fmt.Sprintf("No active session found for %s (waited 30s)", trackingKey)}
 		}
 
-		// Use the most recently started session.
 		latest := sessions[0]
 		for _, s := range sessions[1:] {
 			if s.StartedAt > latest.StartedAt {
@@ -688,11 +827,8 @@ func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 			}
 		}
 
-		logPath := watcher.LogFilePath(claudeHome, projectPath, latest.SessionID)
-
-		// Return PID immediately so liveness check works right away.
-		// Phase 2 (waitForLogCmd) will handle waiting for the JSONL file.
-		return sessionFoundMsg{ProjectID: projectID, PID: latest.PID, LogPath: logPath}
+		logPath := watcher.LogFilePath(claudeHome, workDir, latest.SessionID)
+		return sessionFoundMsg{ProjectID: trackingKey, PID: latest.PID, LogPath: logPath}
 	}
 }
 
