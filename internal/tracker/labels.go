@@ -26,18 +26,18 @@ func fetchExistingSet(ctx context.Context, lm LabelManager, repo string) (set ma
 }
 
 // CheckLabels returns the subset of required labels that are missing from the repo (read-only).
-// It also returns the full list of existing label names for caching.
-func CheckLabels(ctx context.Context, lm LabelManager, repo string, required []LabelDef) (missing []LabelDef, allExisting []string, err error) {
-	existingSet, allExisting, err := fetchExistingSet(ctx, lm, repo)
+func CheckLabels(ctx context.Context, lm LabelManager, repo string, required []LabelDef) ([]LabelDef, error) {
+	existingSet, _, err := fetchExistingSet(ctx, lm, repo)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	var missing []LabelDef
 	for _, req := range required {
 		if !existingSet[strings.ToLower(req.Name)] {
 			missing = append(missing, req)
 		}
 	}
-	return missing, allExisting, nil
+	return missing, nil
 }
 
 // EnsureLabels checks that all required labels exist in the repo and creates any that are missing.

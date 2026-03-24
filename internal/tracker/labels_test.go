@@ -100,21 +100,18 @@ func TestEnsureLabels_CreateFails(t *testing.T) {
 
 func TestCheckLabels_AllExist(t *testing.T) {
 	lm := &mockLabelManager{labels: []string{"pending", "todo", "wip", "review", "ai-review", "needs-changes"}}
-	missing, allExisting, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
+	missing, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(missing) != 0 {
 		t.Errorf("expected no missing labels, got %v", missing)
 	}
-	if len(allExisting) != 6 {
-		t.Errorf("expected 6 existing labels, got %d", len(allExisting))
-	}
 }
 
 func TestCheckLabels_SomeMissing(t *testing.T) {
 	lm := &mockLabelManager{labels: []string{"pending", "todo", "wip"}}
-	missing, allExisting, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
+	missing, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,15 +124,12 @@ func TestCheckLabels_SomeMissing(t *testing.T) {
 			t.Errorf("unexpected missing label: %q", ld.Name)
 		}
 	}
-	if len(allExisting) != 3 {
-		t.Errorf("expected 3 existing labels, got %d", len(allExisting))
-	}
 }
 
 func TestCheckLabels_CaseInsensitive(t *testing.T) {
 	lm := &mockLabelManager{labels: []string{"TODO", "Pending"}}
 	subset := []LabelDef{{Name: "pending"}, {Name: "todo"}}
-	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", subset)
+	missing, err := CheckLabels(context.Background(), lm, "org/repo", subset)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +140,7 @@ func TestCheckLabels_CaseInsensitive(t *testing.T) {
 
 func TestCheckLabels_ListFails(t *testing.T) {
 	lm := &mockLabelManager{listErr: fmt.Errorf("network error")}
-	_, _, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
+	_, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -159,7 +153,7 @@ func TestCheckLabels_Subset(t *testing.T) {
 		{Name: "ai-review", Color: "#0e8a16"},
 		{Name: "needs-changes", Color: "#d93f0b"},
 	}
-	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", reviewLabels)
+	missing, err := CheckLabels(context.Background(), lm, "org/repo", reviewLabels)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -53,10 +53,9 @@ type IssueConfirmedMsg struct {
 
 // LabelCheckResultMsg carries the result of checking whether required labels exist (read-only).
 type LabelCheckResultMsg struct {
-	ProjectID   string
-	Missing     []tracker.LabelDef
-	AllExisting []string // full repo label list for caching
-	Err         error
+	ProjectID string
+	Missing   []tracker.LabelDef
+	Err       error
 }
 
 // LabelsEnsuredMsg carries the result of ensuring required labels exist in a project's tracker.

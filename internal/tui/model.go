@@ -121,8 +121,7 @@ type Model struct {
 	confirmAction func() tea.Cmd
 
 	// Label check state
-	pendingOp  *PendingOp
-	repoLabels map[string]map[string]bool // "tracker:repo" → known label names
+	pendingOp *PendingOp
 
 	// Embedded agent templates
 	clarifierMD []byte
@@ -181,7 +180,6 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, co
 		reviewerMD:                   reviewerMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
 		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
-		repoLabels:      make(map[string]map[string]bool),
 		loops:           make(map[string]*loop.LoopState),
 		wtManager:       worktree.NewManager(cfg.Worktree),
 		viewport:        vp,
@@ -370,15 +368,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingOp = nil
 			return m, nil
 		}
-		// Cache all existing labels for this repo.
-		if project := m.findProject(msg.ProjectID); project != nil {
-			cacheKey := project.Tracker + ":" + project.Repo
-			set := make(map[string]bool, len(msg.AllExisting))
-			for _, name := range msg.AllExisting {
-				set[strings.ToLower(name)] = true
-			}
-			m.repoLabels[cacheKey] = set
-		}
 		if len(msg.Missing) == 0 {
 			return m.executePendingOp()
 		}
@@ -393,16 +382,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(msg.Created) > 0 {
 			m.setStatus(fmt.Sprintf("Created labels: %s", strings.Join(msg.Created, ", ")))
-		}
-		// Update cache with newly created labels.
-		if project := m.findProject(msg.ProjectID); project != nil {
-			cacheKey := project.Tracker + ":" + project.Repo
-			if m.repoLabels[cacheKey] == nil {
-				m.repoLabels[cacheKey] = make(map[string]bool)
-			}
-			for _, name := range msg.Created {
-				m.repoLabels[cacheKey][strings.ToLower(name)] = true
-			}
 		}
 		if m.pendingOp != nil {
 			return m.executePendingOp()
@@ -652,9 +631,6 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			ProjectID:    m.statusProjectID,
 			ProjectIndex: m.statusCursor,
 			Required:     tracker.RequiredLabels,
-		}
-		if m.labelsCachedFor(project.Tracker, project.Repo, tracker.RequiredLabels) {
-			return m.executePendingOp()
 		}
 		m.setStatus(locale.T(locale.KeyCheckingLabels))
 		return m, m.checkLabelsCmd(m.statusProjectID, tracker.RequiredLabels)
@@ -1239,35 +1215,18 @@ func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		missing, allExisting, err := tracker.CheckLabels(ctx, lm, repo, required)
-		return LabelCheckResultMsg{ProjectID: projectID, Missing: missing, AllExisting: allExisting, Err: err}
+		missing, err := tracker.CheckLabels(ctx, lm, repo, required)
+		return LabelCheckResultMsg{ProjectID: projectID, Missing: missing, Err: err}
 	}
 }
 
-// labelsCachedFor returns true if all required labels are known to exist in the cache for the given tracker:repo.
-func (m Model) labelsCachedFor(trackerName, repo string, required []tracker.LabelDef) bool {
-	cached, ok := m.repoLabels[trackerName+":"+repo]
-	if !ok {
-		return false
-	}
-	for _, ld := range required {
-		if !cached[strings.ToLower(ld.Name)] {
-			return false
-		}
-	}
-	return true
-}
-
-// startWithLabelCheck sets up pendingOp and either proceeds immediately (cache hit) or fires an async label check.
+// startWithLabelCheck sets up pendingOp and fires an async label check.
 func (m *Model) startWithLabelCheck(kind PendingOpKind, project config.ProjectConfig, required []tracker.LabelDef) (tea.Model, tea.Cmd) {
 	m.pendingOp = &PendingOp{
 		Kind:         kind,
 		ProjectID:    project.ID,
 		ProjectIndex: m.cursor,
 		Required:     required,
-	}
-	if m.labelsCachedFor(project.Tracker, project.Repo, required) {
-		return m.executePendingOp()
 	}
 	m.setStatus(locale.T(locale.KeyCheckingLabels))
 	return m, m.checkLabelsCmd(project.ID, required)

@@ -709,7 +709,7 @@ done                Done            Done           closed           closed
 Agent 端若需 MCP 操作（推 issue、開 PR），需另外安裝對應 MCP server（`claude mcp add`）。
 
 **Label on-demand 檢查：**
-Zpit 需要 6 個 label（pending, todo, wip, review, ai-review, needs-changes），但不在啟動時自動建立。每個操作只檢查自己需要的子集：`[y]` 需要 pending + todo、`[c]` 需要 pending、`[r]` 需要 review + ai-review + needs-changes、`[l]` 需要全部 6 個。使用者按下操作鍵時，先呼叫 `CheckLabels`（read-only）檢查是否存在；若有缺少，跳出 overlay confirm dialog 列出缺少的 label，使用者確認後才呼叫 `EnsureLabels` 建立。同一 tracker+repo 的檢查結果在 session 內快取（`repoLabels` map），避免重複 API 呼叫。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
+Zpit 需要 6 個 label（pending, todo, wip, review, ai-review, needs-changes），但不在啟動時自動建立。使用者按下操作鍵（`[y]`/`[c]`/`[r]`/`[l]`）時，每次都呼叫 `CheckLabels`（read-only）透過 API 檢查全部 6 個 label 是否存在；若有缺少，跳出 overlay confirm dialog 列出缺少的 label，使用者確認後才呼叫 `EnsureLabels` 建立。不做 session 內快取，確保外部刪除 label 後也能即時偵測。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
 
 **Agent Tracker 資訊注入**：Zpit 部署 agent 時自動寫入 `.claude/docs/tracker.md`，
 內容依 provider type 產生（Forgejo → gitea MCP / REST API，GitHub → gh CLI / REST API）。
