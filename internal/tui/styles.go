@@ -65,4 +65,9 @@ var (
 	questionStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
 			Italic(true)
+
+	confirmOverlayStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorAccent).
+				Padding(1, 2)
 )

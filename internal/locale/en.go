@@ -57,6 +57,11 @@ var en = map[Key]string{
 	KeyCancel:               "Cancel",
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
 
+	// Label confirm dialogs
+	KeyLabelsMissing:  "Missing required labels in %s:\n\n%s\n\nCreate them?",
+	KeyCreateLabels:   "Create Labels",
+	KeyCheckingLabels: "Checking labels...",
+
 	// Focus panel
 	KeyFocusSlot:      "Switch to slots",
 	KeyCannotLaunch:   "Cannot launch in this state",

@@ -57,6 +57,11 @@ var zhTW = map[Key]string{
 	KeyCancel:               "取消",
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
 
+	// Label confirm dialogs
+	KeyLabelsMissing:  "%s 缺少必要 label：\n\n%s\n\n是否建立？",
+	KeyCreateLabels:   "建立 Label",
+	KeyCheckingLabels: "檢查 label 中...",
+
 	// Focus panel
 	KeyFocusSlot:      "切換至 Slot",
 	KeyCannotLaunch:   "此狀態無法啟動",

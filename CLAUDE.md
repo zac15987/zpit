@@ -41,10 +41,10 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
-- `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
+- `[c]` Clarify: opens new terminal with `claude --agent clarifier` (label check + auto-deploy, overlay confirm dialogs)
 - `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
-- `[r]` Review: opens new terminal with `claude --agent reviewer` (auto-deploys if missing, huh confirm dialog)
+- `[r]` Review: opens new terminal with `claude --agent reviewer` (label check + auto-deploy, overlay confirm dialogs)
 - `[l]` Loop: auto-dispatch coding + reviewer agents per todo issue
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
 - Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
@@ -60,7 +60,8 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
 - Loop Status display in TUI main view
 - Multi-agent parallel execution (max_per_project worktrees)
-- Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
+- On-demand label check: operations ([y]/[c]/[r]/[l]) check required labels before execution, overlay confirm dialog if missing
+- Overlay confirm dialogs: huh forms rendered as centered overlay on top of background view (bubbletea-overlay)
 - Per-issue branch control: Issue Spec `## BRANCH` → coding agent PR 必須 target 指定 branch，reviewer 驗證 target branch
 - i18n: all prompts/agents in English, TUI strings via locale package (en + zh-TW), config `language` field
 - Focus Panel: `Tab` switches focus to Loop Status area, `↑↓` selects slot, `Enter` opens plain Claude Code in slot's worktree (only launchable states: coding/reviewing/waitingPRMerge/needsHuman/error)
@@ -137,7 +138,7 @@ internal/
 └── tracker/
     ├── types.go                 # Issue/PR structs + canonical status constants + LabelDef + RequiredLabels
     ├── client.go                # TrackerClient interface + NewClient factory + MapLabelsToStatus
-    ├── labels.go                # LabelManager interface + EnsureLabels (startup label sync)
+    ├── labels.go                # LabelManager interface + CheckLabels (read-only) + EnsureLabels (create missing)
     ├── restapi.go               # Shared REST HTTP helper (restClient, doJSON, splitRepo)
     ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API v1
     ├── github.go                # GitHubClient: GitHub REST API

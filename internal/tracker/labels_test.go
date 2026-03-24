@@ -96,6 +96,72 @@ func TestEnsureLabels_CreateFails(t *testing.T) {
 	}
 }
 
+// --- CheckLabels unit tests (read-only check) ---
+
+func TestCheckLabels_AllExist(t *testing.T) {
+	lm := &mockLabelManager{labels: []string{"pending", "todo", "wip", "review", "ai-review", "needs-changes"}}
+	missing, allExisting, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("expected no missing labels, got %v", missing)
+	}
+	if len(allExisting) != 6 {
+		t.Errorf("expected 6 existing labels, got %d", len(allExisting))
+	}
+}
+
+func TestCheckLabels_SomeMissing(t *testing.T) {
+	lm := &mockLabelManager{labels: []string{"pending", "todo", "wip"}}
+	missing, allExisting, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(missing) != 3 {
+		t.Fatalf("expected 3 missing labels, got %v", missing)
+	}
+	want := map[string]bool{"review": true, "ai-review": true, "needs-changes": true}
+	for _, ld := range missing {
+		if !want[ld.Name] {
+			t.Errorf("unexpected missing label: %q", ld.Name)
+		}
+	}
+	if len(allExisting) != 3 {
+		t.Errorf("expected 3 existing labels, got %d", len(allExisting))
+	}
+}
+
+func TestCheckLabels_CaseInsensitive(t *testing.T) {
+	lm := &mockLabelManager{labels: []string{"TODO", "Pending"}}
+	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", LabelsForConfirm)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("expected no missing (case-insensitive), got %v", missing)
+	}
+}
+
+func TestCheckLabels_ListFails(t *testing.T) {
+	lm := &mockLabelManager{listErr: fmt.Errorf("network error")}
+	_, _, err := CheckLabels(context.Background(), lm, "org/repo", RequiredLabels)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCheckLabels_Subset(t *testing.T) {
+	lm := &mockLabelManager{labels: []string{"pending", "todo"}}
+	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", LabelsForReview)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(missing) != 3 {
+		t.Fatalf("expected 3 missing (review subset), got %d", len(missing))
+	}
+}
+
 // --- Forgejo httptest tests ---
 
 func TestForgejoListRepoLabels(t *testing.T) {

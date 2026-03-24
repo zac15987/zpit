@@ -58,6 +58,11 @@ const (
 	KeyCancel               Key = "cancel"
 	KeyReviewerNotDeployed  Key = "reviewer_not_deployed"
 
+	// Label confirm dialogs (model.go)
+	KeyLabelsMissing  Key = "labels_missing"
+	KeyCreateLabels   Key = "create_labels"
+	KeyCheckingLabels Key = "checking_labels"
+
 	// Focus panel (loop slot selection)
 	KeyFocusSlot      Key = "focus_slot"
 	KeyCannotLaunch   Key = "cannot_launch"

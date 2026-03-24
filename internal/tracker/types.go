@@ -70,3 +70,19 @@ var RequiredLabels = []LabelDef{
 	{Name: "ai-review", Color: "#0e8a16"},
 	{Name: "needs-changes", Color: "#d93f0b"},
 }
+
+// Per-operation label subsets — each operation only requires a subset of RequiredLabels.
+var LabelsForConfirm = []LabelDef{
+	{Name: "pending", Color: "#bfd4f2"},
+	{Name: "todo", Color: "#0075ca"},
+}
+
+var LabelsForClarify = []LabelDef{
+	{Name: "pending", Color: "#bfd4f2"},
+}
+
+var LabelsForReview = []LabelDef{
+	{Name: "review", Color: "#d876e3"},
+	{Name: "ai-review", Color: "#0e8a16"},
+	{Name: "needs-changes", Color: "#d93f0b"},
+}

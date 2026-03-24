@@ -708,8 +708,8 @@ done                Done            Done           closed           closed
 新增 tracker 只需：實作 TrackerClient interface + config 加入對應 type + `token_env`。
 Agent 端若需 MCP 操作（推 issue、開 PR），需另外安裝對應 MCP server（`claude mcp add`）。
 
-**Label 自動同步：**
-TUI 啟動時自動檢查每個專案的 tracker repo，確保 Zpit 需要的 6 個 label（pending, todo, wip, review, ai-review, needs-changes）存在。缺少的 label 自動建立（含預設顏色）。失敗不阻塞 TUI，僅在 status bar 顯示警告。同一 tracker+repo 組合只檢查一次（deduplicate）。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
+**Label on-demand 檢查：**
+Zpit 需要 6 個 label（pending, todo, wip, review, ai-review, needs-changes），但不在啟動時自動建立。每個操作只檢查自己需要的子集：`[y]` 需要 pending + todo、`[c]` 需要 pending、`[r]` 需要 review + ai-review + needs-changes、`[l]` 需要全部 6 個。使用者按下操作鍵時，先呼叫 `CheckLabels`（read-only）檢查是否存在；若有缺少，跳出 overlay confirm dialog 列出缺少的 label，使用者確認後才呼叫 `EnsureLabels` 建立。同一 tracker+repo 的檢查結果在 session 內快取（`repoLabels` map），避免重複 API 呼叫。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
 
 **Agent Tracker 資訊注入**：Zpit 部署 agent 時自動寫入 `.claude/docs/tracker.md`，
 內容依 provider type 產生（Forgejo → gitea MCP / REST API，GitHub → gh CLI / REST API）。
@@ -1946,7 +1946,7 @@ echo $?   # 應該是 2
 - [x] NEEDS CHANGES 自動重試（reviewer 判定→重跑 coding→再 review，max_review_rounds 限制）
 - [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
 - [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
-- [x] Label 自動同步：TUI 啟動時檢查 + 建立缺少的 required labels（LabelManager interface）
+- [x] Label on-demand 檢查：操作前檢查 required labels，缺少時 overlay confirm dialog 確認後建立（LabelManager interface）
 - [x] Per-issue branch 控制：Issue Spec `## BRANCH` → coding prompt 強制 PR target、reviewer 驗證、trackerdoc 分支策略
 
 ### M5: 完整體驗（1-2 週）

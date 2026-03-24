@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charmbracelet/huh"
+	overlay "github.com/rmhubbert/bubbletea-overlay"
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
@@ -51,6 +52,25 @@ const (
 	FocusProjects  FocusedPanel = iota
 	FocusLoopSlots
 )
+
+// PendingOpKind identifies the type of pending operation waiting for label readiness.
+type PendingOpKind int
+
+const (
+	PendingNone PendingOpKind = iota
+	PendingClarify
+	PendingReview
+	PendingLoop
+	PendingConfirmIssue
+)
+
+// PendingOp captures the context of an operation that requires label readiness.
+type PendingOp struct {
+	Kind         PendingOpKind
+	ProjectID    string
+	ProjectIndex int                // snapshot of m.cursor at key press time
+	Required     []tracker.LabelDef // labels this operation needs
+}
 
 // ActiveTerminal tracks a launched terminal and its agent state.
 type ActiveTerminal struct {
@@ -99,6 +119,10 @@ type Model struct {
 	confirmForm   *huh.Form
 	confirmResult *bool          // heap-allocated: shared across Bubble Tea value copies
 	confirmAction func() tea.Cmd
+
+	// Label check state
+	pendingOp  *PendingOp
+	repoLabels map[string]map[string]bool // "tracker:repo" → known label names
 
 	// Embedded agent templates
 	clarifierMD []byte
@@ -157,6 +181,7 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, co
 		reviewerMD:                   reviewerMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
 		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
+		repoLabels:      make(map[string]map[string]bool),
 		loops:           make(map[string]*loop.LoopState),
 		wtManager:       worktree.NewManager(cfg.Worktree),
 		viewport:        vp,
@@ -166,7 +191,6 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, co
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
 
-	seenTracker := make(map[string]bool)
 	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
@@ -179,7 +203,7 @@ func (m Model) Init() tea.Cmd {
 			ensureGitignore(projectPath)
 		}
 
-		// Ensure required labels exist (background, non-blocking).
+		// Log missing tracker providers for awareness.
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -188,14 +212,7 @@ func (m Model) Init() tea.Cmd {
 				seenMissing[project.Tracker] = true
 				missingProviders = append(missingProviders, project.Tracker)
 			}
-			continue
 		}
-		key := project.Tracker + ":" + project.Repo
-		if seenTracker[key] {
-			continue
-		}
-		seenTracker[key] = true
-		cmds = append(cmds, m.ensureLabelsCmd(project.ID))
 	}
 
 	if len(missingProviders) > 0 {
@@ -271,6 +288,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if confirmed && action != nil {
 				return m, action()
 			}
+			// User cancelled — clear any pending operation.
+			m.pendingOp = nil
 			return m, nil
 		}
 		return m, cmd
@@ -345,12 +364,48 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(msg.Text)
 		return m, nil
 
+	case LabelCheckResultMsg:
+		if msg.Err != nil {
+			m.setStatus(fmt.Sprintf("Label check failed: %s", msg.Err))
+			m.pendingOp = nil
+			return m, nil
+		}
+		// Cache all existing labels for this repo.
+		if project := m.findProject(msg.ProjectID); project != nil {
+			cacheKey := project.Tracker + ":" + project.Repo
+			set := make(map[string]bool, len(msg.AllExisting))
+			for _, name := range msg.AllExisting {
+				set[strings.ToLower(name)] = true
+			}
+			m.repoLabels[cacheKey] = set
+		}
+		if len(msg.Missing) == 0 {
+			return m.executePendingOp()
+		}
+		m.showLabelConfirm(msg.ProjectID, msg.Missing)
+		return m, m.confirmForm.Init()
+
 	case LabelsEnsuredMsg:
 		if msg.Err != nil {
-			m.setStatus(fmt.Sprintf("⚠ %s: label sync failed: %s", m.projectName(msg.ProjectID), msg.Err))
-		} else if len(msg.Created) > 0 {
-			m.setStatus(fmt.Sprintf("Created labels for %s: %s",
-				m.projectName(msg.ProjectID), strings.Join(msg.Created, ", ")))
+			m.setStatus(fmt.Sprintf("Label sync failed: %s", msg.Err))
+			m.pendingOp = nil
+			return m, nil
+		}
+		if len(msg.Created) > 0 {
+			m.setStatus(fmt.Sprintf("Created labels: %s", strings.Join(msg.Created, ", ")))
+		}
+		// Update cache with newly created labels.
+		if project := m.findProject(msg.ProjectID); project != nil {
+			cacheKey := project.Tracker + ":" + project.Repo
+			if m.repoLabels[cacheKey] == nil {
+				m.repoLabels[cacheKey] = make(map[string]bool)
+			}
+			for _, name := range msg.Created {
+				m.repoLabels[cacheKey][strings.ToLower(name)] = true
+			}
+		}
+		if m.pendingOp != nil {
+			return m.executePendingOp()
 		}
 		return m, nil
 
@@ -412,17 +467,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	if m.confirmForm != nil {
-		return m.confirmForm.View()
-	}
+	var bg string
 	switch m.currentView {
 	case ViewProjects:
-		return m.viewProjects()
+		bg = m.viewProjects()
 	case ViewStatus:
-		return m.viewStatus()
+		bg = m.viewStatus()
 	default:
-		return "Unknown view"
+		bg = "Unknown view"
 	}
+	if m.confirmForm != nil {
+		fg := confirmOverlayStyle.Render(m.confirmForm.View())
+		return overlay.Composite(fg, bg, overlay.Center, overlay.Center, 0, 0)
+	}
+	return bg
 }
 
 func (m *Model) setStatus(text string) {
@@ -499,15 +557,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
-		agentPath := filepath.Join(
-			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
-			".claude", "agents", "clarifier.md",
-		)
-		if _, err := os.Stat(agentPath); err != nil {
-			m.showDeployConfirm()
-			return m, m.confirmForm.Init()
-		}
-		return m, m.launchClarifierCmd()
+		return m.startWithLabelCheck(PendingClarify, project, tracker.LabelsForClarify)
 
 	case key.Matches(msg, m.keys.Loop):
 		project := m.projects[m.cursor]
@@ -519,23 +569,13 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
 			return m, nil
 		}
-		// Toggle loop on/off
+		// Toggle loop off — no label check needed.
 		if ls, ok := m.loops[project.ID]; ok && ls.Active {
 			ls.Active = false
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", project.Name))
 			return m, nil
 		}
-		ls := &loop.LoopState{
-			Active: true,
-			Slots:  make(map[string]*loop.Slot),
-		}
-		m.loops[project.ID] = ls
-		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
-		return m, tea.Batch(
-			m.loopCleanupMergedCmd(project.ID),
-			m.loopScanOpenPRsCmd(project.ID),
-			m.loopPollCmd(project.ID),
-		)
+		return m.startWithLabelCheck(PendingLoop, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Review):
 		project := m.projects[m.cursor]
@@ -543,15 +583,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
-		agentPath := filepath.Join(
-			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
-			".claude", "agents", "reviewer.md",
-		)
-		if _, err := os.Stat(agentPath); err != nil {
-			m.showReviewerDeployConfirm()
-			return m, m.confirmForm.Init()
-		}
-		return m, m.launchReviewerCmd()
+		return m.startWithLabelCheck(PendingReview, project, tracker.LabelsForReview)
 
 	case key.Matches(msg, m.keys.Status):
 		project := m.projects[m.cursor]
@@ -602,7 +634,30 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible(m.statusCursor + 3)
 
 	case key.Matches(msg, m.keys.Confirm):
-		return m, m.confirmIssueCmd()
+		// Validate before setting pendingOp.
+		if m.statusCursor >= len(m.statusIssues) {
+			return m, nil
+		}
+		issue := m.statusIssues[m.statusCursor]
+		if issue.Status != tracker.StatusPendingConfirm {
+			m.setStatus(fmt.Sprintf("Issue #%s is %s, not pending_confirm", issue.ID, issue.Status))
+			return m, nil
+		}
+		project := m.findProject(m.statusProjectID)
+		if project == nil {
+			return m, nil
+		}
+		m.pendingOp = &PendingOp{
+			Kind:         PendingConfirmIssue,
+			ProjectID:    m.statusProjectID,
+			ProjectIndex: m.statusCursor,
+			Required:     tracker.LabelsForConfirm,
+		}
+		if m.labelsCachedFor(project.Tracker, project.Repo, tracker.LabelsForConfirm) {
+			return m.executePendingOp()
+		}
+		m.setStatus(locale.T(locale.KeyCheckingLabels))
+		return m, m.checkLabelsCmd(m.statusProjectID, tracker.LabelsForConfirm)
 
 	case key.Matches(msg, m.keys.Tracker):
 		return m, m.openIssueURLCmd()
@@ -1042,7 +1097,7 @@ func (m *Model) showDeployConfirm() {
 				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),
-	)
+	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
 		return m.deployAndLaunchClarifier()
 	}
@@ -1166,8 +1221,8 @@ func ensureGitignore(projectPath string) {
 	f.WriteString(buf.String())
 }
 
-// ensureLabelsCmd checks and creates missing required labels for a project's tracker.
-func (m Model) ensureLabelsCmd(projectID string) tea.Cmd {
+// checkLabelsCmd checks which required labels are missing (read-only, no creation).
+func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
@@ -1181,11 +1236,151 @@ func (m Model) ensureLabelsCmd(projectID string) tea.Cmd {
 		return nil
 	}
 	repo := project.Repo
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		missing, allExisting, err := tracker.CheckLabels(ctx, lm, repo, required)
+		return LabelCheckResultMsg{ProjectID: projectID, Missing: missing, AllExisting: allExisting, Err: err}
+	}
+}
 
+// labelsCachedFor returns true if all required labels are known to exist in the cache for the given tracker:repo.
+func (m Model) labelsCachedFor(trackerName, repo string, required []tracker.LabelDef) bool {
+	cached, ok := m.repoLabels[trackerName+":"+repo]
+	if !ok {
+		return false
+	}
+	for _, ld := range required {
+		if !cached[strings.ToLower(ld.Name)] {
+			return false
+		}
+	}
+	return true
+}
+
+// startWithLabelCheck sets up pendingOp and either proceeds immediately (cache hit) or fires an async label check.
+func (m *Model) startWithLabelCheck(kind PendingOpKind, project config.ProjectConfig, required []tracker.LabelDef) (tea.Model, tea.Cmd) {
+	m.pendingOp = &PendingOp{
+		Kind:         kind,
+		ProjectID:    project.ID,
+		ProjectIndex: m.cursor,
+		Required:     required,
+	}
+	if m.labelsCachedFor(project.Tracker, project.Repo, required) {
+		return m.executePendingOp()
+	}
+	m.setStatus(locale.T(locale.KeyCheckingLabels))
+	return m, m.checkLabelsCmd(project.ID, required)
+}
+
+// showLabelConfirm displays an overlay confirm dialog listing missing labels.
+func (m *Model) showLabelConfirm(projectID string, missing []tracker.LabelDef) {
+	project := m.findProject(projectID)
+	repo := ""
+	if project != nil {
+		repo = project.Repo
+	}
+	names := make([]string, len(missing))
+	for i, ld := range missing {
+		names[i] = "  • " + ld.Name
+	}
+	title := fmt.Sprintf(locale.T(locale.KeyLabelsMissing), repo, strings.Join(names, "\n"))
+
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative(locale.T(locale.KeyCreateLabels)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(50)
+	m.confirmAction = func() tea.Cmd {
+		return m.ensureLabelsCmd(projectID, missing)
+	}
+}
+
+// executePendingOp continues the original operation after labels are confirmed present.
+func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
+	op := m.pendingOp
+	if op == nil {
+		return m, nil
+	}
+
+	switch op.Kind {
+	case PendingClarify:
+		m.pendingOp = nil
+		m.cursor = op.ProjectIndex // restore cursor for deploy confirm / launch
+		project := m.projects[op.ProjectIndex]
+		agentPath := filepath.Join(
+			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+			".claude", "agents", "clarifier.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			m.showDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchClarifierCmd()
+
+	case PendingReview:
+		m.pendingOp = nil
+		m.cursor = op.ProjectIndex // restore cursor for deploy confirm / launch
+		project := m.projects[op.ProjectIndex]
+		agentPath := filepath.Join(
+			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+			".claude", "agents", "reviewer.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			m.showReviewerDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchReviewerCmd()
+
+	case PendingLoop:
+		m.pendingOp = nil
+		project := m.projects[op.ProjectIndex]
+		ls := &loop.LoopState{
+			Active: true,
+			Slots:  make(map[string]*loop.Slot),
+		}
+		m.loops[project.ID] = ls
+		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
+		return m, tea.Batch(
+			m.loopCleanupMergedCmd(project.ID),
+			m.loopScanOpenPRsCmd(project.ID),
+			m.loopPollCmd(project.ID),
+		)
+
+	case PendingConfirmIssue:
+		m.pendingOp = nil
+		return m, m.confirmIssueCmd()
+	}
+
+	m.pendingOp = nil
+	return m, nil
+}
+
+// ensureLabelsCmd creates the specified missing labels for a project's tracker.
+func (m Model) ensureLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	lm, ok := client.(tracker.LabelManager)
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		created, err := tracker.EnsureLabels(ctx, lm, repo, tracker.RequiredLabels)
+		created, err := tracker.EnsureLabels(ctx, lm, repo, required)
 		return LabelsEnsuredMsg{ProjectID: projectID, Created: created, Err: err}
 	}
 }
@@ -1268,7 +1463,7 @@ func (m *Model) showReviewerDeployConfirm() {
 				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),
-	)
+	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
 		return m.deployAndLaunchReviewer()
 	}
