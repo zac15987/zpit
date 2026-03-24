@@ -1125,7 +1125,7 @@ Adding a new language requires: a new `locale/{lang}.go` translation map + a new
 
 ## Code 品質基準
 - 遵循 `.claude/docs/code-construction-principles.md`
-- Reviewer 會依此文件抽樣檢查
+- Coding / Revision / Reviewer agent 皆會參考此文件
 
 ## Logging 現狀與規範
 

@@ -55,10 +55,11 @@ func BuildCodingPrompt(p CodingParams) string {
 
 1. Read CLAUDE.md to understand the project's architecture principles and logging policy
    Read .claude/docs/tracker.md to understand how to operate the tracker (open PR, update status)
+   Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read all files listed in SCOPE to understand the existing code structure
 3. If references list any reference files, read those too
 4. Implement according to the approach described in APPROACH
-5. During implementation, ensure all new code follows the logging policy in CLAUDE.md
+5. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
 6. After completion, self-check against each ACCEPTANCE_CRITERIA item
 7. Use git add + git commit to commit changes
 8. Commit message format: [%s] {short description}

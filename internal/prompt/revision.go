@@ -51,10 +51,11 @@ func BuildRevisionPrompt(p RevisionParams) string {
 
 1. Read CLAUDE.md to understand the project's architecture principles and logging policy
    Read .claude/docs/tracker.md to understand how to operate the tracker
+   Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read the latest Review Report comment on the PR (find the one with NEEDS CHANGES)
 3. List each issue raised by the reviewer (prioritize MUST FIX items)
 4. Fix the code for each issue
-5. During fixes, ensure all changes comply with CLAUDE.md conventions
+5. During fixes, ensure all changes comply with CLAUDE.md conventions and the code quality baseline
 6. After completion, self-check against each ACCEPTANCE_CRITERIA item
 7. Use git add + git commit to commit changes
 8. Commit message format: [%s] fix: {brief description of fix}
