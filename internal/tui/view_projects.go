@@ -209,9 +209,10 @@ func (m Model) renderActiveTerminals() string {
 			detailStyle.Render(elapsed),
 		))
 
-		// Question preview when waiting.
+		// Question preview when waiting (single line).
 		if at.LastQuestion != "" && statusIcon == iconWaiting {
-			preview := truncate(at.LastQuestion, 80)
+			oneline := strings.Join(strings.Fields(at.LastQuestion), " ")
+			preview := truncate(oneline, 80)
 			b.WriteString(fmt.Sprintf("      %s %s\n",
 				detailStyle.Render("Q:"),
 				questionStyle.Render(preview),
