@@ -2,9 +2,12 @@ package worktree
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/platform"
@@ -93,7 +96,12 @@ func (m *Manager) Remove(repoPath, worktreePath string, deleteBranch bool) error
 	}
 
 	if _, err := runGit(repoPath, "worktree", "remove", "--force", worktreePath); err != nil {
-		return fmt.Errorf("removing worktree: %w", err)
+		// Fallback: git may have removed .git link but failed to delete the directory
+		// (Windows file locking by Explorer, Fork, etc.)
+		if removeErr := removeDirRetry(worktreePath); removeErr != nil {
+			return fmt.Errorf("removing worktree: %w", err)
+		}
+		_, _ = runGit(repoPath, "worktree", "prune")
 	}
 
 	if deleteBranch && branchName != "" {
@@ -143,6 +151,27 @@ func parseWorktreeList(output, repoPath string) []WorktreeInfo {
 	}
 
 	return result
+}
+
+// removeDirRetry removes a directory, retrying on Windows to handle file locking.
+func removeDirRetry(dir string) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
+	attempts := 1
+	if runtime.GOOS == "windows" {
+		attempts = 3
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = os.RemoveAll(dir); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return err
 }
 
 // normalizePath returns a cleaned, forward-slash path for cross-platform comparison.
