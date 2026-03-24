@@ -1,7 +1,9 @@
 package watcher
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
 	"time"
 )
 
@@ -114,6 +116,32 @@ func deriveState(msg *sessionMessage) AgentState {
 	default:
 		return StateUnknown
 	}
+}
+
+// ReadLastState reads a session log file and returns the last known agent state and question text.
+func ReadLastState(logPath string) (AgentState, string) {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return StateUnknown, ""
+	}
+	state := StateUnknown
+	question := ""
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		ev, err := ParseLine(line)
+		if err != nil || ev.Type != "assistant" {
+			continue
+		}
+		state = ev.State
+		if ev.State == StateWaiting {
+			question = ev.QuestionText
+		} else {
+			question = ""
+		}
+	}
+	return state, question
 }
 
 func extractLastText(blocks []contentBlock) string {

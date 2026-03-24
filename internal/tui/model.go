@@ -320,6 +320,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watcherReadyMsg:
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
 			at.Watcher = msg.Watcher
+			if at.State == watcher.StateUnknown && msg.LogPath != "" {
+				state, question := watcher.ReadLastState(msg.LogPath)
+				if state != watcher.StateUnknown {
+					at.State = state
+					at.LastQuestion = question
+					at.StateChangedAt = time.Now()
+				}
+			}
 			return m, watchNextCmd(msg.ProjectID, msg.Watcher)
 		}
 		msg.Watcher.Stop()
@@ -933,7 +941,7 @@ func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
 				if err != nil {
 					return WatcherErrorMsg{ProjectID: projectID, Err: err}
 				}
-				return watcherReadyMsg{ProjectID: projectID, Watcher: w}
+				return watcherReadyMsg{ProjectID: projectID, Watcher: w, LogPath: logPath}
 			}
 			if attempt < logWaitMax-1 {
 				time.Sleep(sessionRetryInterval)
@@ -947,6 +955,7 @@ func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
 type watcherReadyMsg struct {
 	ProjectID string
 	Watcher   *watcher.Watcher
+	LogPath   string
 }
 
 func (m *Model) checkSessionLiveness() {
