@@ -557,7 +557,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
-		return m.startWithLabelCheck(PendingClarify, project, tracker.LabelsForClarify)
+		return m.startWithLabelCheck(PendingClarify, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Loop):
 		project := m.projects[m.cursor]
@@ -583,7 +583,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
-		return m.startWithLabelCheck(PendingReview, project, tracker.LabelsForReview)
+		return m.startWithLabelCheck(PendingReview, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Status):
 		project := m.projects[m.cursor]
@@ -651,13 +651,13 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Kind:         PendingConfirmIssue,
 			ProjectID:    m.statusProjectID,
 			ProjectIndex: m.statusCursor,
-			Required:     tracker.LabelsForConfirm,
+			Required:     tracker.RequiredLabels,
 		}
-		if m.labelsCachedFor(project.Tracker, project.Repo, tracker.LabelsForConfirm) {
+		if m.labelsCachedFor(project.Tracker, project.Repo, tracker.RequiredLabels) {
 			return m.executePendingOp()
 		}
 		m.setStatus(locale.T(locale.KeyCheckingLabels))
-		return m, m.checkLabelsCmd(m.statusProjectID, tracker.LabelsForConfirm)
+		return m, m.checkLabelsCmd(m.statusProjectID, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Tracker):
 		return m, m.openIssueURLCmd()

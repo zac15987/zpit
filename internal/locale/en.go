@@ -58,7 +58,7 @@ var en = map[Key]string{
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
 
 	// Label confirm dialogs
-	KeyLabelsMissing:  "Missing required labels in %s:\n\n%s\n\nCreate them?",
+	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",
 	KeyCreateLabels:   "Create Labels",
 	KeyCheckingLabels: "Checking labels...",
 

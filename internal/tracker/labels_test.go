@@ -134,7 +134,8 @@ func TestCheckLabels_SomeMissing(t *testing.T) {
 
 func TestCheckLabels_CaseInsensitive(t *testing.T) {
 	lm := &mockLabelManager{labels: []string{"TODO", "Pending"}}
-	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", LabelsForConfirm)
+	subset := []LabelDef{{Name: "pending"}, {Name: "todo"}}
+	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", subset)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +154,12 @@ func TestCheckLabels_ListFails(t *testing.T) {
 
 func TestCheckLabels_Subset(t *testing.T) {
 	lm := &mockLabelManager{labels: []string{"pending", "todo"}}
-	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", LabelsForReview)
+	reviewLabels := []LabelDef{
+		{Name: "review", Color: "#d876e3"},
+		{Name: "ai-review", Color: "#0e8a16"},
+		{Name: "needs-changes", Color: "#d93f0b"},
+	}
+	missing, _, err := CheckLabels(context.Background(), lm, "org/repo", reviewLabels)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -58,7 +58,7 @@ var zhTW = map[Key]string{
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
 
 	// Label confirm dialogs
-	KeyLabelsMissing:  "%s 缺少必要 label：\n\n%s\n\n是否建立？",
+	KeyLabelsMissing:  "Zpit 及其 agent 依賴以下 label 追蹤 issue 狀態。\n%s 缺少以下 label：\n\n%s\n\n建立後才能繼續，是否建立？",
 	KeyCreateLabels:   "建立 Label",
 	KeyCheckingLabels: "檢查 label 中...",
 
