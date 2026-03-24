@@ -123,6 +123,8 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -152,12 +154,13 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 			BaseBranch: baseBranch,
 		})
 
-		// Deploy tracker.md to worktree
+		// Deploy docs to worktree
 		if trackerDocContent != "" {
 			docsDir := filepath.Join(wtPath, ".claude", "docs")
 			_ = os.MkdirAll(docsDir, 0o755)
 			_ = os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(trackerDocContent), 0o644)
 		}
+		deployStaticDocs(wtPath, agentGuidelines, codeConstructionPrinciples)
 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {

@@ -104,6 +104,10 @@ type Model struct {
 	clarifierMD []byte
 	reviewerMD  []byte
 
+	// Embedded static docs (deployed to .claude/docs/)
+	agentGuidelinesMD            []byte
+	codeConstructionPrinciplesMD []byte
+
 	// Loop engine state
 	loops     map[string]*loop.LoopState
 	wtManager *worktree.Manager
@@ -118,7 +122,7 @@ type Model struct {
 }
 
 // NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
-func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.Writer) Model {
+func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte, logWriter io.Writer) Model {
 	if logWriter == nil {
 		logWriter = io.Discard
 	}
@@ -149,8 +153,10 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.W
 		projects:        cfg.Projects,
 		activeTerminals: make(map[string]*ActiveTerminal),
 		clients:         clients,
-		clarifierMD:     clarifierMD,
-		reviewerMD:      reviewerMD,
+		clarifierMD:                  clarifierMD,
+		reviewerMD:                   reviewerMD,
+		agentGuidelinesMD:            agentGuidelinesMD,
+		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
 		loops:           make(map[string]*loop.LoopState),
 		wtManager:       worktree.NewManager(cfg.Worktree),
 		viewport:        vp,
@@ -1041,6 +1047,8 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	cfg := m.cfg.Terminal
 
 	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		// Deploy: create .claude/agents/ and write clarifier.md
@@ -1052,10 +1060,11 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		if err := os.WriteFile(agentPath, clarifierMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		// Deploy tracker.md
+		// Deploy docs
 		if err := deployTracker(); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy tracker doc failed: %s", err)}
 		}
+		deployStaticDocs(projectPath, agentGuidelines, codeConstructionPrinciples)
 
 		// Launch
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
@@ -1263,6 +1272,8 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	reviewerMD := injectLangInstruction(m.reviewerMD)
 	cfg := m.cfg.Terminal
 	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -1274,6 +1285,7 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
 		_ = deployTracker()
+		deployStaticDocs(projectPath, agentGuidelines, codeConstructionPrinciples)
 
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
 		return LaunchResultMsg{
@@ -1324,6 +1336,14 @@ func (m Model) deployTrackerDoc(targetPath string, project *config.ProjectConfig
 	}
 	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	return os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(content), 0o644)
+}
+
+// deployStaticDocs writes embedded agent-guidelines.md and code-construction-principles.md to .claude/docs/.
+func deployStaticDocs(targetPath string, agentGuidelines, codeConstructionPrinciples []byte) {
+	docsDir := filepath.Join(targetPath, ".claude", "docs")
+	_ = os.MkdirAll(docsDir, 0o755)
+	_ = os.WriteFile(filepath.Join(docsDir, "agent-guidelines.md"), agentGuidelines, 0o644)
+	_ = os.WriteFile(filepath.Join(docsDir, "code-construction-principles.md"), codeConstructionPrinciples, 0o644)
 }
 
 // openInBrowser opens a URL in the default browser.
