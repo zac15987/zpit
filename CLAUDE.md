@@ -34,6 +34,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Sound alert (SystemSounds.Asterisk)
 - Notification cooldown (re_remind_minutes, per-project)
 - Session liveness check: PID monitoring every 10s, detects closed sessions
+- Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
 - 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests

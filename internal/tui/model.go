@@ -200,6 +200,9 @@ func (m Model) Init() tea.Cmd {
 		})
 	}
 
+	// Scan for already-running Claude Code sessions.
+	cmds = append(cmds, m.scanExistingSessionsCmd())
+
 	return tea.Batch(cmds...)
 }
 
@@ -286,6 +289,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AgentEventMsg:
 		return m.handleAgentEvent(msg)
+
+	case existingSessionsMsg:
+		var cmds []tea.Cmd
+		for _, entry := range msg.Entries {
+			if _, exists := m.activeTerminals[entry.TrackingKey]; exists {
+				continue
+			}
+			m.activeTerminals[entry.TrackingKey] = &ActiveTerminal{
+				State:          watcher.StateUnknown,
+				SessionPID:     entry.PID,
+				StateChangedAt: time.Now(),
+			}
+			cmds = append(cmds, waitForLogCmd(entry.TrackingKey, entry.PID, entry.LogPath))
+		}
+		return m, tea.Batch(cmds...)
 
 	case sessionFoundMsg:
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
@@ -783,7 +801,52 @@ const (
 	logWaitMax           = 60 // 60 * 2s = 120s max wait for JSONL
 )
 
-// startWatcherCmd phase 1: find the session PID by project config path.
+// scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
+func (m Model) scanExistingSessionsCmd() tea.Cmd {
+	type projectInfo struct {
+		id   string
+		path string
+	}
+	seen := make(map[string]bool)
+	var projects []projectInfo
+	for _, p := range m.projects {
+		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		projects = append(projects, projectInfo{id: p.ID, path: path})
+	}
+
+	return func() tea.Msg {
+		claudeHome, err := watcher.ClaudeHome()
+		if err != nil {
+			return existingSessionsMsg{}
+		}
+		var entries []existingSessionEntry
+		for _, p := range projects {
+			sessions, err := watcher.FindActiveSessions(claudeHome, p.path)
+			if err != nil || len(sessions) == 0 {
+				continue
+			}
+			// Pick latest session per project.
+			latest := sessions[0]
+			for _, s := range sessions[1:] {
+				if s.StartedAt > latest.StartedAt {
+					latest = s
+				}
+			}
+			logPath := watcher.LogFilePath(claudeHome, p.path, latest.SessionID)
+			entries = append(entries, existingSessionEntry{
+				TrackingKey: p.id,
+				PID:         latest.PID,
+				LogPath:     logPath,
+			})
+		}
+		return existingSessionsMsg{Entries: entries}
+	}
+}
+
 func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
@@ -836,6 +899,18 @@ type sessionFoundMsg struct {
 	ProjectID string
 	PID       int
 	LogPath   string
+}
+
+// existingSessionEntry represents a session found during startup scan.
+type existingSessionEntry struct {
+	TrackingKey string
+	PID         int
+	LogPath     string
+}
+
+// existingSessionsMsg carries results of scanning for already-running sessions at startup.
+type existingSessionsMsg struct {
+	Entries []existingSessionEntry
 }
 
 // waitForLogCmd phase 2: wait for the JSONL file to be created, then start the watcher.
