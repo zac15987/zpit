@@ -193,8 +193,16 @@ func (m Model) renderActiveTerminals() string {
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
+	// Sort keys for stable render order.
+	termKeys := make([]string, 0, len(m.activeTerminals))
+	for k := range m.activeTerminals {
+		termKeys = append(termKeys, k)
+	}
+	sort.Strings(termKeys)
+
 	i := 1
-	for projectID, at := range m.activeTerminals {
+	for _, projectID := range termKeys {
+		at := m.activeTerminals[projectID]
 		// Status icon and text.
 		statusIcon, statusText := renderAgentStatus(at)
 
