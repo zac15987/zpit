@@ -35,12 +35,14 @@ var profileIcons = map[string]string{
 }
 
 func (m Model) viewProjects() string {
-	var b strings.Builder
-	b.WriteString(m.renderProjectsHeader())
-	b.WriteString(m.viewport.View())
-	b.WriteString("\n")
-	b.WriteString(m.renderProjectsFooter())
-	return b.String()
+	header := m.renderProjectsHeader()
+	footer := m.renderProjectsFooter()
+	contentHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	content := lipgloss.NewStyle().Width(m.width).Height(contentHeight).Render(m.viewport.View())
+	return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
 }
 
 // renderProjectsHeader returns the fixed header above the scrollable area.
@@ -52,10 +54,14 @@ func (m Model) renderProjectsHeader() string {
 func (m Model) renderProjectsScrollable() string {
 	var b strings.Builder
 
-	// Two-column: project list + hotkeys
+	// Two-column: project list (left) + hotkeys (right-aligned)
 	left := m.renderProjectList()
 	right := m.renderHotkeys()
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, left, "    ", right)
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 4 {
+		gap = 4
+	}
+	columns := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
 	b.WriteString(columns)
 
 	// Active terminals (if any)
@@ -92,8 +98,16 @@ func (m Model) renderProjectsFooter() string {
 func (m Model) renderHeader() string {
 	now := time.Now().Format("01/02 15:04")
 	env := m.env.String()
-	title := fmt.Sprintf(" Zpit v0.1                                    %s  %s ", now, env)
-	return headerBoxStyle.Render(title)
+	left := "Zpit v0.1"
+	right := fmt.Sprintf("%s  %s", now, env)
+	// headerBoxStyle has Padding(0,1) — inner width is m.width - 2
+	inner := m.width - 2
+	gap := inner - len(left) - len(right)
+	if gap < 2 {
+		gap = 2
+	}
+	title := left + strings.Repeat(" ", gap) + right
+	return headerBoxStyle.Width(m.width).Render(title)
 }
 
 func (m Model) renderProjectList() string {

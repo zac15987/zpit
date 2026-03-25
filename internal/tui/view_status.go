@@ -5,17 +5,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/tracker"
 )
 
 func (m Model) viewStatus() string {
-	var b strings.Builder
-	b.WriteString(m.renderStatusHeader())
-	b.WriteString(m.viewport.View())
-	b.WriteString("\n")
-	b.WriteString(m.renderStatusFooter())
-	return b.String()
+	header := m.renderStatusHeader()
+	footer := m.renderStatusFooter()
+	contentHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	content := lipgloss.NewStyle().Width(m.width).Height(contentHeight).Render(m.viewport.View())
+	return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
 }
 
 // renderStatusHeader returns the fixed header for the status view.

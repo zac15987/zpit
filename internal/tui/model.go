@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/charmbracelet/huh"
 	overlay "github.com/rmhubbert/bubbletea-overlay"
@@ -227,9 +228,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// fixedChromeHeight returns the number of lines used by non-scrollable UI chrome.
-const fixedChromeLines = 6 // header(1) + blank(1) + blank(1) + status(1) + help(1) + blank(1)
-
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	if mdl, ok := model.(Model); ok {
@@ -241,19 +239,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // syncViewportContent re-renders the scrollable area into the viewport.
 func (m *Model) syncViewportContent() {
-	h := m.height - fixedChromeLines
+	var header, footer string
+	switch m.currentView {
+	case ViewProjects:
+		header = m.renderProjectsHeader()
+		footer = m.renderProjectsFooter()
+		m.viewport.SetContent(m.renderProjectsScrollable())
+	case ViewStatus:
+		header = m.renderStatusHeader()
+		footer = m.renderStatusFooter()
+		m.viewport.SetContent(m.renderStatusScrollable())
+	}
+	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
 		h = 1
 	}
 	m.viewport.Width = m.width
 	m.viewport.Height = h
-
-	switch m.currentView {
-	case ViewProjects:
-		m.viewport.SetContent(m.renderProjectsScrollable())
-	case ViewStatus:
-		m.viewport.SetContent(m.renderStatusScrollable())
-	}
 }
 
 // ensureCursorVisible adjusts the viewport offset so the given line is on screen.
