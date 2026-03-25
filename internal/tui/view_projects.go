@@ -193,8 +193,13 @@ func (m Model) renderHotkeys() string {
 }
 
 func (m Model) projectName(id string) string {
+	// Strip "#N" suffix used for multi-session tracking keys.
+	lookupID := id
+	if idx := strings.Index(id, "#"); idx != -1 {
+		lookupID = id[:idx]
+	}
 	for _, p := range m.projects {
-		if p.ID == id {
+		if p.ID == lookupID {
 			return p.Name
 		}
 	}

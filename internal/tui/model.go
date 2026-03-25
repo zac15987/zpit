@@ -318,15 +318,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case existingSessionsMsg:
 		var cmds []tea.Cmd
 		for _, entry := range msg.Entries {
-			if _, exists := m.activeTerminals[entry.TrackingKey]; exists {
-				continue
-			}
-			m.activeTerminals[entry.TrackingKey] = &ActiveTerminal{
+			key := m.nextTrackingKey(entry.ProjectID)
+			m.activeTerminals[key] = &ActiveTerminal{
 				State:          watcher.StateUnknown,
 				SessionPID:     entry.PID,
 				StateChangedAt: time.Now(),
 			}
-			cmds = append(cmds, waitForLogCmd(entry.TrackingKey, entry.PID, entry.LogPath))
+			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.LogPath))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -773,6 +771,7 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	if msg.TrackingKey != "" {
 		trackKey = msg.TrackingKey
 	}
+	trackKey = m.nextTrackingKey(trackKey)
 
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
@@ -888,19 +887,15 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 			if err != nil || len(sessions) == 0 {
 				continue
 			}
-			// Pick latest session per project.
-			latest := sessions[0]
-			for _, s := range sessions[1:] {
-				if s.StartedAt > latest.StartedAt {
-					latest = s
-				}
+			// Track ALL active sessions per project, not just the latest.
+			for _, s := range sessions {
+				logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
+				entries = append(entries, existingSessionEntry{
+					ProjectID: p.id,
+					PID:       s.PID,
+					LogPath:   logPath,
+				})
 			}
-			logPath := watcher.LogFilePath(claudeHome, p.path, latest.SessionID)
-			entries = append(entries, existingSessionEntry{
-				TrackingKey: p.id,
-				PID:         latest.PID,
-				LogPath:     logPath,
-			})
 		}
 		return existingSessionsMsg{Entries: entries}
 	}
@@ -917,32 +912,42 @@ func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 
 // startWatcherDirCmd is like startWatcherCmd but uses a raw directory path (for worktree launches).
 func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
+	// Snapshot already-tracked PIDs so we can exclude them when picking a session.
+	excludePIDs := m.trackedPIDs()
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
 			return WatcherErrorMsg{ProjectID: trackingKey, Err: err}
 		}
 
-		var sessions []watcher.SessionInfo
+		var candidates []watcher.SessionInfo
 		for attempt := range sessionRetryMax {
-			sessions, err = watcher.FindActiveSessions(claudeHome, workDir)
+			sessions, err := watcher.FindActiveSessions(claudeHome, workDir)
 			if err != nil {
 				return WatcherErrorMsg{ProjectID: trackingKey, Err: err}
 			}
-			if len(sessions) > 0 {
+			// Filter out sessions already tracked by other ActiveTerminals.
+			candidates = candidates[:0]
+			for _, s := range sessions {
+				if !excludePIDs[s.PID] {
+					candidates = append(candidates, s)
+				}
+			}
+			if len(candidates) > 0 {
 				break
 			}
+			// If all sessions are tracked but some exist, a new one may appear soon.
 			if attempt < sessionRetryMax-1 {
 				time.Sleep(sessionRetryInterval)
 			}
 		}
 
-		if len(sessions) == 0 {
+		if len(candidates) == 0 {
 			return StatusMsg{Text: fmt.Sprintf("No active session found for %s (waited 30s)", trackingKey)}
 		}
 
-		latest := sessions[0]
-		for _, s := range sessions[1:] {
+		latest := candidates[0]
+		for _, s := range candidates[1:] {
 			if s.StartedAt > latest.StartedAt {
 				latest = s
 			}
@@ -962,9 +967,34 @@ type sessionFoundMsg struct {
 
 // existingSessionEntry represents a session found during startup scan.
 type existingSessionEntry struct {
-	TrackingKey string
-	PID         int
-	LogPath     string
+	ProjectID string
+	PID       int
+	LogPath   string
+}
+
+// nextTrackingKey returns a unique key for activeTerminals.
+// First session uses baseKey as-is; subsequent ones get "#2", "#3", etc.
+func (m Model) nextTrackingKey(baseKey string) string {
+	if _, exists := m.activeTerminals[baseKey]; !exists {
+		return baseKey
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s#%d", baseKey, i)
+		if _, exists := m.activeTerminals[candidate]; !exists {
+			return candidate
+		}
+	}
+}
+
+// trackedPIDs returns all PIDs currently tracked in activeTerminals.
+func (m Model) trackedPIDs() map[int]bool {
+	pids := make(map[int]bool, len(m.activeTerminals))
+	for _, at := range m.activeTerminals {
+		if at.SessionPID != 0 {
+			pids[at.SessionPID] = true
+		}
+	}
+	return pids
 }
 
 // existingSessionsMsg carries results of scanning for already-running sessions at startup.
