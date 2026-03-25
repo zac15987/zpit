@@ -34,8 +34,8 @@ import (
 const (
 	statusDisplayDuration  = 5 * time.Second
 	tickInterval           = 1 * time.Second
-	livenessCheckInterval  = 10 * time.Second
-	endedDisplayDuration   = 10 * time.Second
+	livenessCheckInterval  = 5 * time.Second
+	endedDisplayDuration   = 3 * time.Second
 )
 
 // View represents the current screen.
@@ -316,9 +316,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentEvent(msg)
 
 	case existingSessionsMsg:
+		m.logger.Printf("startup scan: found %d session(s)", len(msg.Entries))
 		var cmds []tea.Cmd
 		for _, entry := range msg.Entries {
 			key := m.nextTrackingKey(entry.ProjectID)
+			m.logger.Printf("  attach: key=%s PID=%d", key, entry.PID)
 			m.activeTerminals[key] = &ActiveTerminal{
 				State:          watcher.StateUnknown,
 				SessionPID:     entry.PID,
@@ -329,6 +331,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case sessionFoundMsg:
+		m.logger.Printf("session found: key=%s PID=%d", msg.ProjectID, msg.PID)
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
 			at.SessionPID = msg.PID
 		}
@@ -345,6 +348,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					at.StateChangedAt = time.Now()
 				}
 			}
+			m.logger.Printf("watcher ready: key=%s state=%s", msg.ProjectID, at.State)
 			return m, watchNextCmd(msg.ProjectID, msg.Watcher)
 		}
 		msg.Watcher.Stop()
@@ -356,6 +360,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case WatcherErrorMsg:
 		m.setStatus(fmt.Sprintf("Watcher error (%s): %s", msg.ProjectID, msg.Err))
+		return m, nil
+
+	case sessionLostMsg:
+		m.logger.Printf("session lost: %s — %s", msg.ProjectID, msg.Text)
+		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
+			at.State = watcher.StateEnded
+			at.StateChangedAt = time.Now()
+			if at.Watcher != nil {
+				at.Watcher.Stop()
+			}
+		}
 		return m, nil
 
 	case StatusMsg:
@@ -772,6 +787,7 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 		trackKey = msg.TrackingKey
 	}
 	trackKey = m.nextTrackingKey(trackKey)
+	m.logger.Printf("launch: key=%s (PID pending)", trackKey)
 
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
@@ -781,10 +797,14 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	m.activeTerminals[trackKey] = at
 
 	// Try to start watching the session log.
-	if msg.WorkDir != "" {
-		return m, m.startWatcherDirCmd(trackKey, msg.WorkDir)
+	if msg.WorkDir == "" {
+		project := m.findProject(msg.ProjectID)
+		if project == nil {
+			return m, nil
+		}
+		msg.WorkDir = platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	}
-	return m, m.startWatcherCmd(msg.ProjectID)
+	return m, m.startWatcherDirCmd(trackKey, msg.WorkDir)
 }
 
 func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
@@ -856,7 +876,7 @@ func (m Model) openFolderCmd() tea.Cmd {
 
 const (
 	sessionRetryInterval = 2 * time.Second
-	sessionRetryMax      = 15 // 15 * 2s = 30s max wait
+	sessionRetryMax      = 8 // 8 * 2s = 16s max wait
 )
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
@@ -901,16 +921,7 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 	}
 }
 
-func (m Model) startWatcherCmd(projectID string) tea.Cmd {
-	project := m.findProject(projectID)
-	if project == nil {
-		return nil
-	}
-	workDir := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	return m.startWatcherDirCmd(projectID, workDir)
-}
-
-// startWatcherDirCmd is like startWatcherCmd but uses a raw directory path (for worktree launches).
+// startWatcherDirCmd starts session discovery for a given tracking key and work directory.
 func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 	// Snapshot already-tracked PIDs so we can exclude them when picking a session.
 	excludePIDs := m.trackedPIDs()
@@ -943,7 +954,7 @@ func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 		}
 
 		if len(candidates) == 0 {
-			return StatusMsg{Text: fmt.Sprintf("No active session found for %s (waited 30s)", trackingKey)}
+			return sessionLostMsg{ProjectID: trackingKey, Text: "no active session found (waited 30s)"}
 		}
 
 		latest := candidates[0]
@@ -1007,7 +1018,7 @@ func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
 	return func() tea.Msg {
 		for {
 			if !watcher.IsProcessAlive(pid) {
-				return StatusMsg{Text: fmt.Sprintf("Session ended before log created for %s", projectID)}
+				return sessionLostMsg{ProjectID: projectID, Text: "session ended before log created"}
 			}
 			if _, err := os.Stat(logPath); err == nil {
 				w, err := watcher.New(projectID, logPath)
@@ -1039,6 +1050,7 @@ func (m *Model) checkSessionLiveness() {
 		// Clean up ended sessions after display duration.
 		if at.State == watcher.StateEnded {
 			if now.Sub(at.StateChangedAt) >= endedDisplayDuration {
+				m.logger.Printf("session removed: key=%s", projectID)
 				delete(m.activeTerminals, projectID)
 			}
 			continue
@@ -1048,6 +1060,7 @@ func (m *Model) checkSessionLiveness() {
 			continue
 		}
 		if !watcher.IsProcessAlive(at.SessionPID) {
+			m.logger.Printf("session PID %d ended: %s", at.SessionPID, projectID)
 			at.State = watcher.StateEnded
 			at.StateChangedAt = now
 			at.LastQuestion = ""

@@ -37,6 +37,12 @@ type WatcherErrorMsg struct {
 	Err       error
 }
 
+// sessionLostMsg indicates session discovery or log wait failed; the entry should be cleaned up.
+type sessionLostMsg struct {
+	ProjectID string
+	Text      string
+}
+
 // IssuesLoadedMsg carries the result of a TrackerClient.ListIssues call.
 type IssuesLoadedMsg struct {
 	ProjectID string
