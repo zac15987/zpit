@@ -279,6 +279,14 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Query existing worktrees to populate WorktreePath for cleanup.
+	project := m.findProject(msg.ProjectID)
+	var worktrees []worktree.WorktreeInfo
+	if project != nil {
+		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		worktrees, _ = m.wtManager.List(projectPath)
+	}
+
 	var cmds []tea.Cmd
 	for _, pr := range msg.PRs {
 		issueID := extractIssueID(pr.Branch)
@@ -289,12 +297,23 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 		if _, exists := ls.Slots[key]; exists {
 			continue // already tracked
 		}
+
+		// Match worktree by branch name.
+		var wtPath string
+		for _, wt := range worktrees {
+			if wt.Branch == pr.Branch {
+				wtPath = wt.Path
+				break
+			}
+		}
+
 		ls.Slots[key] = &loop.Slot{
-			ProjectID:  msg.ProjectID,
-			IssueID:    issueID,
-			IssueTitle: pr.Title,
-			BranchName: pr.Branch,
-			State:      loop.SlotWaitingPRMerge,
+			ProjectID:    msg.ProjectID,
+			IssueID:      issueID,
+			IssueTitle:   pr.Title,
+			BranchName:   pr.Branch,
+			WorktreePath: wtPath,
+			State:        loop.SlotWaitingPRMerge,
 		}
 		cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
 	}

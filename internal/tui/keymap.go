@@ -16,9 +16,10 @@ type KeyMap struct {
 	Add        key.Binding
 	EditConfig key.Binding
 	Help       key.Binding
-	Quit       key.Binding
-	Back       key.Binding
-	Confirm    key.Binding
+	Quit        key.Binding
+	Back        key.Binding
+	Confirm     key.Binding
+	FocusSwitch key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -37,7 +38,8 @@ func DefaultKeyMap() KeyMap {
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		Back:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
-		Confirm:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
+		Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
+		Confirm:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
+		FocusSwitch: key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "switch focus")),
 	}
 }

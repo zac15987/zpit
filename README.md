@@ -20,14 +20,22 @@ A TUI-based AI development cockpit that orchestrates [Claude Code](https://claud
                                           [o] Open project folder
    🖥️ DisplayProfileManager               [p] Open Issue Tracker
      desktop │ wpf, nlog
-                                          [a] Add project
-   🖥️ Zpit                                [e] Edit config
-     desktop │ go, bubbletea
-                                          [?] Help
-                                          [q] Quit
+                                          [Tab] Switch to slots
+   🖥️ Zpit                                [?] Help
+     desktop │ go, bubbletea              [q] Quit
 
 
-  Press ? for help, q to quit
+  Active Terminals
+  ──────────────────────────────────────────────────
+  [1] AI Inspection Cleaning Demo │ 🟢 Working 02:15
+
+  Loop Status
+  ──────────────────────────────────────────────────
+  AI Inspection Cleaning Demo (running)
+   › 🟡 #17 Refactor config to TOML  waiting PR merge
+    🟢 #19 Write README docs         coding
+
+  Enter: open Claude  ↑↓: navigate  Tab/Esc: back
 ```
 
 ## Status
@@ -65,10 +73,10 @@ You (TUI)                    Claude Code Agents
 
 - **Multi-project dashboard** — switch between projects with arrow keys, mouse scroll support
 - **Loop engine** — fully automated: poll todo issues → create worktree → coding agent → reviewer → PR merge → cleanup
-- **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Ended)
+- **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Ended), auto-detects running sessions on startup
 - **Notifications** — Windows Toast + sound when an agent needs your input
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
-- **5-layer safety system** — CLAUDE.md guidelines, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
+- **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
 
@@ -150,6 +158,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
+| `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
 | `q` | Quit |
 
 ## Loop Engine
@@ -172,7 +181,7 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 
 | Layer | Mechanism | Scope |
 |-------|-----------|-------|
-| 1 | CLAUDE.md behavioral guidelines | Soft — agent reads on startup |
+| 1 | agent-guidelines.md behavioral rules | Soft — agent reads on startup |
 | 2 | `--allowedTools` per agent role | Medium — Claude Code enforced |
 | 3 | PreToolUse hooks | Hard — enforced even with `--bypass-all-permissions` |
 | 4 | Git worktree isolation | Physical — agents can't touch main repo |

@@ -21,6 +21,12 @@ var clarifierAgentMD []byte
 //go:embed agents/reviewer.md
 var reviewerAgentMD []byte
 
+//go:embed docs/agent-guidelines.md
+var agentGuidelinesMD []byte
+
+//go:embed docs/code-construction-principles.md
+var codeConstructionPrinciplesMD []byte
+
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
 	if err != nil {
@@ -74,7 +80,7 @@ func main() {
 	cleanOldLogs(logDir, 30)
 
 	p := tea.NewProgram(
-		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, logFile),
+		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, logFile),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

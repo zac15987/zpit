@@ -57,4 +57,16 @@ const (
 	KeyDeployAndLaunch      Key = "deploy_and_launch"
 	KeyCancel               Key = "cancel"
 	KeyReviewerNotDeployed  Key = "reviewer_not_deployed"
+
+	// Label confirm dialogs (model.go)
+	KeyLabelsMissing  Key = "labels_missing"
+	KeyCreateLabels   Key = "create_labels"
+	KeyCheckingLabels          Key = "checking_labels"
+	KeyTrackerLabelNotSupported Key = "tracker_label_not_supported"
+
+	// Focus panel (loop slot selection)
+	KeyFocusSlot      Key = "focus_slot"
+	KeyCannotLaunch   Key = "cannot_launch"
+	KeyNoWorktreePath Key = "no_worktree_path"
+	KeyLoopSlotHelp   Key = "loop_slot_help"
 )

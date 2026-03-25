@@ -10,9 +10,11 @@ import (
 
 // LaunchResultMsg is sent when a terminal launch completes.
 type LaunchResultMsg struct {
-	ProjectID string
-	Result    *terminal.LaunchResult
-	Err       error
+	ProjectID   string
+	TrackingKey string // if set, use as activeTerminals key instead of ProjectID
+	WorkDir     string // if set, use for session discovery instead of project path
+	Result      *terminal.LaunchResult
+	Err         error
 }
 
 // StatusMsg is a transient message displayed in the status bar.
@@ -46,6 +48,13 @@ type IssuesLoadedMsg struct {
 type IssueConfirmedMsg struct {
 	ProjectID string
 	IssueID   string
+	Err       error
+}
+
+// LabelCheckResultMsg carries the result of checking whether required labels exist (read-only).
+type LabelCheckResultMsg struct {
+	ProjectID string
+	Missing   []tracker.LabelDef
 	Err       error
 }
 

@@ -70,3 +70,4 @@ var RequiredLabels = []LabelDef{
 	{Name: "ai-review", Color: "#0e8a16"},
 	{Name: "needs-changes", Color: "#d93f0b"},
 }
+

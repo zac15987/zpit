@@ -1,7 +1,6 @@
 ---
 name: reviewer
 description: Code Review expert. Used after implementation is complete or after a machine push.
-tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 ---
 
@@ -14,6 +13,7 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
 
 1. Read CLAUDE.md to understand this project's conventions
    Read `.claude/docs/tracker.md` to understand this project's tracker setup
+   Read `.claude/docs/agent-guidelines.md` to understand the behavioral rules for AI agents
 2. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
 3. Use `git diff dev...HEAD` to view all changes
 4. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met
@@ -77,5 +77,12 @@ Follow `.claude/docs/tracker.md` instructions for label API operations. If a lab
 ## Tracker Operation Notes
 
 Post the Review Report as both a **PR comment** and an **issue comment**, following `.claude/docs/tracker.md` instructions.
-**Whether using MCP or REST API, always write long text to a temp file first,
-then read it back with the Read tool before passing it to the API. Never embed long text directly in bash commands or MCP parameters.**
+**Prefer MCP tools** to post comments and update labels directly — pass content as a parameter.
+If MCP is unavailable, use Bash heredoc to write content to a temp file, then `curl` with `@file`:
+```bash
+cat << 'EOF' > /tmp/review_report.md
+...report content...
+EOF
+curl ... -d @/tmp/review_report.md
+rm /tmp/review_report.md
+```

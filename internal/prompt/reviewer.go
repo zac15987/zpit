@@ -48,6 +48,7 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 
 1. Read CLAUDE.md to understand the project's conventions
    Read .claude/docs/tracker.md to understand how to operate the tracker (write comment, update label)
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
 2. Use git diff %s...HEAD to view all changes
 3. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
 4. Check whether any changes touch files outside the SCOPE
@@ -63,8 +64,9 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 ## Tracker Operation Notes
 
 When writing the Review Report to the tracker (comment), follow the instructions in .claude/docs/tracker.md.
-Whether using MCP or REST API, always write long text to a temp file using the Write tool first,
-then read the content with the Read tool and pass it to the API. Never embed long text directly in bash commands or MCP parameters.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
 `, p.BaseBranch, p.BaseBranch)
 
 	return b.String()

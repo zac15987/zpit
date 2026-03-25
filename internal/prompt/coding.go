@@ -55,10 +55,12 @@ func BuildCodingPrompt(p CodingParams) string {
 
 1. Read CLAUDE.md to understand the project's architecture principles and logging policy
    Read .claude/docs/tracker.md to understand how to operate the tracker (open PR, update status)
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
+   Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read all files listed in SCOPE to understand the existing code structure
 3. If references list any reference files, read those too
 4. Implement according to the approach described in APPROACH
-5. During implementation, ensure all new code follows the logging policy in CLAUDE.md
+5. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
 6. After completion, self-check against each ACCEPTANCE_CRITERIA item
 7. Use git add + git commit to commit changes
 8. Commit message format: [%s] {short description}
@@ -78,8 +80,9 @@ func BuildCodingPrompt(p CodingParams) string {
 ## Tracker Operation Notes
 
 When opening a PR or updating status, follow the instructions in .claude/docs/tracker.md.
-Whether using MCP or REST API, always write long text (PR body, comment) to a temp file using the Write tool first,
-then read the content with the Read tool and pass it to the API. Never embed long text directly in bash commands or MCP parameters.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
 
 	return b.String()

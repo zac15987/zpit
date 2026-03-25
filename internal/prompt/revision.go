@@ -51,10 +51,12 @@ func BuildRevisionPrompt(p RevisionParams) string {
 
 1. Read CLAUDE.md to understand the project's architecture principles and logging policy
    Read .claude/docs/tracker.md to understand how to operate the tracker
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
+   Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read the latest Review Report comment on the PR (find the one with NEEDS CHANGES)
 3. List each issue raised by the reviewer (prioritize MUST FIX items)
 4. Fix the code for each issue
-5. During fixes, ensure all changes comply with CLAUDE.md conventions
+5. During fixes, ensure all changes comply with CLAUDE.md conventions and the code quality baseline
 6. After completion, self-check against each ACCEPTANCE_CRITERIA item
 7. Use git add + git commit to commit changes
 8. Commit message format: [%s] fix: {brief description of fix}
@@ -73,8 +75,9 @@ stop immediately and notify the user; do not continue working.
 ## Tracker Operation Notes
 
 When updating labels or reading comments, follow the instructions in .claude/docs/tracker.md.
-Whether using MCP or REST API, always write long text to a temp file using the Write tool first,
-then read the content with the Read tool and pass it to the API. Never embed long text directly in bash commands or MCP parameters.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
 `, p.IssueID, p.BaseBranch)
 
 	return b.String()

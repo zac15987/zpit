@@ -116,9 +116,41 @@ func TestPathGuard_AllowsNoFilePath(t *testing.T) {
 
 func TestGitGuard_BlocksForcePush(t *testing.T) {
 	code, _ := runHook(t, "git-guard.sh",
-		`{"tool_input":{"command":"git push --force origin main"}}`, nil)
+		`{"tool_input":{"command":"git push --force origin feat/123-slug"}}`, nil)
 	if code != 2 {
 		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
+func TestGitGuard_BlocksForcePushShort(t *testing.T) {
+	code, _ := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push -f origin feat/123-slug"}}`, nil)
+	if code != 2 {
+		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
+func TestGitGuard_BlocksPushToProtected(t *testing.T) {
+	code, _ := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push origin dev"}}`, nil)
+	if code != 2 {
+		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
+func TestGitGuard_AllowsPushFeatBranch(t *testing.T) {
+	code, msg := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push origin feat/123-slug"}}`, nil)
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d: %s", code, msg)
+	}
+}
+
+func TestGitGuard_AllowsPushUFeatBranch(t *testing.T) {
+	code, msg := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push -u origin feat/123-slug"}}`, nil)
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d: %s", code, msg)
 	}
 }
 

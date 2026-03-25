@@ -56,4 +56,16 @@ var en = map[Key]string{
 	KeyDeployAndLaunch:      "Deploy & Launch",
 	KeyCancel:               "Cancel",
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
+
+	// Label confirm dialogs
+	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",
+	KeyCreateLabels:   "Create Labels",
+	KeyCheckingLabels:          "Checking labels...",
+	KeyTrackerLabelNotSupported: "Tracker does not support label management",
+
+	// Focus panel
+	KeyFocusSlot:      "Switch to slots",
+	KeyCannotLaunch:   "Cannot launch in this state",
+	KeyNoWorktreePath: "Slot has no worktree",
+	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
 }

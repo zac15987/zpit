@@ -8,14 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/charmbracelet/huh"
+	overlay "github.com/rmhubbert/bubbletea-overlay"
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
@@ -42,6 +45,33 @@ const (
 	ViewProjects View = iota
 	ViewStatus
 )
+
+// FocusedPanel indicates which panel has keyboard focus in ViewProjects.
+type FocusedPanel int
+
+const (
+	FocusProjects  FocusedPanel = iota
+	FocusLoopSlots
+)
+
+// PendingOpKind identifies the type of pending operation waiting for label readiness.
+type PendingOpKind int
+
+const (
+	PendingNone PendingOpKind = iota
+	PendingClarify
+	PendingReview
+	PendingLoop
+	PendingConfirmIssue
+)
+
+// PendingOp captures the context of an operation that requires label readiness.
+type PendingOp struct {
+	Kind         PendingOpKind
+	ProjectID    string
+	ProjectIndex int                // snapshot of m.cursor at key press time
+	Required     []tracker.LabelDef // labels this operation needs
+}
 
 // ActiveTerminal tracks a launched terminal and its agent state.
 type ActiveTerminal struct {
@@ -91,20 +121,32 @@ type Model struct {
 	confirmResult *bool          // heap-allocated: shared across Bubble Tea value copies
 	confirmAction func() tea.Cmd
 
+	// Label check state
+	pendingOp *PendingOp
+
 	// Embedded agent templates
 	clarifierMD []byte
 	reviewerMD  []byte
 
+	// Embedded static docs (deployed to .claude/docs/)
+	agentGuidelinesMD            []byte
+	codeConstructionPrinciplesMD []byte
+
 	// Loop engine state
 	loops     map[string]*loop.LoopState
 	wtManager *worktree.Manager
+
+	// Focus panel state (loop slot selection)
+	focusedPanel   FocusedPanel
+	loopCursor     int
+	focusProjectID string
 
 	// Viewport for scrollable content
 	viewport viewport.Model
 }
 
 // NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
-func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.Writer) Model {
+func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte, logWriter io.Writer) Model {
 	if logWriter == nil {
 		logWriter = io.Discard
 	}
@@ -135,8 +177,10 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.W
 		projects:        cfg.Projects,
 		activeTerminals: make(map[string]*ActiveTerminal),
 		clients:         clients,
-		clarifierMD:     clarifierMD,
-		reviewerMD:      reviewerMD,
+		clarifierMD:                  clarifierMD,
+		reviewerMD:                   reviewerMD,
+		agentGuidelinesMD:            agentGuidelinesMD,
+		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
 		loops:           make(map[string]*loop.LoopState),
 		wtManager:       worktree.NewManager(cfg.Worktree),
 		viewport:        vp,
@@ -146,7 +190,6 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD []byte, logWriter io.W
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
 
-	seenTracker := make(map[string]bool)
 	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
@@ -159,7 +202,7 @@ func (m Model) Init() tea.Cmd {
 			ensureGitignore(projectPath)
 		}
 
-		// Ensure required labels exist (background, non-blocking).
+		// Log missing tracker providers for awareness.
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -168,14 +211,7 @@ func (m Model) Init() tea.Cmd {
 				seenMissing[project.Tracker] = true
 				missingProviders = append(missingProviders, project.Tracker)
 			}
-			continue
 		}
-		key := project.Tracker + ":" + project.Repo
-		if seenTracker[key] {
-			continue
-		}
-		seenTracker[key] = true
-		cmds = append(cmds, m.ensureLabelsCmd(project.ID))
 	}
 
 	if len(missingProviders) > 0 {
@@ -186,11 +222,11 @@ func (m Model) Init() tea.Cmd {
 		})
 	}
 
+	// Scan for already-running Claude Code sessions.
+	cmds = append(cmds, m.scanExistingSessionsCmd())
+
 	return tea.Batch(cmds...)
 }
-
-// fixedChromeHeight returns the number of lines used by non-scrollable UI chrome.
-const fixedChromeLines = 6 // header(1) + blank(1) + blank(1) + status(1) + help(1) + blank(1)
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
@@ -203,19 +239,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // syncViewportContent re-renders the scrollable area into the viewport.
 func (m *Model) syncViewportContent() {
-	h := m.height - fixedChromeLines
+	var header, footer string
+	switch m.currentView {
+	case ViewProjects:
+		header = m.renderProjectsHeader()
+		footer = m.renderProjectsFooter()
+		m.viewport.SetContent(m.renderProjectsScrollable())
+	case ViewStatus:
+		header = m.renderStatusHeader()
+		footer = m.renderStatusFooter()
+		m.viewport.SetContent(m.renderStatusScrollable())
+	}
+	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
 		h = 1
 	}
 	m.viewport.Width = m.width
 	m.viewport.Height = h
-
-	switch m.currentView {
-	case ViewProjects:
-		m.viewport.SetContent(m.renderProjectsScrollable())
-	case ViewStatus:
-		m.viewport.SetContent(m.renderStatusScrollable())
-	}
 }
 
 // ensureCursorVisible adjusts the viewport offset so the given line is on screen.
@@ -248,6 +288,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if confirmed && action != nil {
 				return m, action()
 			}
+			// User cancelled — clear any pending operation.
+			m.pendingOp = nil
 			return m, nil
 		}
 		return m, cmd
@@ -273,6 +315,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentEventMsg:
 		return m.handleAgentEvent(msg)
 
+	case existingSessionsMsg:
+		var cmds []tea.Cmd
+		for _, entry := range msg.Entries {
+			if _, exists := m.activeTerminals[entry.TrackingKey]; exists {
+				continue
+			}
+			m.activeTerminals[entry.TrackingKey] = &ActiveTerminal{
+				State:          watcher.StateUnknown,
+				SessionPID:     entry.PID,
+				StateChangedAt: time.Now(),
+			}
+			cmds = append(cmds, waitForLogCmd(entry.TrackingKey, entry.PID, entry.LogPath))
+		}
+		return m, tea.Batch(cmds...)
+
 	case sessionFoundMsg:
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
 			at.SessionPID = msg.PID
@@ -282,6 +339,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watcherReadyMsg:
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
 			at.Watcher = msg.Watcher
+			if at.State == watcher.StateUnknown && msg.LogPath != "" {
+				state, question := watcher.ReadLastState(msg.LogPath)
+				if state != watcher.StateUnknown {
+					at.State = state
+					at.LastQuestion = question
+					at.StateChangedAt = time.Now()
+				}
+			}
 			return m, watchNextCmd(msg.ProjectID, msg.Watcher)
 		}
 		msg.Watcher.Stop()
@@ -299,12 +364,29 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(msg.Text)
 		return m, nil
 
+	case LabelCheckResultMsg:
+		if msg.Err != nil {
+			m.setStatus(fmt.Sprintf("Label check failed: %s", msg.Err))
+			m.pendingOp = nil
+			return m, nil
+		}
+		if len(msg.Missing) == 0 {
+			return m.executePendingOp()
+		}
+		m.showLabelConfirm(msg.ProjectID, msg.Missing)
+		return m, m.confirmForm.Init()
+
 	case LabelsEnsuredMsg:
 		if msg.Err != nil {
-			m.setStatus(fmt.Sprintf("⚠ %s: label sync failed: %s", m.projectName(msg.ProjectID), msg.Err))
-		} else if len(msg.Created) > 0 {
-			m.setStatus(fmt.Sprintf("Created labels for %s: %s",
-				m.projectName(msg.ProjectID), strings.Join(msg.Created, ", ")))
+			m.setStatus(fmt.Sprintf("Label sync failed: %s", msg.Err))
+			m.pendingOp = nil
+			return m, nil
+		}
+		if len(msg.Created) > 0 {
+			m.setStatus(fmt.Sprintf("Created labels: %s", strings.Join(msg.Created, ", ")))
+		}
+		if m.pendingOp != nil {
+			return m.executePendingOp()
 		}
 		return m, nil
 
@@ -366,17 +448,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	if m.confirmForm != nil {
-		return m.confirmForm.View()
-	}
+	var bg string
 	switch m.currentView {
 	case ViewProjects:
-		return m.viewProjects()
+		bg = m.viewProjects()
 	case ViewStatus:
-		return m.viewStatus()
+		bg = m.viewStatus()
 	default:
-		return "Unknown view"
+		bg = "Unknown view"
 	}
+	if m.confirmForm != nil {
+		fg := confirmOverlayStyle.Render(m.confirmForm.View())
+		return overlay.Composite(fg, bg, overlay.Center, overlay.Center, 0, 0)
+	}
+	return bg
 }
 
 func (m *Model) setStatus(text string) {
@@ -415,6 +500,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Tab: toggle focus between project list and loop slots.
+	if key.Matches(msg, m.keys.FocusSwitch) {
+		return m.handleFocusSwitch()
+	}
+
+	// If focused on loop slots, delegate key handling.
+	if m.focusedPanel == FocusLoopSlots {
+		return m.handleLoopSlotsKey(msg)
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Up):
 		if m.cursor > 0 {
@@ -443,16 +538,11 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
-		agentPath := filepath.Join(
-			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
-			".claude", "agents", "clarifier.md",
-		)
-		if _, err := os.Stat(agentPath); err != nil {
-			// Agent not deployed — show confirm dialog
-			m.showDeployConfirm()
-			return m, m.confirmForm.Init()
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+			return m, nil
 		}
-		return m, m.launchClarifierCmd()
+		return m.startWithLabelCheck(PendingClarify, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Loop):
 		project := m.projects[m.cursor]
@@ -464,23 +554,13 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
 			return m, nil
 		}
-		// Toggle loop on/off
+		// Toggle loop off — no label check needed.
 		if ls, ok := m.loops[project.ID]; ok && ls.Active {
 			ls.Active = false
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", project.Name))
 			return m, nil
 		}
-		ls := &loop.LoopState{
-			Active: true,
-			Slots:  make(map[string]*loop.Slot),
-		}
-		m.loops[project.ID] = ls
-		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
-		return m, tea.Batch(
-			m.loopCleanupMergedCmd(project.ID),
-			m.loopScanOpenPRsCmd(project.ID),
-			m.loopPollCmd(project.ID),
-		)
+		return m.startWithLabelCheck(PendingLoop, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Review):
 		project := m.projects[m.cursor]
@@ -488,15 +568,11 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
-		agentPath := filepath.Join(
-			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
-			".claude", "agents", "reviewer.md",
-		)
-		if _, err := os.Stat(agentPath); err != nil {
-			m.showReviewerDeployConfirm()
-			return m, m.confirmForm.Init()
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+			return m, nil
 		}
-		return m, m.launchReviewerCmd()
+		return m.startWithLabelCheck(PendingReview, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Status):
 		project := m.projects[m.cursor]
@@ -504,6 +580,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
+		m.focusedPanel = FocusProjects
 		m.currentView = ViewStatus
 		m.statusProjectID = project.ID
 		m.statusIssues = nil
@@ -546,13 +623,142 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible(m.statusCursor + 3)
 
 	case key.Matches(msg, m.keys.Confirm):
-		return m, m.confirmIssueCmd()
+		// Validate before setting pendingOp.
+		if m.statusCursor >= len(m.statusIssues) {
+			return m, nil
+		}
+		issue := m.statusIssues[m.statusCursor]
+		if issue.Status != tracker.StatusPendingConfirm {
+			m.setStatus(fmt.Sprintf("Issue #%s is %s, not pending_confirm", issue.ID, issue.Status))
+			return m, nil
+		}
+		project := m.findProject(m.statusProjectID)
+		if project == nil {
+			m.setStatus(fmt.Sprintf("project not found: %s", m.statusProjectID))
+			return m, nil
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+			return m, nil
+		}
+		m.pendingOp = &PendingOp{
+			Kind:         PendingConfirmIssue,
+			ProjectID:    m.statusProjectID,
+			ProjectIndex: m.statusCursor,
+			Required:     tracker.RequiredLabels,
+		}
+		m.setStatus(locale.T(locale.KeyCheckingLabels))
+		return m, m.checkLabelsCmd(m.statusProjectID, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Tracker):
 		return m, m.openIssueURLCmd()
 	}
 
 	return m, nil
+}
+
+// --- Focus panel: loop slot selection ---
+
+func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
+	if m.focusedPanel == FocusLoopSlots {
+		m.focusedPanel = FocusProjects
+		return m, nil
+	}
+	project := m.projects[m.cursor]
+	keys := m.sortedSlotKeys(project.ID)
+	if len(keys) == 0 {
+		return m, nil
+	}
+	m.focusedPanel = FocusLoopSlots
+	m.focusProjectID = project.ID
+	m.loopCursor = 0
+	return m, nil
+}
+
+func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	keys := m.sortedSlotKeys(m.focusProjectID)
+	if len(keys) == 0 {
+		m.focusedPanel = FocusProjects
+		return m, nil
+	}
+	if m.loopCursor >= len(keys) {
+		m.loopCursor = len(keys) - 1
+	}
+
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.focusedPanel = FocusProjects
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		if m.loopCursor > 0 {
+			m.loopCursor--
+		}
+
+	case key.Matches(msg, m.keys.Down):
+		if m.loopCursor < len(keys)-1 {
+			m.loopCursor++
+		}
+
+	case key.Matches(msg, m.keys.Enter):
+		return m.launchFocusClaudeCmd(keys[m.loopCursor])
+	}
+
+	return m, nil
+}
+
+// launchableSlotStates defines which slot states allow manual Claude launch.
+var launchableSlotStates = map[loop.SlotState]bool{
+	loop.SlotCoding:        true,
+	loop.SlotReviewing:     true,
+	loop.SlotWaitingPRMerge: true,
+	loop.SlotNeedsHuman:    true,
+	loop.SlotError:         true,
+}
+
+func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
+	ls, ok := m.loops[m.focusProjectID]
+	if !ok {
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok || slot.WorktreePath == "" {
+		m.setStatus(locale.T(locale.KeyNoWorktreePath))
+		return m, nil
+	}
+	if !launchableSlotStates[slot.State] {
+		m.setStatus(locale.T(locale.KeyCannotLaunch))
+		return m, nil
+	}
+
+	cfg := m.cfg.Terminal
+	tabTitle := fmt.Sprintf("Focus #%s", slot.IssueID)
+	wtPath := slot.WorktreePath
+	trackingKey := "focus:" + m.focusProjectID + ":" + slot.IssueID
+
+	return m, func() tea.Msg {
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg)
+		return LaunchResultMsg{
+			ProjectID:   m.focusProjectID,
+			TrackingKey: trackingKey,
+			WorkDir:     wtPath,
+			Result:      result,
+			Err:         err,
+		}
+	}
+}
+
+func (m Model) sortedSlotKeys(projectID string) []string {
+	ls, ok := m.loops[projectID]
+	if !ok || len(ls.Slots) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(ls.Slots))
+	for k := range ls.Slots {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
@@ -563,14 +769,22 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 
 	m.setStatus(fmt.Sprintf("Launched! %s", msg.Result.SwitchHint))
 
+	trackKey := msg.ProjectID
+	if msg.TrackingKey != "" {
+		trackKey = msg.TrackingKey
+	}
+
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}
-	m.activeTerminals[msg.ProjectID] = at
+	m.activeTerminals[trackKey] = at
 
 	// Try to start watching the session log.
+	if msg.WorkDir != "" {
+		return m, m.startWatcherDirCmd(trackKey, msg.WorkDir)
+	}
 	return m, m.startWatcherCmd(msg.ProjectID)
 }
 
@@ -630,7 +844,7 @@ func (m Model) openFolderCmd() tea.Cmd {
 	return func() tea.Msg {
 		var cmd *exec.Cmd
 		if platform.IsWindows() {
-			cmd = exec.Command("explorer", path)
+			cmd = exec.Command("explorer", strings.ReplaceAll(path, "/", `\`))
 		} else {
 			cmd = exec.Command("xdg-open", path)
 		}
@@ -644,29 +858,76 @@ func (m Model) openFolderCmd() tea.Cmd {
 const (
 	sessionRetryInterval = 2 * time.Second
 	sessionRetryMax      = 15 // 15 * 2s = 30s max wait
-	logWaitMax           = 60 // 60 * 2s = 120s max wait for JSONL
 )
 
-// startWatcherCmd phase 1: find the session PID, return immediately.
+// scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
+func (m Model) scanExistingSessionsCmd() tea.Cmd {
+	type projectInfo struct {
+		id   string
+		path string
+	}
+	seen := make(map[string]bool)
+	var projects []projectInfo
+	for _, p := range m.projects {
+		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		projects = append(projects, projectInfo{id: p.ID, path: path})
+	}
+
+	return func() tea.Msg {
+		claudeHome, err := watcher.ClaudeHome()
+		if err != nil {
+			return existingSessionsMsg{}
+		}
+		var entries []existingSessionEntry
+		for _, p := range projects {
+			sessions, err := watcher.FindActiveSessions(claudeHome, p.path)
+			if err != nil || len(sessions) == 0 {
+				continue
+			}
+			// Pick latest session per project.
+			latest := sessions[0]
+			for _, s := range sessions[1:] {
+				if s.StartedAt > latest.StartedAt {
+					latest = s
+				}
+			}
+			logPath := watcher.LogFilePath(claudeHome, p.path, latest.SessionID)
+			entries = append(entries, existingSessionEntry{
+				TrackingKey: p.id,
+				PID:         latest.PID,
+				LogPath:     logPath,
+			})
+		}
+		return existingSessionsMsg{Entries: entries}
+	}
+}
+
 func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	workDir := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	return m.startWatcherDirCmd(projectID, workDir)
+}
 
+// startWatcherDirCmd is like startWatcherCmd but uses a raw directory path (for worktree launches).
+func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
-			return WatcherErrorMsg{ProjectID: projectID, Err: err}
+			return WatcherErrorMsg{ProjectID: trackingKey, Err: err}
 		}
 
-		// Retry: Claude Code needs time to start after wt.exe opens.
 		var sessions []watcher.SessionInfo
 		for attempt := range sessionRetryMax {
-			sessions, err = watcher.FindActiveSessions(claudeHome, projectPath)
+			sessions, err = watcher.FindActiveSessions(claudeHome, workDir)
 			if err != nil {
-				return WatcherErrorMsg{ProjectID: projectID, Err: err}
+				return WatcherErrorMsg{ProjectID: trackingKey, Err: err}
 			}
 			if len(sessions) > 0 {
 				break
@@ -677,10 +938,9 @@ func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 		}
 
 		if len(sessions) == 0 {
-			return StatusMsg{Text: fmt.Sprintf("No active session found for %s (waited 30s)", projectID)}
+			return StatusMsg{Text: fmt.Sprintf("No active session found for %s (waited 30s)", trackingKey)}
 		}
 
-		// Use the most recently started session.
 		latest := sessions[0]
 		for _, s := range sessions[1:] {
 			if s.StartedAt > latest.StartedAt {
@@ -688,11 +948,8 @@ func (m Model) startWatcherCmd(projectID string) tea.Cmd {
 			}
 		}
 
-		logPath := watcher.LogFilePath(claudeHome, projectPath, latest.SessionID)
-
-		// Return PID immediately so liveness check works right away.
-		// Phase 2 (waitForLogCmd) will handle waiting for the JSONL file.
-		return sessionFoundMsg{ProjectID: projectID, PID: latest.PID, LogPath: logPath}
+		logPath := watcher.LogFilePath(claudeHome, workDir, latest.SessionID)
+		return sessionFoundMsg{ProjectID: trackingKey, PID: latest.PID, LogPath: logPath}
 	}
 }
 
@@ -703,27 +960,34 @@ type sessionFoundMsg struct {
 	LogPath   string
 }
 
+// existingSessionEntry represents a session found during startup scan.
+type existingSessionEntry struct {
+	TrackingKey string
+	PID         int
+	LogPath     string
+}
+
+// existingSessionsMsg carries results of scanning for already-running sessions at startup.
+type existingSessionsMsg struct {
+	Entries []existingSessionEntry
+}
+
 // waitForLogCmd phase 2: wait for the JSONL file to be created, then start the watcher.
 func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
 	return func() tea.Msg {
-		for attempt := range logWaitMax {
-			// Check if session process is still alive.
+		for {
 			if !watcher.IsProcessAlive(pid) {
 				return StatusMsg{Text: fmt.Sprintf("Session ended before log created for %s", projectID)}
 			}
 			if _, err := os.Stat(logPath); err == nil {
-				// File exists — create watcher.
 				w, err := watcher.New(projectID, logPath)
 				if err != nil {
 					return WatcherErrorMsg{ProjectID: projectID, Err: err}
 				}
-				return watcherReadyMsg{ProjectID: projectID, Watcher: w}
+				return watcherReadyMsg{ProjectID: projectID, Watcher: w, LogPath: logPath}
 			}
-			if attempt < logWaitMax-1 {
-				time.Sleep(sessionRetryInterval)
-			}
+			time.Sleep(sessionRetryInterval)
 		}
-		return StatusMsg{Text: fmt.Sprintf("Session log not created for %s (waited 120s)", projectID)}
 	}
 }
 
@@ -731,6 +995,7 @@ func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
 type watcherReadyMsg struct {
 	ProjectID string
 	Watcher   *watcher.Watcher
+	LogPath   string
 }
 
 func (m *Model) checkSessionLiveness() {
@@ -817,7 +1082,7 @@ func (m *Model) showDeployConfirm() {
 				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),
-	)
+	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
 		return m.deployAndLaunchClarifier()
 	}
@@ -831,6 +1096,8 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	cfg := m.cfg.Terminal
 
 	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		// Deploy: create .claude/agents/ and write clarifier.md
@@ -842,10 +1109,11 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		if err := os.WriteFile(agentPath, clarifierMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		// Deploy tracker.md
+		// Deploy docs
 		if err := deployTracker(); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy tracker doc failed: %s", err)}
 		}
+		deployStaticDocs(projectPath, agentGuidelines, codeConstructionPrinciples)
 
 		// Launch
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
@@ -938,8 +1206,138 @@ func ensureGitignore(projectPath string) {
 	f.WriteString(buf.String())
 }
 
-// ensureLabelsCmd checks and creates missing required labels for a project's tracker.
-func (m Model) ensureLabelsCmd(projectID string) tea.Cmd {
+// checkLabelsCmd checks which required labels are missing (read-only, no creation).
+func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return func() tea.Msg {
+			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("project not found: %s", projectID)}
+		}
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return func() tea.Msg {
+			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("%s", locale.T(locale.KeyTrackerTokenNotSet))}
+		}
+	}
+	lm, ok := client.(tracker.LabelManager)
+	if !ok {
+		return func() tea.Msg {
+			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("%s", locale.T(locale.KeyTrackerLabelNotSupported))}
+		}
+	}
+	repo := project.Repo
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		missing, err := tracker.CheckLabels(ctx, lm, repo, required)
+		return LabelCheckResultMsg{ProjectID: projectID, Missing: missing, Err: err}
+	}
+}
+
+// startWithLabelCheck sets up pendingOp and fires an async label check.
+func (m *Model) startWithLabelCheck(kind PendingOpKind, project config.ProjectConfig, required []tracker.LabelDef) (tea.Model, tea.Cmd) {
+	m.pendingOp = &PendingOp{
+		Kind:         kind,
+		ProjectID:    project.ID,
+		ProjectIndex: m.cursor,
+		Required:     required,
+	}
+	m.setStatus(locale.T(locale.KeyCheckingLabels))
+	return m, m.checkLabelsCmd(project.ID, required)
+}
+
+// showLabelConfirm displays an overlay confirm dialog listing missing labels.
+func (m *Model) showLabelConfirm(projectID string, missing []tracker.LabelDef) {
+	project := m.findProject(projectID)
+	repo := ""
+	if project != nil {
+		repo = project.Repo
+	}
+	names := make([]string, len(missing))
+	for i, ld := range missing {
+		names[i] = "  • " + ld.Name
+	}
+	title := fmt.Sprintf(locale.T(locale.KeyLabelsMissing), repo, strings.Join(names, "\n"))
+
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative(locale.T(locale.KeyCreateLabels)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(50)
+	m.confirmAction = func() tea.Cmd {
+		return m.ensureLabelsCmd(projectID, missing)
+	}
+}
+
+// executePendingOp continues the original operation after labels are confirmed present.
+func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
+	op := m.pendingOp
+	if op == nil {
+		return m, nil
+	}
+
+	switch op.Kind {
+	case PendingClarify:
+		m.pendingOp = nil
+		m.cursor = op.ProjectIndex // restore cursor for deploy confirm / launch
+		project := m.projects[op.ProjectIndex]
+		agentPath := filepath.Join(
+			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+			".claude", "agents", "clarifier.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			m.showDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchClarifierCmd()
+
+	case PendingReview:
+		m.pendingOp = nil
+		m.cursor = op.ProjectIndex // restore cursor for deploy confirm / launch
+		project := m.projects[op.ProjectIndex]
+		agentPath := filepath.Join(
+			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+			".claude", "agents", "reviewer.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			m.showReviewerDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchReviewerCmd()
+
+	case PendingLoop:
+		m.pendingOp = nil
+		project := m.projects[op.ProjectIndex]
+		ls := &loop.LoopState{
+			Active: true,
+			Slots:  make(map[string]*loop.Slot),
+		}
+		m.loops[project.ID] = ls
+		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
+		return m, tea.Batch(
+			m.loopCleanupMergedCmd(project.ID),
+			m.loopScanOpenPRsCmd(project.ID),
+			m.loopPollCmd(project.ID),
+		)
+
+	case PendingConfirmIssue:
+		m.pendingOp = nil
+		return m, m.confirmIssueCmd()
+	}
+
+	m.pendingOp = nil
+	return m, nil
+}
+
+// ensureLabelsCmd creates the specified missing labels for a project's tracker.
+func (m Model) ensureLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
@@ -953,11 +1351,10 @@ func (m Model) ensureLabelsCmd(projectID string) tea.Cmd {
 		return nil
 	}
 	repo := project.Repo
-
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		created, err := tracker.EnsureLabels(ctx, lm, repo, tracker.RequiredLabels)
+		created, err := tracker.EnsureLabels(ctx, lm, repo, required)
 		return LabelsEnsuredMsg{ProjectID: projectID, Created: created, Err: err}
 	}
 }
@@ -1040,7 +1437,7 @@ func (m *Model) showReviewerDeployConfirm() {
 				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),
-	)
+	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
 		return m.deployAndLaunchReviewer()
 	}
@@ -1053,6 +1450,8 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	reviewerMD := injectLangInstruction(m.reviewerMD)
 	cfg := m.cfg.Terminal
 	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -1064,6 +1463,7 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
 		_ = deployTracker()
+		deployStaticDocs(projectPath, agentGuidelines, codeConstructionPrinciples)
 
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
 		return LaunchResultMsg{
@@ -1080,20 +1480,26 @@ func injectLangInstruction(md []byte) []byte {
 	if instruction == "" {
 		return md
 	}
+	// Normalize CRLF → LF for reliable marker search, then restore original line endings.
 	s := string(md)
-	// Insert after closing "---\n"
+	hasCRLF := strings.Contains(s, "\r\n")
+	normalized := strings.ReplaceAll(s, "\r\n", "\n")
+
 	const marker = "---\n"
-	// Find second "---" (closing frontmatter)
-	first := strings.Index(s, marker)
+	first := strings.Index(normalized, marker)
 	if first < 0 {
-		return append([]byte(instruction), md...)
+		return md // no frontmatter found — return unchanged
 	}
-	second := strings.Index(s[first+len(marker):], marker)
+	second := strings.Index(normalized[first+len(marker):], marker)
 	if second < 0 {
-		return append([]byte(instruction), md...)
+		return md // malformed frontmatter — return unchanged
 	}
 	insertPos := first + len(marker) + second + len(marker)
-	return []byte(s[:insertPos] + "\n" + instruction + s[insertPos:])
+	result := normalized[:insertPos] + "\n" + instruction + normalized[insertPos:]
+	if hasCRLF {
+		result = strings.ReplaceAll(result, "\n", "\r\n")
+	}
+	return []byte(result)
 }
 
 // deployTrackerDoc writes .claude/docs/tracker.md to the target directory.
@@ -1108,6 +1514,14 @@ func (m Model) deployTrackerDoc(targetPath string, project *config.ProjectConfig
 	}
 	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	return os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(content), 0o644)
+}
+
+// deployStaticDocs writes embedded agent-guidelines.md and code-construction-principles.md to .claude/docs/.
+func deployStaticDocs(targetPath string, agentGuidelines, codeConstructionPrinciples []byte) {
+	docsDir := filepath.Join(targetPath, ".claude", "docs")
+	_ = os.MkdirAll(docsDir, 0o755)
+	_ = os.WriteFile(filepath.Join(docsDir, "agent-guidelines.md"), agentGuidelines, 0o644)
+	_ = os.WriteFile(filepath.Join(docsDir, "code-construction-principles.md"), codeConstructionPrinciples, 0o644)
 }
 
 // openInBrowser opens a URL in the default browser.

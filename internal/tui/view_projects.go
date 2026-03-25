@@ -35,12 +35,14 @@ var profileIcons = map[string]string{
 }
 
 func (m Model) viewProjects() string {
-	var b strings.Builder
-	b.WriteString(m.renderProjectsHeader())
-	b.WriteString(m.viewport.View())
-	b.WriteString("\n")
-	b.WriteString(m.renderProjectsFooter())
-	return b.String()
+	header := m.renderProjectsHeader()
+	footer := m.renderProjectsFooter()
+	contentHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	content := lipgloss.NewStyle().Width(m.width).Height(contentHeight).Render(m.viewport.View())
+	return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
 }
 
 // renderProjectsHeader returns the fixed header above the scrollable area.
@@ -52,10 +54,14 @@ func (m Model) renderProjectsHeader() string {
 func (m Model) renderProjectsScrollable() string {
 	var b strings.Builder
 
-	// Two-column: project list + hotkeys
+	// Two-column: project list (left) + hotkeys (right-aligned)
 	left := m.renderProjectList()
 	right := m.renderHotkeys()
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, left, "    ", right)
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 4 {
+		gap = 4
+	}
+	columns := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
 	b.WriteString(columns)
 
 	// Active terminals (if any)
@@ -81,20 +87,36 @@ func (m Model) renderProjectsFooter() string {
 		b.WriteString(statusBarStyle.Render(" " + m.statusMessage + " "))
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(locale.T(locale.KeyHelpFooter)))
+	if m.focusedPanel == FocusLoopSlots {
+		b.WriteString(helpStyle.Render(locale.T(locale.KeyLoopSlotHelp)))
+	} else {
+		b.WriteString(helpStyle.Render(locale.T(locale.KeyHelpFooter)))
+	}
 	return b.String()
 }
 
 func (m Model) renderHeader() string {
 	now := time.Now().Format("01/02 15:04")
 	env := m.env.String()
-	title := fmt.Sprintf(" Zpit v0.1                                    %s  %s ", now, env)
-	return headerBoxStyle.Render(title)
+	left := "Zpit v0.1"
+	right := fmt.Sprintf("%s  %s", now, env)
+	// headerBoxStyle has Padding(0,1) — inner width is m.width - 2
+	inner := m.width - 2
+	gap := inner - len(left) - len(right)
+	if gap < 2 {
+		gap = 2
+	}
+	title := left + strings.Repeat(" ", gap) + right
+	return headerBoxStyle.Width(m.width).Render(title)
 }
 
 func (m Model) renderProjectList() string {
 	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyProjects)))
+	titleStyle := sectionTitleStyle
+	if m.focusedPanel == FocusLoopSlots {
+		titleStyle = detailStyle
+	}
+	b.WriteString(titleStyle.Render(locale.T(locale.KeyProjects)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 32) + "\n\n")
 
@@ -153,7 +175,8 @@ func (m Model) renderHotkeys() string {
 		{"p", locale.T(locale.KeyOpenTracker), false},
 		{"a", locale.T(locale.KeyAddProject), true},
 		{"e", locale.T(locale.KeyEditConfig), false},
-		{"?", locale.T(locale.KeyHelp), true},
+		{"Tab", locale.T(locale.KeyFocusSlot), true},
+		{"?", locale.T(locale.KeyHelp), false},
 		{"q", locale.T(locale.KeyQuit), false},
 	}
 
@@ -184,8 +207,16 @@ func (m Model) renderActiveTerminals() string {
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
+	// Sort keys for stable render order.
+	termKeys := make([]string, 0, len(m.activeTerminals))
+	for k := range m.activeTerminals {
+		termKeys = append(termKeys, k)
+	}
+	sort.Strings(termKeys)
+
 	i := 1
-	for projectID, at := range m.activeTerminals {
+	for _, projectID := range termKeys {
+		at := m.activeTerminals[projectID]
 		// Status icon and text.
 		statusIcon, statusText := renderAgentStatus(at)
 
@@ -200,9 +231,10 @@ func (m Model) renderActiveTerminals() string {
 			detailStyle.Render(elapsed),
 		))
 
-		// Question preview when waiting.
+		// Question preview when waiting (single line).
 		if at.LastQuestion != "" && statusIcon == iconWaiting {
-			preview := truncate(at.LastQuestion, 80)
+			oneline := strings.Join(strings.Fields(at.LastQuestion), " ")
+			preview := truncate(oneline, 80)
 			b.WriteString(fmt.Sprintf("      %s %s\n",
 				detailStyle.Render("Q:"),
 				questionStyle.Render(preview),
@@ -258,8 +290,14 @@ func (m Model) renderLoopStatus() string {
 		if !ls.Active && len(ls.Slots) == 0 {
 			continue
 		}
+		isFocused := m.focusedPanel == FocusLoopSlots && projectID == m.focusProjectID
+
 		if !hasContent {
-			b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyLoopStatus)))
+			titleStyle := detailStyle
+			if m.focusedPanel == FocusLoopSlots {
+				titleStyle = sectionTitleStyle
+			}
+			b.WriteString(titleStyle.Render(locale.T(locale.KeyLoopStatus)))
 			b.WriteString("\n")
 			b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 			hasContent = true
@@ -280,14 +318,9 @@ func (m Model) renderLoopStatus() string {
 			continue
 		}
 
-		// Sort slot keys for stable render order.
-		slotKeys := make([]string, 0, len(ls.Slots))
-		for k := range ls.Slots {
-			slotKeys = append(slotKeys, k)
-		}
-		sort.Strings(slotKeys)
+		slotKeys := m.sortedSlotKeys(projectID)
 
-		for _, key := range slotKeys {
+		for idx, key := range slotKeys {
 			slot := ls.Slots[key]
 			icon := iconWorking
 			switch slot.State {
@@ -306,9 +339,17 @@ func (m Model) renderLoopStatus() string {
 			if slot.ReviewRound > 0 {
 				stateText += fmt.Sprintf(" (round %d/%d)", slot.ReviewRound, m.cfg.Worktree.MaxReviewRounds)
 			}
-			b.WriteString(fmt.Sprintf("    %s #%s %s  %s\n",
-				icon, slot.IssueID,
-				truncate(slot.IssueTitle, 35),
+
+			cursor := "    "
+			titleText := truncate(slot.IssueTitle, 35)
+			if isFocused && idx == m.loopCursor {
+				cursor = "  " + cursorMarker[1:]
+				titleText = selectedStyle.Render(titleText)
+			}
+
+			b.WriteString(fmt.Sprintf("%s%s #%s %s  %s\n",
+				cursor, icon, slot.IssueID,
+				titleText,
 				detailStyle.Render(stateText),
 			))
 			if slot.Error != nil {

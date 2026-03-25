@@ -56,4 +56,16 @@ var zhTW = map[Key]string{
 	KeyDeployAndLaunch:      "部署並啟動",
 	KeyCancel:               "取消",
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
+
+	// Label confirm dialogs
+	KeyLabelsMissing:  "Zpit 及其 agent 依賴以下 label 追蹤 issue 狀態。\n%s 缺少以下 label：\n\n%s\n\n建立後才能繼續，是否建立？",
+	KeyCreateLabels:   "建立 Label",
+	KeyCheckingLabels:          "檢查 label 中...",
+	KeyTrackerLabelNotSupported: "Tracker 不支援 label 管理",
+
+	// Focus panel
+	KeyFocusSlot:      "切換至 Slot",
+	KeyCannotLaunch:   "此狀態無法啟動",
+	KeyNoWorktreePath: "Slot 無 worktree 路徑",
+	KeyLoopSlotHelp:   "Enter: 開啟 Claude  \u2191\u2193: 選擇  Tab/Esc: 返回",
 }

@@ -34,16 +34,17 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Sound alert (SystemSounds.Asterisk)
 - Notification cooldown (re_remind_minutes, per-project)
 - Session liveness check: PID monitoring every 10s, detects closed sessions
+- Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
 - 3 PreToolUse hook scripts with 29 tests
 - Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
 - 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
 - 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
-- `[c]` Clarify: opens new terminal with `claude --agent clarifier` (auto-deploys if missing, huh confirm dialog)
+- `[c]` Clarify: opens new terminal with `claude --agent clarifier` (label check + auto-deploy, overlay confirm dialogs)
 - `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
-- `[r]` Review: opens new terminal with `claude --agent reviewer` (auto-deploys if missing, huh confirm dialog)
+- `[r]` Review: opens new terminal with `claude --agent reviewer` (label check + auto-deploy, overlay confirm dialogs)
 - `[l]` Loop: auto-dispatch coding + reviewer agents per todo issue
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
 - Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
@@ -59,9 +60,11 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
 - Loop Status display in TUI main view
 - Multi-agent parallel execution (max_per_project worktrees)
-- Auto label sync: TUI 啟動時自動建立缺少的 required labels（pending, todo, wip, review, ai-review, needs-changes）
+- On-demand label check: operations ([y]/[c]/[r]/[l]) check required labels before execution, overlay confirm dialog if missing
+- Overlay confirm dialogs: huh forms rendered as centered overlay on top of background view (bubbletea-overlay)
 - Per-issue branch control: Issue Spec `## BRANCH` → coding agent PR 必須 target 指定 branch，reviewer 驗證 target branch
 - i18n: all prompts/agents in English, TUI strings via locale package (en + zh-TW), config `language` field
+- Focus Panel: `Tab` switches focus to Loop Status area, `↑↓` selects slot, `Enter` opens plain Claude Code in slot's worktree (only launchable states: coding/reviewing/waitingPRMerge/needsHuman/error)
 
 ### What's stubbed (shows "coming in MX" message)
 - `[a]` Add Project → M5
@@ -113,7 +116,7 @@ internal/
 │   └── notify_test.go           # 6 tests
 ├── tui/
 │   ├── model.go                 # Root Bubble Tea model, Update, key routing, confirm dialog (huh)
-│   ├── keymap.go                # Key bindings (incl. Back, Confirm)
+│   ├── keymap.go                # Key bindings (incl. Back, Confirm, FocusSwitch)
 │   ├── styles.go                # Lip Gloss styles with named color constants
 │   ├── view_projects.go         # Main screen: project list + hotkeys + active terminals + loop status
 │   ├── view_status.go           # Status sub-view: issue list + [y] confirm + [p] browser
@@ -135,7 +138,7 @@ internal/
 └── tracker/
     ├── types.go                 # Issue/PR structs + canonical status constants + LabelDef + RequiredLabels
     ├── client.go                # TrackerClient interface + NewClient factory + MapLabelsToStatus
-    ├── labels.go                # LabelManager interface + EnsureLabels (startup label sync)
+    ├── labels.go                # LabelManager interface + CheckLabels (read-only) + EnsureLabels (create missing)
     ├── restapi.go               # Shared REST HTTP helper (restClient, doJSON, splitRepo)
     ├── forgejo.go               # ForgejoClient: Forgejo/Gitea REST API v1
     ├── github.go                # GitHubClient: GitHub REST API
@@ -159,6 +162,7 @@ testdata/
 └── session_waiting.jsonl        # JSONL fixture: agent waiting (end_turn)
 docs/
 ├── zpit-architecture.md         # Full architecture document
+├── agent-guidelines.md          # Agent behavioral rules (Layer 1 soft constraints, deployed to .claude/docs/)
 └── code-construction-principles.md  # Code quality baseline for agent review
 ```
 
@@ -192,12 +196,12 @@ Zpit (Go) → TrackerClient interface
 
 ### Hook-Based Safety System (5 Layers)
 
-1. **CLAUDE.md behavioral guidelines** (soft)
+1. **agent-guidelines.md behavioral rules** (soft — `.claude/docs/agent-guidelines.md`, deployed by `setup-hooks.sh`)
 2. **--allowedTools per agent role** (medium)
 3. **PreToolUse hooks** (hard — enforced even with bypass-all-permissions):
    - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
-   - `git-guard.sh` — blocks push, merge, rebase, branch delete; agents only commit
+   - `git-guard.sh` — push whitelist (only `feat/*` branches allowed), blocks merge, rebase, branch delete
 4. **Git worktree isolation** (physical)
 5. **Human PR review** (final gate)
 
@@ -227,4 +231,5 @@ Top-level `language` field (default `"en"`) controls TUI display language and ag
 - Loop label flow: todo → wip → review → ai-review (PASS) / needs-changes (NEEDS CHANGES → auto-retry up to max_review_rounds)
 - Agents must stop and ask on uncertain technical decisions, even with bypass-all-permissions enabled
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
-- Code quality baseline: `docs/code-construction-principles.md` — Reviewer agent checks against this
+- Agent behavioral rules: `docs/agent-guidelines.md` — deployed to `.claude/docs/`, all agents read on startup
+- Code quality baseline: `docs/code-construction-principles.md` — all agents reference during implementation and review
