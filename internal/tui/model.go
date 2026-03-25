@@ -842,7 +842,7 @@ func (m Model) openFolderCmd() tea.Cmd {
 	return func() tea.Msg {
 		var cmd *exec.Cmd
 		if platform.IsWindows() {
-			cmd = exec.Command("explorer", path)
+			cmd = exec.Command("explorer", strings.ReplaceAll(path, "/", `\`))
 		} else {
 			cmd = exec.Command("xdg-open", path)
 		}
