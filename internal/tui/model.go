@@ -856,7 +856,6 @@ func (m Model) openFolderCmd() tea.Cmd {
 const (
 	sessionRetryInterval = 2 * time.Second
 	sessionRetryMax      = 15 // 15 * 2s = 30s max wait
-	logWaitMax           = 60 // 60 * 2s = 120s max wait for JSONL
 )
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
@@ -974,24 +973,19 @@ type existingSessionsMsg struct {
 // waitForLogCmd phase 2: wait for the JSONL file to be created, then start the watcher.
 func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
 	return func() tea.Msg {
-		for attempt := range logWaitMax {
-			// Check if session process is still alive.
+		for {
 			if !watcher.IsProcessAlive(pid) {
 				return StatusMsg{Text: fmt.Sprintf("Session ended before log created for %s", projectID)}
 			}
 			if _, err := os.Stat(logPath); err == nil {
-				// File exists — create watcher.
 				w, err := watcher.New(projectID, logPath)
 				if err != nil {
 					return WatcherErrorMsg{ProjectID: projectID, Err: err}
 				}
 				return watcherReadyMsg{ProjectID: projectID, Watcher: w, LogPath: logPath}
 			}
-			if attempt < logWaitMax-1 {
-				time.Sleep(sessionRetryInterval)
-			}
+			time.Sleep(sessionRetryInterval)
 		}
-		return StatusMsg{Text: fmt.Sprintf("Session log not created for %s (waited 120s)", projectID)}
 	}
 }
 
