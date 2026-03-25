@@ -1207,7 +1207,7 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 // zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
 var zpitIgnoreRules = []string{
 	".claude/agents/",
-	".claude/docs/tracker.md",
+	".claude/docs/",
 	".claude/settings.local.json",
 }
 
