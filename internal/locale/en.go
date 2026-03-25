@@ -60,7 +60,8 @@ var en = map[Key]string{
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",
 	KeyCreateLabels:   "Create Labels",
-	KeyCheckingLabels: "Checking labels...",
+	KeyCheckingLabels:          "Checking labels...",
+	KeyTrackerLabelNotSupported: "Tracker does not support label management",
 
 	// Focus panel
 	KeyFocusSlot:      "Switch to slots",

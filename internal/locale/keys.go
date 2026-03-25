@@ -61,7 +61,8 @@ const (
 	// Label confirm dialogs (model.go)
 	KeyLabelsMissing  Key = "labels_missing"
 	KeyCreateLabels   Key = "create_labels"
-	KeyCheckingLabels Key = "checking_labels"
+	KeyCheckingLabels          Key = "checking_labels"
+	KeyTrackerLabelNotSupported Key = "tracker_label_not_supported"
 
 	// Focus panel (loop slot selection)
 	KeyFocusSlot      Key = "focus_slot"

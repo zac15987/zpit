@@ -536,6 +536,10 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
 			return m, nil
 		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+			return m, nil
+		}
 		return m.startWithLabelCheck(PendingClarify, project, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Loop):
@@ -560,6 +564,10 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		project := m.projects[m.cursor]
 		if project.Tracker == "" {
 			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+			return m, nil
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
 			return m, nil
 		}
 		return m.startWithLabelCheck(PendingReview, project, tracker.RequiredLabels)
@@ -624,6 +632,11 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		project := m.findProject(m.statusProjectID)
 		if project == nil {
+			m.setStatus(fmt.Sprintf("project not found: %s", m.statusProjectID))
+			return m, nil
+		}
+		if _, ok := m.clients[project.Tracker]; !ok {
+			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
 			return m, nil
 		}
 		m.pendingOp = &PendingOp{
@@ -1201,15 +1214,21 @@ func ensureGitignore(projectPath string) {
 func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
-		return nil
+		return func() tea.Msg {
+			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("project not found: %s", projectID)}
+		}
 	}
 	client, ok := m.clients[project.Tracker]
 	if !ok {
-		return nil
+		return func() tea.Msg {
+			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("%s", locale.T(locale.KeyTrackerTokenNotSet))}
+		}
 	}
 	lm, ok := client.(tracker.LabelManager)
 	if !ok {
-		return nil
+		return func() tea.Msg {
+			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("%s", locale.T(locale.KeyTrackerLabelNotSupported))}
+		}
 	}
 	repo := project.Repo
 	return func() tea.Msg {

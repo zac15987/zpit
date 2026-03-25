@@ -60,7 +60,8 @@ var zhTW = map[Key]string{
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit 及其 agent 依賴以下 label 追蹤 issue 狀態。\n%s 缺少以下 label：\n\n%s\n\n建立後才能繼續，是否建立？",
 	KeyCreateLabels:   "建立 Label",
-	KeyCheckingLabels: "檢查 label 中...",
+	KeyCheckingLabels:          "檢查 label 中...",
+	KeyTrackerLabelNotSupported: "Tracker 不支援 label 管理",
 
 	// Focus panel
 	KeyFocusSlot:      "切換至 Slot",
