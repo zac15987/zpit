@@ -46,6 +46,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
 - `[r]` Review: opens new terminal with `claude --agent reviewer` (label check + auto-deploy, overlay confirm dialogs)
+- `[u]` Undeploy: removes all Zpit-deployed files (.claude/agents/, .claude/docs/, .claude/hooks/) with overlay confirm
 - `[l]` Loop: auto-dispatch coding + reviewer agents per todo issue
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
 - Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)

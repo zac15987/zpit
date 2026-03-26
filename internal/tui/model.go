@@ -623,6 +623,17 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.startWithLabelCheck(PendingReview, *p, tracker.RequiredLabels)
 
+	case key.Matches(msg, m.keys.Undeploy):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[u]", *p, valPath) {
+			return m, nil
+		}
+		m.showUndeployConfirm(*p)
+		return m, m.confirmForm.Init()
+
 	case key.Matches(msg, m.keys.Status):
 		p := m.selectedProject()
 		if p == nil {
@@ -1543,6 +1554,50 @@ func (m *Model) showReviewerDeployConfirm() {
 	m.confirmAction = func() tea.Cmd {
 		return m.deployAndLaunchReviewer()
 	}
+}
+
+// showUndeployConfirm displays a huh confirm dialog for removing deployed files.
+func (m *Model) showUndeployConfirm(project config.ProjectConfig) {
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(locale.T(locale.KeyUndeployConfirm)).
+				Affirmative(locale.T(locale.KeyUndeployButton)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(60)
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	projectName := project.Name
+	logger := m.logger
+	m.confirmAction = func() tea.Cmd {
+		return func() tea.Msg {
+			count := undeployFiles(projectPath)
+			logger.Printf("[undeploy] removed %d items from %s", count, projectName)
+			if count == 0 {
+				return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyUndeployNoop), projectName)}
+			}
+			return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyUndeployDone), count, projectName)}
+		}
+	}
+}
+
+// undeployFiles removes all Zpit-deployed directories from a project's .claude/ directory.
+func undeployFiles(projectPath string) int {
+	claudeDir := filepath.Join(projectPath, ".claude")
+	removed := 0
+
+	for _, dir := range []string{"agents", "docs", "hooks"} {
+		target := filepath.Join(claudeDir, dir)
+		if info, err := os.Stat(target); err == nil && info.IsDir() {
+			os.RemoveAll(target)
+			removed++
+		}
+	}
+
+	return removed
 }
 
 // deployAndLaunchReviewer deploys reviewer.md to the project and launches it.

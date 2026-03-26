@@ -18,6 +18,7 @@ var zhTW = map[Key]string{
 	KeyOpenTracker:    "開啟 Issue Tracker",
 	KeyAddProject:     "新增專案",
 	KeyEditConfig:     "編輯設定",
+	KeyUndeploy:       "清除部署檔案",
 	KeyHelp:           "說明",
 	KeyQuit:           "離開",
 
@@ -56,6 +57,12 @@ var zhTW = map[Key]string{
 	KeyDeployAndLaunch:      "部署並啟動",
 	KeyCancel:               "取消",
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
+
+	// Undeploy confirm dialogs
+	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployButton:  "清除",
+	KeyUndeployDone:    "已清除 %d 個項目（%s）",
+	KeyUndeployNoop:    "無已部署檔案（%s）",
 
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit 及其 agent 依賴以下 label 追蹤 issue 狀態。\n%s 缺少以下 label：\n\n%s\n\n建立後才能繼續，是否建立？",

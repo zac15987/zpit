@@ -19,6 +19,7 @@ const (
 	KeyOpenTracker     Key = "open_issue_tracker"
 	KeyAddProject      Key = "add_project"
 	KeyEditConfig      Key = "edit_config"
+	KeyUndeploy        Key = "undeploy"
 	KeyHelp            Key = "help"
 	KeyQuit            Key = "quit"
 
@@ -57,6 +58,12 @@ const (
 	KeyDeployAndLaunch      Key = "deploy_and_launch"
 	KeyCancel               Key = "cancel"
 	KeyReviewerNotDeployed  Key = "reviewer_not_deployed"
+
+	// Undeploy confirm dialogs (model.go)
+	KeyUndeployConfirm Key = "undeploy_confirm"
+	KeyUndeployButton  Key = "undeploy_button"
+	KeyUndeployDone    Key = "undeploy_done"
+	KeyUndeployNoop    Key = "undeploy_noop"
 
 	// Label confirm dialogs (model.go)
 	KeyLabelsMissing  Key = "labels_missing"

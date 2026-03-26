@@ -18,6 +18,7 @@ var en = map[Key]string{
 	KeyOpenTracker:    "Open Issue Tracker",
 	KeyAddProject:     "Add project",
 	KeyEditConfig:     "Edit config",
+	KeyUndeploy:       "Undeploy agents",
 	KeyHelp:           "Help",
 	KeyQuit:           "Quit",
 
@@ -56,6 +57,12 @@ var en = map[Key]string{
 	KeyDeployAndLaunch:      "Deploy & Launch",
 	KeyCancel:               "Cancel",
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
+
+	// Undeploy confirm dialogs
+	KeyUndeployConfirm: "Remove all Zpit-deployed files from this project?\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployButton:  "Undeploy",
+	KeyUndeployDone:    "Undeployed %d item(s) from %s",
+	KeyUndeployNoop:    "No deployed files found (%s)",
 
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",

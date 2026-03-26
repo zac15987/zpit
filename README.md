@@ -158,6 +158,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
+| `u` | Undeploy — remove deployed agents, docs, hooks |
 | `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
 | `q` | Quit |
 
