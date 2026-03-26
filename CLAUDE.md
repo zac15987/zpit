@@ -164,7 +164,9 @@ testdata/
 docs/
 ├── zpit-architecture.md         # Full architecture document
 ├── agent-guidelines.md          # Agent behavioral rules (Layer 1 soft constraints, deployed to .claude/docs/)
-└── code-construction-principles.md  # Code quality baseline for agent review
+├── code-construction-principles.md  # Code quality baseline for agent review
+├── sycophancy-mitigation.md     # LLM sycophancy: definition, manifestations, prompt-level mitigations
+└── llm-stale-context-and-tool-underuse.md  # LLM failure modes: stale context assumption + tool underuse
 ```
 
 ## Architecture
@@ -209,6 +211,28 @@ Zpit (Go) → TrackerClient interface
 Hook scripts are embedded in the binary via `go:embed` and auto-deployed to `.claude/hooks/` on every agent launch (`[c]`/`[r]`/`[l]`). Hook config is merged into `.claude/settings.json` (preserving existing keys like `enabledPlugins`). For worktrees, `settings.local.json` overlay is used instead. `scripts/setup-hooks.sh` remains as a manual fallback.
 
 Hook strictness is per-project via `hook_mode` (default `"strict"`): `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
+
+### Agent Anti-Sycophancy & Objectivity Rules
+
+All agents read `agent-guidelines.md` which includes an **Objectivity Protocol**:
+- Prioritize accuracy over agreement; flag plan gaps before executing
+- No flattery phrases; respond directly
+- Agreement requires stated reasoning; reversal requires new evidence
+- Semantic/ownership changes to existing artifacts must be flagged as decision points
+
+Role-specific rules (see `docs/sycophancy-mitigation.md` for research background):
+- **Clarifier**: challenge before acceptance, attach confidence levels, no premature closure
+- **Reviewer**: critic-only stance, no praise, ⚠️ must itemize what's missing or becomes ❌
+- **Coding agent**: stop if APPROACH has a flaw or gap discovered during implementation
+- **Revision agent**: challenge reviewer feedback that appears incorrect instead of silently complying
+
+### Known LLM Failure Modes (see `docs/llm-stale-context-and-tool-underuse.md`)
+
+Two failure modes that impact agent reliability:
+1. **Stale context assumption** — LLM operates on a snapshot of state instead of re-verifying. Caused by positional attention bias (U-shaped curve) and context rot. Mitigation: explicit re-verification rules, sub-agent isolation, worktree isolation.
+2. **Tool underuse** — LLM generates from training data instead of calling available tools (web search, file reads). Caused by RLHF bias toward fluent responses over verification. Mitigation: tool-first instructions, mandatory WebSearch for clarifier, Chain of Verification pattern.
+
+Current gaps: no re-read-before-edit mandate for coding agents, no WebSearch mandate for coding/revision agents, no freshness signals in long sessions.
 
 ## Config Location
 
