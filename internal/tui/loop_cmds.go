@@ -469,10 +469,28 @@ func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
 	repo := project.Repo
 
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		prs, err := client.ListOpenPRs(ctx, repo)
-		return LoopOpenPRsMsg{ProjectID: projectID, PRs: prs, Err: err}
+		if err != nil {
+			return LoopOpenPRsMsg{ProjectID: projectID, Err: err}
+		}
+
+		// Fetch issue labels for each PR to determine correct resume state.
+		issueLabels := make(map[string][]string)
+		for _, pr := range prs {
+			issueID := extractIssueID(pr.Branch)
+			if issueID == "" {
+				continue
+			}
+			issue, err := client.GetIssue(ctx, repo, issueID)
+			if err != nil {
+				continue // fallback: handler will use default WaitingPRMerge
+			}
+			issueLabels[issueID] = issue.Labels
+		}
+
+		return LoopOpenPRsMsg{ProjectID: projectID, PRs: prs, IssueLabels: issueLabels}
 	}
 }
 

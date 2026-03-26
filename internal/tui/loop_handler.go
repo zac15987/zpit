@@ -12,6 +12,16 @@ import (
 	"github.com/zac15987/zpit/internal/worktree"
 )
 
+// hasLabel checks if a label list contains the given label (case-insensitive).
+func hasLabel(labels []string, target string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(l, target) {
+			return true
+		}
+	}
+	return false
+}
+
 // findLoopSlot looks up the LoopState and Slot for a project+issue.
 // Returns nil, nil if not found.
 func (m Model) findLoopSlot(projectID, issueID string) (*loop.LoopState, *loop.Slot) {
@@ -341,16 +351,39 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		ls.Slots[key] = &loop.Slot{
+		slot := &loop.Slot{
 			ProjectID:    msg.ProjectID,
 			IssueID:      issueID,
 			IssueTitle:   pr.Title,
 			BranchName:   pr.Branch,
 			WorktreePath: wtPath,
-			State:        loop.SlotWaitingPRMerge,
 		}
-		m.logger.Printf("loop: resume open PR #%s (branch=%s, state=waitingPRMerge)", issueID, pr.Branch)
-		cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
+		ls.Slots[key] = slot
+
+		// Determine resume state from issue labels.
+		labels := msg.IssueLabels[issueID]
+		switch {
+		case hasLabel(labels, "needs-changes"):
+			slot.State = loop.SlotWritingAgent
+			slot.ReviewRound = 1 // at least one round has passed
+			m.logger.Printf("loop: resume #%s (branch=%s, label=needs-changes) → revision coder", issueID, pr.Branch)
+			cmds = append(cmds, m.loopWriteRevisionAgentCmd(msg.ProjectID, issueID))
+
+		case hasLabel(labels, "review"):
+			slot.State = loop.SlotLaunchingReviewer
+			m.logger.Printf("loop: resume #%s (branch=%s, label=review) → launching reviewer", issueID, pr.Branch)
+			cmds = append(cmds, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, issueID))
+
+		case hasLabel(labels, "wip"):
+			slot.State = loop.SlotCoding
+			m.logger.Printf("loop: resume #%s (branch=%s, label=wip) → PR poll", issueID, pr.Branch)
+			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
+
+		default: // ai-review or no matching label → waiting for merge
+			slot.State = loop.SlotWaitingPRMerge
+			m.logger.Printf("loop: resume #%s (branch=%s) → waiting PR merge", issueID, pr.Branch)
+			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
