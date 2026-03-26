@@ -1328,7 +1328,7 @@ TUI 按 [l]
 │  │    base branch = Issue Spec ## BRANCH || config        │
 │  │    git branch feat/ISSUE-ID-slug {base_branch}         │
 │  │    git worktree add <path> feat/ISSUE-ID-slug          │
-│  │    SetupHookMode() 配置 settings.local.json            │
+│  │    DeployHooks() 部署 hook 腳本 + 配置 settings        │
 │  │    （branch 統一用 feat/ 前綴，PR title 由 agent 決定  │
 │  │      feat/fix 等分類；slug 從 issue title 自動產生）   │
 │  │                                                        │
@@ -1579,8 +1579,9 @@ WSL 環境下也可以透過 `powershell.exe` 呼叫 Windows 通知系統。
     └── git-guard.sh       ← Git 操作守衛（Bash 的子集，獨立腳本更好維護）
 ```
 
-Zpit 在建立 worktree 時，worktree 會自動繼承主 repo 的 `.claude/` 目錄，
-所以 hook 不需要額外複製 — 天然就在每個 agent 的工作環境中生效。
+Hook 腳本透過 `go:embed` 嵌入 Zpit 二進位檔，在每次 agent 啟動（`[c]`/`[r]`/`[l]`）時自動部署到目標目錄的 `.claude/hooks/`。
+同時將 hook 設定合併進 `.claude/settings.json`（保留既有的 `enabledPlugins` 等其他設定）。
+對於 worktree，使用 `settings.local.json` overlay 覆蓋 hook 模式。`scripts/setup-hooks.sh` 保留為手動部署的 fallback。
 
 #### 13.3.2 settings.json — Hook 註冊
 
@@ -1904,7 +1905,7 @@ echo $?   # 應該是 2
 - [x] 偵測 Windows / WSL 環境，選對應 path 和終端啟動方式
 - [x] Terminal Launcher 模組（wt new-tab / tmux new-window）
 - [x] Hook 腳本撰寫 + 測試（path-guard / bash-firewall / git-guard）
-- [x] 第一個專案的 .claude/settings.json + .claude/hooks/ 建立（setup-hooks.sh）
+- [x] 第一個專案的 .claude/settings.json + .claude/hooks/ 建立（auto-deploy from embedded binary）
 - [x] Code Construction Principles 整合至 Reviewer 流程 + 部署腳本
 
 ### M2: Session Log 監控 + 通知（2-3 天）

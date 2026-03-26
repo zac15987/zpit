@@ -135,6 +135,9 @@ type Model struct {
 	agentGuidelinesMD            []byte
 	codeConstructionPrinciplesMD []byte
 
+	// Embedded hook scripts (deployed to .claude/hooks/)
+	hookScripts worktree.HookScripts
+
 	// Loop engine state
 	loops     map[string]*loop.LoopState
 	wtManager *worktree.Manager
@@ -149,7 +152,7 @@ type Model struct {
 }
 
 // NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
-func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte, logWriter io.Writer) Model {
+func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte, hookScripts worktree.HookScripts, logWriter io.Writer) Model {
 	if logWriter == nil {
 		logWriter = io.Discard
 	}
@@ -184,6 +187,7 @@ func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, co
 		reviewerMD:                   reviewerMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
 		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
+		hookScripts:                 hookScripts,
 		loops:           make(map[string]*loop.LoopState),
 		wtManager:       worktree.NewManager(cfg.Worktree),
 		viewport:        vp,
@@ -1187,25 +1191,30 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	clarifierMD := injectLangInstruction(m.clarifierMD)
 	cfg := m.cfg.Terminal
 
-	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
 	agentGuidelines := m.agentGuidelinesMD
 	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	hookScripts := m.hookScripts
+	hookMode := project.HookMode
+	var trackerDocContent string
+	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+	}
 
 	return func() tea.Msg {
-		// Deploy: create .claude/agents/ and write clarifier.md
+		// Deploy hooks
+		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
+		}
+
+		// Deploy agent
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		agentPath := filepath.Join(agentDir, "clarifier.md")
-		if err := os.WriteFile(agentPath, clarifierMD, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(agentDir, "clarifier.md"), clarifierMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		// Deploy docs
-		if err := deployTracker(); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Deploy tracker doc failed: %s", err)}
-		}
-		deployStaticDocs(projectPath, agentGuidelines, codeConstructionPrinciples)
+		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
 		// Launch
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
@@ -1257,6 +1266,7 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 var zpitIgnoreRules = []string{
 	".claude/agents/",
 	".claude/docs/",
+	".claude/hooks/",
 	".claude/settings.local.json",
 }
 
@@ -1541,21 +1551,29 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	reviewerMD := injectLangInstruction(m.reviewerMD)
 	cfg := m.cfg.Terminal
-	deployTracker := func() error { return m.deployTrackerDoc(projectPath, &project) }
 	agentGuidelines := m.agentGuidelinesMD
 	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	hookScripts := m.hookScripts
+	hookMode := project.HookMode
+	var trackerDocContent string
+	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+	}
 
 	return func() tea.Msg {
+		// Deploy hooks
+		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
+		}
+
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		agentPath := filepath.Join(agentDir, "reviewer.md")
-		if err := os.WriteFile(agentPath, reviewerMD, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(agentDir, "reviewer.md"), reviewerMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		_ = deployTracker()
-		deployStaticDocs(projectPath, agentGuidelines, codeConstructionPrinciples)
+		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
 		return LaunchResultMsg{
@@ -1594,24 +1612,14 @@ func injectLangInstruction(md []byte) []byte {
 	return []byte(result)
 }
 
-// deployTrackerDoc writes .claude/docs/tracker.md to the target directory.
-func (m Model) deployTrackerDoc(targetPath string, project *config.ProjectConfig) error {
-	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
-	if !ok {
-		return nil // no tracker configured, skip silently
-	}
-	docsDir := filepath.Join(targetPath, ".claude", "docs")
-	if err := os.MkdirAll(docsDir, 0o755); err != nil {
-		return fmt.Errorf("creating .claude/docs: %w", err)
-	}
-	content := tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
-	return os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(content), 0o644)
-}
-
-// deployStaticDocs writes embedded agent-guidelines.md and code-construction-principles.md to .claude/docs/.
-func deployStaticDocs(targetPath string, agentGuidelines, codeConstructionPrinciples []byte) {
+// deployDocs writes tracker.md (if content non-empty), agent-guidelines.md, and
+// code-construction-principles.md to .claude/docs/.
+func deployDocs(targetPath, trackerDocContent string, agentGuidelines, codeConstructionPrinciples []byte) {
 	docsDir := filepath.Join(targetPath, ".claude", "docs")
 	_ = os.MkdirAll(docsDir, 0o755)
+	if trackerDocContent != "" {
+		_ = os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(trackerDocContent), 0o644)
+	}
 	_ = os.WriteFile(filepath.Join(docsDir, "agent-guidelines.md"), agentGuidelines, 0o644)
 	_ = os.WriteFile(filepath.Join(docsDir, "code-construction-principles.md"), codeConstructionPrinciples, 0o644)
 }

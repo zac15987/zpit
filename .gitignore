@@ -35,3 +35,4 @@ go.work.sum
 .claude/agents/
 .claude/docs/
 .claude/settings.local.json
+.claude/hooks/

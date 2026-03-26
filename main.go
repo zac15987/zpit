@@ -13,6 +13,7 @@ import (
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/tui"
+	"github.com/zac15987/zpit/internal/worktree"
 )
 
 //go:embed agents/clarifier.md
@@ -26,6 +27,15 @@ var agentGuidelinesMD []byte
 
 //go:embed docs/code-construction-principles.md
 var codeConstructionPrinciplesMD []byte
+
+//go:embed hooks/path-guard.sh
+var pathGuardSH []byte
+
+//go:embed hooks/bash-firewall.sh
+var bashFirewallSH []byte
+
+//go:embed hooks/git-guard.sh
+var gitGuardSH []byte
 
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
@@ -73,8 +83,14 @@ func main() {
 	}
 	cleanOldLogs(logDir, 30)
 
+	hookScripts := worktree.HookScripts{
+		PathGuard:    pathGuardSH,
+		BashFirewall: bashFirewallSH,
+		GitGuard:     gitGuardSH,
+	}
+
 	p := tea.NewProgram(
-		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, logFile),
+		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, hookScripts, logFile),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

@@ -212,5 +212,8 @@ func applyDefaults(cfg *Config) {
 		if cfg.Projects[i].BaseBranch == "" {
 			cfg.Projects[i].BaseBranch = defaultBaseBranch
 		}
+		if cfg.Projects[i].HookMode == "" {
+			cfg.Projects[i].HookMode = "strict"
+		}
 	}
 }

@@ -36,9 +36,10 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
 - 3 PreToolUse hook scripts with 29 tests
-- Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
+- Hook auto-deploy: hook scripts embedded via go:embed, deployed to `.claude/hooks/` + `settings.json` merged on every agent launch (`[c]`/`[r]`/`[l]`)
+- Hook deployment script (`scripts/setup-hooks.sh`, manual fallback)
 - 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
-- 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
+- 11 slug tests + 5 worktree manager tests + 11 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
 - `[c]` Clarify: opens new terminal with `claude --agent clarifier` (label check + auto-deploy, overlay confirm dialogs)
@@ -126,7 +127,7 @@ internal/
 ├── worktree/
 │   ├── slug.go                  # Slugify() issue title → URL-safe slug
 │   ├── manager.go               # Worktree Manager: Create/Remove/List + runGit helper
-│   ├── hooks.go                 # SetupHookMode() → settings.local.json per hook_mode
+│   ├── hooks.go                 # HookScripts + DeployHooks() + SetupHookMode() + settings.json merge
 │   ├── slug_test.go             # 11 slug tests
 │   ├── manager_test.go          # Worktree lifecycle tests (real git)
 │   └── hooks_test.go            # 5 hook config tests
@@ -154,7 +155,7 @@ hooks/
 ├── bash-firewall.sh             # Block destructive commands
 ├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
 └── hooks_test.go                # Go tests shelling out to each hook (29 tests)
-scripts/setup-hooks.sh           # Deploy hooks + docs + agents to a project's .claude/
+scripts/setup-hooks.sh           # Manual fallback: deploy hooks + docs + agents to a project's .claude/
 testdata/
 ├── config.toml                  # Real project config used for tests + manual TUI testing
 ├── config_minimal.toml          # Minimal config for defaults testing
@@ -196,16 +197,18 @@ Zpit (Go) → TrackerClient interface
 
 ### Hook-Based Safety System (5 Layers)
 
-1. **agent-guidelines.md behavioral rules** (soft — `.claude/docs/agent-guidelines.md`, deployed by `setup-hooks.sh`)
+1. **agent-guidelines.md behavioral rules** (soft — `.claude/docs/agent-guidelines.md`, auto-deployed by TUI)
 2. **--allowedTools per agent role** (medium)
-3. **PreToolUse hooks** (hard — enforced even with bypass-all-permissions):
+3. **PreToolUse hooks** (hard — enforced even with bypass-all-permissions, auto-deployed from embedded binary):
    - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
    - `git-guard.sh` — push whitelist (only `feat/*` branches allowed), blocks merge, rebase, branch delete
 4. **Git worktree isolation** (physical)
 5. **Human PR review** (final gate)
 
-Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only). Applied via `settings.local.json` overlay at worktree creation.
+Hook scripts are embedded in the binary via `go:embed` and auto-deployed to `.claude/hooks/` on every agent launch (`[c]`/`[r]`/`[l]`). Hook config is merged into `.claude/settings.json` (preserving existing keys like `enabledPlugins`). For worktrees, `settings.local.json` overlay is used instead. `scripts/setup-hooks.sh` remains as a manual fallback.
+
+Hook strictness is per-project via `hook_mode` (default `"strict"`): `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
 
 ## Config Location
 
