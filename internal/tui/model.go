@@ -116,6 +116,9 @@ type Model struct {
 	statusLoading   bool
 	statusError     string
 
+	// Error overlay (dismissible with Esc/Enter)
+	errorOverlay string
+
 	// Confirm dialog (huh)
 	confirmForm   *huh.Form
 	confirmResult *bool          // heap-allocated: shared across Bubble Tea value copies
@@ -268,6 +271,20 @@ func (m *Model) ensureCursorVisible(cursorLine int) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// If error overlay is showing, only allow dismiss (Esc/Enter) and tick.
+	if m.errorOverlay != "" {
+		if _, ok := msg.(TickMsg); ok {
+			m.checkSessionLiveness()
+			return m, tickCmd()
+		}
+		if msg, ok := msg.(tea.KeyMsg); ok {
+			if key.Matches(msg, m.keys.Enter) || key.Matches(msg, m.keys.Back) {
+				m.errorOverlay = ""
+			}
+		}
+		return m, nil
+	}
+
 	// If confirm dialog is active, route messages to it (but keep tick alive).
 	if m.confirmForm != nil {
 		// Let tick through so the UI stays responsive after confirm closes.
@@ -470,6 +487,10 @@ func (m Model) View() string {
 	default:
 		bg = "Unknown view"
 	}
+	if m.errorOverlay != "" {
+		fg := errorOverlayStyle.Render(m.errorOverlay)
+		return overlay.Composite(fg, bg, overlay.Center, overlay.Center, 0, 0)
+	}
 	if m.confirmForm != nil {
 		fg := confirmOverlayStyle.Render(m.confirmForm.View())
 		return overlay.Composite(fg, bg, overlay.Center, overlay.Center, 0, 0)
@@ -537,65 +558,78 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible(m.cursor * 3)
 
 	case key.Matches(msg, m.keys.Enter):
+		if m.selectedProject() == nil {
+			return m, nil
+		}
 		return m, m.launchClaudeCmd()
 
 	case key.Matches(msg, m.keys.Open):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[o]", *p, valPath) {
+			return m, nil
+		}
 		return m, m.openFolderCmd()
 
 	case key.Matches(msg, m.keys.Tracker):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[p]", *p, valTrackerURL) {
+			return m, nil
+		}
 		return m, m.openTrackerCmd()
 
 	case key.Matches(msg, m.keys.Clarify):
-		project := m.projects[m.cursor]
-		if project.Tracker == "" {
-			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		p := m.selectedProject()
+		if p == nil {
 			return m, nil
 		}
-		if _, ok := m.clients[project.Tracker]; !ok {
-			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+		if !m.checkConfig("[c]", *p, valPath, valTracker) {
 			return m, nil
 		}
-		return m.startWithLabelCheck(PendingClarify, project, tracker.RequiredLabels)
+		return m.startWithLabelCheck(PendingClarify, *p, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Loop):
-		project := m.projects[m.cursor]
-		if project.Tracker == "" {
-			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		p := m.selectedProject()
+		if p == nil {
 			return m, nil
 		}
-		if _, ok := m.clients[project.Tracker]; !ok {
-			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
-			return m, nil
-		}
-		// Toggle loop off — no label check needed.
-		if ls, ok := m.loops[project.ID]; ok && ls.Active {
+		// Toggle loop off — no config check needed.
+		if ls, ok := m.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
-			m.setStatus(fmt.Sprintf("Loop stopped for %s", project.Name))
+			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil
 		}
-		return m.startWithLabelCheck(PendingLoop, project, tracker.RequiredLabels)
+		if !m.checkConfig("[l]", *p, valPath, valTracker, valWorktree) {
+			return m, nil
+		}
+		return m.startWithLabelCheck(PendingLoop, *p, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Review):
-		project := m.projects[m.cursor]
-		if project.Tracker == "" {
-			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		p := m.selectedProject()
+		if p == nil {
 			return m, nil
 		}
-		if _, ok := m.clients[project.Tracker]; !ok {
-			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+		if !m.checkConfig("[r]", *p, valPath, valTracker) {
 			return m, nil
 		}
-		return m.startWithLabelCheck(PendingReview, project, tracker.RequiredLabels)
+		return m.startWithLabelCheck(PendingReview, *p, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Status):
-		project := m.projects[m.cursor]
-		if project.Tracker == "" {
-			m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[s]", *p, valTracker) {
 			return m, nil
 		}
 		m.focusedPanel = FocusProjects
 		m.currentView = ViewStatus
-		m.statusProjectID = project.ID
+		m.statusProjectID = p.ID
 		m.statusIssues = nil
 		m.statusCursor = 0
 		m.statusLoading = true
@@ -650,8 +684,7 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf("project not found: %s", m.statusProjectID))
 			return m, nil
 		}
-		if _, ok := m.clients[project.Tracker]; !ok {
-			m.setStatus(locale.T(locale.KeyTrackerTokenNotSet))
+		if !m.checkConfig("[y]", *project, valTracker) {
 			return m, nil
 		}
 		m.pendingOp = &PendingOp{
@@ -664,6 +697,13 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.checkLabelsCmd(m.statusProjectID, tracker.RequiredLabels)
 
 	case key.Matches(msg, m.keys.Tracker):
+		project := m.findProject(m.statusProjectID)
+		if project == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[p]", *project, valTrackerURL) {
+			return m, nil
+		}
 		return m, m.openIssueURLCmd()
 	}
 
@@ -741,6 +781,11 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	}
 	if !launchableSlotStates[slot.State] {
 		m.setStatus(locale.T(locale.KeyCannotLaunch))
+		return m, nil
+	}
+	if _, err := os.Stat(slot.WorktreePath); err != nil {
+		m.logger.Printf("launch check failed [focus] worktree path missing: %s", slot.WorktreePath)
+		m.showErrorOverlay([]string{locale.T(locale.KeyErrWorktreeMissing)})
 		return m, nil
 	}
 
@@ -889,7 +934,11 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 	var projects []projectInfo
 	for _, p := range m.projects {
 		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
-		if path == "" || seen[path] {
+		if path == "" {
+			m.logger.Printf("session scan: skipping project %q (empty path)", p.ID)
+			continue
+		}
+		if seen[path] {
 			continue
 		}
 		seen[path] = true

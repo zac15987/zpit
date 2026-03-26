@@ -68,4 +68,13 @@ var zhTW = map[Key]string{
 	KeyCannotLaunch:   "此狀態無法啟動",
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
 	KeyLoopSlotHelp:   "Enter: 開啟 Claude  \u2191\u2193: 選擇  Tab/Esc: 返回",
+
+	// Config validation errors
+	KeyErrConfigTitle:       "設定錯誤",
+	KeyErrDismissHint:       "按 Esc 或 Enter 關閉",
+	KeyErrPathEmpty:         "專案路徑未設定",
+	KeyErrRepoEmpty:         "專案 repo 未設定",
+	KeyErrTrackerURLEmpty:   "Tracker URL 未設定",
+	KeyErrWorktreeBaseEmpty: "Worktree base directory 未設定",
+	KeyErrWorktreeMissing:   "Worktree 目錄已不存在",
 }

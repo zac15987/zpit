@@ -69,4 +69,13 @@ const (
 	KeyCannotLaunch   Key = "cannot_launch"
 	KeyNoWorktreePath Key = "no_worktree_path"
 	KeyLoopSlotHelp   Key = "loop_slot_help"
+
+	// Config validation errors (error overlay)
+	KeyErrConfigTitle       Key = "err_config_title"
+	KeyErrDismissHint       Key = "err_dismiss_hint"
+	KeyErrPathEmpty         Key = "err_path_empty"
+	KeyErrRepoEmpty         Key = "err_repo_empty"
+	KeyErrTrackerURLEmpty   Key = "err_tracker_url_empty"
+	KeyErrWorktreeBaseEmpty Key = "err_worktree_base_empty"
+	KeyErrWorktreeMissing   Key = "err_worktree_missing"
 )

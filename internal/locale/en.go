@@ -68,4 +68,13 @@ var en = map[Key]string{
 	KeyCannotLaunch:   "Cannot launch in this state",
 	KeyNoWorktreePath: "Slot has no worktree",
 	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
+
+	// Config validation errors
+	KeyErrConfigTitle:       "Configuration Error",
+	KeyErrDismissHint:       "Press Esc or Enter to dismiss",
+	KeyErrPathEmpty:         "Project path is not configured",
+	KeyErrRepoEmpty:         "Project repo is not configured",
+	KeyErrTrackerURLEmpty:   "Tracker URL is not configured",
+	KeyErrWorktreeBaseEmpty: "Worktree base directory is not configured",
+	KeyErrWorktreeMissing:   "Worktree directory no longer exists",
 }

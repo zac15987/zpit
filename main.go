@@ -57,12 +57,6 @@ func main() {
 
 	locale.SetLanguage(cfg.Language)
 
-	if len(cfg.Projects) == 0 {
-		fmt.Fprintf(os.Stderr, "No projects defined in %s\n", cfgPath)
-		fmt.Fprintf(os.Stderr, "Please add at least one [[projects]] section, then run zpit again.\n")
-		os.Exit(0)
-	}
-
 	// Open daily log file.
 	baseDir, _ := config.BaseDir()
 	logDir := filepath.Join(baseDir, "logs")
