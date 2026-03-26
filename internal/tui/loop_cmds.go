@@ -203,10 +203,12 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	}
 
 	return func() tea.Msg {
+		launchedAt := time.Now().Unix()
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
-			Role: "coder", Result: result, Err: err,
+			Role: "coder", LaunchedAt: launchedAt,
+			Result: result, Err: err,
 		}
 	}
 }
@@ -271,12 +273,35 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		}
 
 		agentName := fmt.Sprintf("reviewer-%s", issueID)
+		launchedAt := time.Now().Unix()
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, "開始 review")
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
-			Role: "reviewer", Result: result, Err: err,
+			Role: "reviewer", LaunchedAt: launchedAt,
+			Result: result, Err: err,
 		}
 	}
+}
+
+// findNewSessionPID retries finding a session started after launchedAfter.
+// Returns 0 if no matching session is found within the retry window.
+func findNewSessionPID(claudeHome, wtPath string, launchedAfter int64) int {
+	for range sessionRetryMax {
+		sessions, _ := watcher.FindActiveSessions(claudeHome, wtPath)
+		var best int
+		var bestStarted int64
+		for _, s := range sessions {
+			if s.StartedAt > launchedAfter && s.StartedAt > bestStarted {
+				bestStarted = s.StartedAt
+				best = s.PID
+			}
+		}
+		if best != 0 {
+			return best
+		}
+		time.Sleep(sessionRetryInterval)
+	}
+	return 0
 }
 
 // loopStartWatcherCmd finds the session PID and monitors until exit.
@@ -290,33 +315,24 @@ func (m Model) loopStartWatcherCmd(projectID, issueID, role string) tea.Cmd {
 		return nil
 	}
 	wtPath := slot.WorktreePath
+	launchedAfter := slot.LaunchedAt
+	logger := m.logger
 
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
+			logger.Printf("loop: watcher failed #%s role=%s (ClaudeHome error: %v)", issueID, role, err)
 			return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
 		}
 
-		// Retry to find session (agent needs time to start)
-		var pid int
-		for attempt := 0; attempt < sessionRetryMax; attempt++ {
-			sessions, err := watcher.FindActiveSessions(claudeHome, wtPath)
-			if err == nil && len(sessions) > 0 {
-				latest := sessions[0]
-				for _, s := range sessions[1:] {
-					if s.StartedAt > latest.StartedAt {
-						latest = s
-					}
-				}
-				pid = latest.PID
-				break
-			}
-			time.Sleep(sessionRetryInterval)
-		}
+		pid := findNewSessionPID(claudeHome, wtPath, launchedAfter)
 
 		if pid == 0 {
+			logger.Printf("loop: watcher failed #%s role=%s (no session found after %d)", issueID, role, launchedAfter)
 			return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
 		}
+
+		logger.Printf("loop: watcher attached #%s role=%s PID=%d", issueID, role, pid)
 
 		// Monitor PID until exit
 		for {

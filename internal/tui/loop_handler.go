@@ -62,6 +62,7 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		if slot := findLoopSlotFromWorktree(msg.ProjectID, issue, existingWorktrees); slot != nil {
 			slot.BaseBranch = effectiveBranch
 			ls.Slots[key] = slot
+			m.logger.Printf("loop: resume #%s from existing worktree (branch=%s)", issue.ID, slot.BranchName)
 			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issue.ID))
 			continue
 		}
@@ -74,6 +75,7 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			State:      loop.SlotCreatingWorktree,
 		}
 		ls.Slots[key] = slot
+		m.logger.Printf("loop: dispatch #%s → creating worktree", issue.ID)
 		cmds = append(cmds, m.loopCreateWorktreeCmd(msg.ProjectID, issue.ID, issue.Title))
 	}
 
@@ -91,6 +93,7 @@ func (m Model) handleLoopWorktreeCreated(msg LoopWorktreeCreatedMsg) (tea.Model,
 	if msg.Err != nil {
 		slot.State = loop.SlotError
 		slot.Error = msg.Err
+		m.logger.Printf("loop: worktree error #%s: %s", msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("Worktree error #%s: %s", msg.IssueID, msg.Err))
 		return m, nil
 	}
@@ -98,6 +101,7 @@ func (m Model) handleLoopWorktreeCreated(msg LoopWorktreeCreatedMsg) (tea.Model,
 	slot.WorktreePath = msg.WorktreePath
 	slot.BranchName = msg.BranchName
 	slot.State = loop.SlotWritingAgent
+	m.logger.Printf("loop: worktree created #%s path=%s branch=%s", msg.IssueID, msg.WorktreePath, msg.BranchName)
 	return m, m.loopWriteAgentCmd(msg.ProjectID, msg.IssueID)
 }
 
@@ -110,11 +114,13 @@ func (m Model) handleLoopAgentWritten(msg LoopAgentWrittenMsg) (tea.Model, tea.C
 	if msg.Err != nil {
 		slot.State = loop.SlotError
 		slot.Error = msg.Err
+		m.logger.Printf("loop: agent write error #%s: %s", msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("Agent write error #%s: %s", msg.IssueID, msg.Err))
 		return m, nil
 	}
 
 	slot.State = loop.SlotLaunchingCoder
+	m.logger.Printf("loop: agent written #%s → launching coder", msg.IssueID)
 	return m, m.loopLaunchCoderCmd(msg.ProjectID, msg.IssueID)
 }
 
@@ -127,17 +133,26 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 	if msg.Err != nil {
 		slot.State = loop.SlotError
 		slot.Error = msg.Err
+		m.logger.Printf("loop: %s launch error #%s: %s", msg.Role, msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("Launch error #%s (%s): %s", msg.IssueID, msg.Role, msg.Err))
 		return m, nil
 	}
 
+	slot.LaunchedAt = msg.LaunchedAt
+
 	if msg.Role == "coder" {
 		slot.State = loop.SlotCoding
-		// Poll for PR creation as completion signal (terminal stays open)
+		m.logger.Printf("loop: coder launched #%s (round=%d)", msg.IssueID, slot.ReviewRound)
+		if slot.ReviewRound > 0 {
+			// Revision round: PR already exists, use PID monitoring instead of PR poll
+			return m, m.loopStartWatcherCmd(msg.ProjectID, msg.IssueID, "coder")
+		}
+		// First round: poll for PR creation as completion signal
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
 
 	slot.State = loop.SlotReviewing
+	m.logger.Printf("loop: reviewer launched #%s (round=%d)", msg.IssueID, slot.ReviewRound)
 	// Reviewer uses PID monitoring (terminal close = done)
 	return m, m.loopStartWatcherCmd(msg.ProjectID, msg.IssueID, msg.Role)
 }
@@ -146,6 +161,14 @@ func (m Model) handleLoopAgentExited(msg LoopAgentExitedMsg) (tea.Model, tea.Cmd
 	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
 	if slot == nil {
 		return m, nil
+	}
+
+	m.logger.Printf("loop: %s exited #%s", msg.Role, msg.IssueID)
+
+	if msg.Role == "coder" {
+		// Revision coder exited → launch reviewer
+		slot.State = loop.SlotLaunchingReviewer
+		return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
 	}
 
 	// Reviewer PID died → check labels to determine verdict.
@@ -162,8 +185,11 @@ func (m Model) handleLoopReviewResult(msg LoopReviewResultMsg) (tea.Model, tea.C
 	if msg.Err != nil {
 		slot.State = loop.SlotError
 		slot.Error = fmt.Errorf("check review result: %w", msg.Err)
+		m.logger.Printf("loop: review check error #%s: %s", msg.IssueID, msg.Err)
 		return m, nil
 	}
+
+	m.logger.Printf("loop: review result #%s verdict=%s round=%d", msg.IssueID, msg.Verdict, slot.ReviewRound)
 
 	switch msg.Verdict {
 	case loop.VerdictApproved:
@@ -174,6 +200,7 @@ func (m Model) handleLoopReviewResult(msg LoopReviewResultMsg) (tea.Model, tea.C
 		maxRounds := m.cfg.Worktree.MaxReviewRounds
 		if slot.ReviewRound >= maxRounds {
 			slot.State = loop.SlotNeedsHuman
+			m.logger.Printf("loop: #%s review rounds exhausted (%d), needs human", msg.IssueID, maxRounds)
 			m.setStatus(fmt.Sprintf("Issue #%s: %d review rounds exhausted, needs human", msg.IssueID, maxRounds))
 			projectName := m.projectName(msg.ProjectID)
 			m.notifier.NotifyWaiting(msg.ProjectID, projectName,
@@ -182,6 +209,7 @@ func (m Model) handleLoopReviewResult(msg LoopReviewResultMsg) (tea.Model, tea.C
 		}
 		slot.ReviewRound++
 		slot.State = loop.SlotWritingAgent
+		m.logger.Printf("loop: #%s needs changes, starting revision round %d/%d", msg.IssueID, slot.ReviewRound, maxRounds)
 		m.setStatus(fmt.Sprintf("Issue #%s needs changes (round %d/%d), re-launching coder",
 			msg.IssueID, slot.ReviewRound, maxRounds))
 		return m, m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID)
@@ -189,6 +217,7 @@ func (m Model) handleLoopReviewResult(msg LoopReviewResultMsg) (tea.Model, tea.C
 	default: // VerdictUnknown
 		slot.State = loop.SlotError
 		slot.Error = fmt.Errorf("reviewer exited without setting verdict label")
+		m.logger.Printf("loop: #%s reviewer exited without verdict label", msg.IssueID)
 		return m, nil
 	}
 }
@@ -213,6 +242,7 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 	if slot.State == loop.SlotCoding {
 		if msg.PR != nil {
 			slot.State = loop.SlotLaunchingReviewer
+			m.logger.Printf("loop: PR found #%s → launching reviewer", msg.IssueID)
 			return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
 		}
 		// No PR yet, keep polling
@@ -226,11 +256,13 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 
 	if msg.PR.State == "merged" {
 		slot.State = loop.SlotCleaningUp
+		m.logger.Printf("loop: PR merged #%s → cleaning up", msg.IssueID)
 		return m, m.loopCleanupCmd(msg.ProjectID, msg.IssueID)
 	}
 
 	slot.State = loop.SlotError
 	slot.Error = fmt.Errorf("PR closed without merge")
+	m.logger.Printf("loop: PR closed without merge #%s", msg.IssueID)
 	return m, nil
 }
 
@@ -241,8 +273,10 @@ func (m Model) handleLoopCleanup(msg LoopCleanupMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Err != nil {
+		m.logger.Printf("loop: cleanup error #%s: %s", msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("Cleanup error #%s: %s", msg.IssueID, msg.Err))
 	} else {
+		m.logger.Printf("loop: cleanup done #%s", msg.IssueID)
 		m.setStatus(fmt.Sprintf("Issue #%s done, worktree cleaned", msg.IssueID))
 	}
 
@@ -315,6 +349,7 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 			WorktreePath: wtPath,
 			State:        loop.SlotWaitingPRMerge,
 		}
+		m.logger.Printf("loop: resume open PR #%s (branch=%s, state=waitingPRMerge)", issueID, pr.Branch)
 		cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
 	}
 	return m, tea.Batch(cmds...)

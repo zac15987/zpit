@@ -233,4 +233,5 @@ Top-level `language` field (default `"en"`) controls TUI display language and ag
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
 - Agent behavioral rules: `docs/agent-guidelines.md` — deployed to `.claude/docs/`, all agents read on startup
 - Code quality baseline: `docs/code-construction-principles.md` — all agents reference during implementation and review
-- Logging: Use `m.logger` to log all state transitions and lifecycle events (session attach/found/ready/lost/ended/removed). Logs must include sufficient identifiers (key, PID, state) for post-hoc debugging. Do not log normal ticks or renders — only log state changes.
+- Logging: Use `m.logger` to log all state transitions and lifecycle events (session attach/found/ready/lost/ended/removed, loop dispatch/launch/exit/verdict/cleanup). Logs must include sufficient identifiers (key, PID, state, issue ID, role, round) for post-hoc debugging. Do not log normal ticks or renders — only log state changes.
+- **LOG 是必要的**：所有新功能、狀態機、lifecycle 事件都必須包含 `m.logger` 呼叫。僅用 `setStatus` 不夠 — `setStatus` 是給 TUI 顯示的，`m.logger` 才會寫入 log 檔供事後除錯。在 goroutine closure 中先捕捉 `logger := m.logger` 再使用。

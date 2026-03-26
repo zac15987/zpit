@@ -77,6 +77,7 @@ type Slot struct {
 	ReviewRound  int // 0-based; incremented on each NEEDS CHANGES retry
 	Error        error
 	SessionPID   int
+	LaunchedAt   int64 // unix timestamp captured just before agent launch
 }
 
 // LoopState tracks per-project loop status.

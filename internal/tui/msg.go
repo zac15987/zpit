@@ -98,11 +98,12 @@ type LoopAgentWrittenMsg struct {
 
 // LoopAgentLaunchedMsg indicates a coding/reviewer agent was launched.
 type LoopAgentLaunchedMsg struct {
-	ProjectID string
-	IssueID   string
-	Role      string // "coder" or "reviewer"
-	Result    *terminal.LaunchResult
-	Err       error
+	ProjectID  string
+	IssueID    string
+	Role       string // "coder" or "reviewer"
+	LaunchedAt int64  // unix timestamp captured just before terminal launch
+	Result     *terminal.LaunchResult
+	Err        error
 }
 
 // LoopAgentExitedMsg indicates an agent's PID is no longer alive.
