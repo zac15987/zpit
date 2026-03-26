@@ -60,8 +60,12 @@ func BuildRevisionPrompt(p RevisionParams) string {
 6. After completion, self-check against each ACCEPTANCE_CRITERIA item
 7. Use git add + git commit to commit changes
 8. Commit message format: [%s] fix: {brief description of fix}
-9. Before starting fixes, update issue label: remove "needs-changes", add "wip"
-10. After fixes are complete, update issue label: remove "wip", add "review"
+9. Write a Revision Summary to both the PR comment AND the issue comment, covering:
+   - Which reviewer issues were addressed (reference by item number or quote)
+   - How each was fixed (brief: file changed, what changed)
+   - Any reviewer issues intentionally NOT addressed, with reason
+10. Before starting fixes, update issue label: remove "needs-changes", add "wip"
+11. After fixes are complete, update issue label: remove "wip", add "review"
 
 Note: This PR's target branch is `+"`%s`"+`. If you find the PR targets the wrong branch,
 stop immediately and notify the user; do not continue working.
