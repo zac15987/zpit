@@ -59,15 +59,17 @@ func BuildCodingPrompt(p CodingParams) string {
    Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read all files listed in SCOPE to understand the existing code structure
 3. If references list any reference files, read those too
-4. Implement according to the approach described in APPROACH
-5. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
-6. After completion, self-check against each ACCEPTANCE_CRITERIA item
-7. Use git add + git commit to commit changes
-8. Commit message format: [%s] {short description}
-9. Before starting implementation, update issue label: remove "todo", add "wip"
-10. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
+4. If implementation depends on external libraries or APIs not fully documented in REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding — do not code against training-data assumptions
+5. Implement according to the approach described in APPROACH
+6. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
+7. After completion, self-check against each ACCEPTANCE_CRITERIA item
+8. Before committing, re-read each modified file to verify your changes are consistent and no unintended edits remain
+9. Use git add + git commit to commit changes
+10. Commit message format: [%s] {short description}
+11. Before starting implementation, update issue label: remove "todo", add "wip"
+12. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
     Targeting any other branch is strictly forbidden. If unsure, stop and confirm before opening the PR.
-11. After opening the PR, update issue label: remove "wip", add "review"
+13. After opening the PR, update issue label: remove "wip", add "review"
 
 ## When to Stop and Ask the User
 

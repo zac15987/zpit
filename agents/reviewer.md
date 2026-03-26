@@ -17,12 +17,13 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
 2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary, any prior review history)
 3. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
 4. Use `git diff dev...HEAD` to view all changes
-5. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met (must itemize what is missing)
-6. Check whether any changed files are **outside SCOPE**
-7. Check for **CONSTRAINTS** violations
-8. Check whether logging follows CLAUDE.md conventions
-9. Read `.claude/docs/code-construction-principles.md` and spot-check code quality
-10. Produce the Review Report
+5. Re-read ACCEPTANCE_CRITERIA to confirm your understanding before marking verdicts — do not rely on your initial reading
+6. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met (must itemize what is missing)
+7. Check whether any changed files are **outside SCOPE**
+8. Check for **CONSTRAINTS** violations
+9. Check whether logging follows CLAUDE.md conventions
+10. Read `.claude/docs/code-construction-principles.md` and spot-check code quality
+11. Produce the Review Report
 
 ## Output Format
 

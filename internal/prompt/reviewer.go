@@ -79,16 +79,17 @@ func buildFirstReviewProcess(b *strings.Builder, p ReviewerParams) {
    Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
 2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary)
 3. Use git diff %s...HEAD to view all changes
-4. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
-5. Check whether any changes touch files outside the SCOPE
-6. Check whether the PR's target branch is `+"`%s`"+`; if not, mark as FAIL and note it in the Review Report
-7. Check whether any CONSTRAINTS are violated
-8. Check whether logging complies with the CLAUDE.md policy
-9. Read `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`, and spot-check code quality
-10. Produce the Review Report (see format below)
-11. Write the Review Report to both the PR comment and the issue comment
-12. If PASS, update issue label: remove "review", add "ai-review"
-13. If NEEDS CHANGES, update issue label: remove "review", add "needs-changes"
+4. Re-read ACCEPTANCE_CRITERIA to confirm your understanding before marking verdicts — do not rely on your initial reading
+5. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
+6. Check whether any changes touch files outside the SCOPE
+7. Check whether the PR's target branch is `+"`%s`"+`; if not, mark as FAIL and note it in the Review Report
+8. Check whether any CONSTRAINTS are violated
+9. Check whether logging complies with the CLAUDE.md policy
+10. Read `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`, and spot-check code quality
+11. Produce the Review Report (see format below)
+12. Write the Review Report to both the PR comment and the issue comment
+13. If PASS, update issue label: remove "review", add "ai-review"
+14. If NEEDS CHANGES, update issue label: remove "review", add "needs-changes"
 `, p.BaseBranch, p.BaseBranch)
 
 	b.WriteString(reviewerTrackerNotes)
@@ -114,13 +115,14 @@ You must focus on the delta — do NOT re-review the entire implementation from 
    (typically the latest commits with [%s] fix: prefix, added after the previous review)
 5. Use git show or git diff on only the revision commits to view the delta
 6. For each previous MUST FIX item, verify whether it was addressed — mark as ✅ Fixed / ❌ Still open
-7. Spot-check the full diff (git diff %s...HEAD) to verify no regressions in existing ACs
+7. Re-read ACCEPTANCE_CRITERIA before the regression check — confirm your understanding of what each AC requires
+8. Spot-check the full diff (git diff %s...HEAD) to verify no regressions in existing ACs
    You do NOT need to re-verify every AC in detail — only check for regressions introduced by the revision
-8. Check scope + constraints on the new changes only
-9. Produce the Revision Review Report (see format below)
-10. Write the Review Report to both the PR comment and the issue comment
-11. If all previous MUST FIX items are fixed and no regressions: update issue label: remove "review", add "ai-review"
-12. If any MUST FIX item remains unfixed or regressions found: update issue label: remove "review", add "needs-changes"
+9. Check scope + constraints on the new changes only
+10. Produce the Revision Review Report (see format below)
+11. Write the Review Report to both the PR comment and the issue comment
+12. If all previous MUST FIX items are fixed and no regressions: update issue label: remove "review", add "ai-review"
+13. If any MUST FIX item remains unfixed or regressions found: update issue label: remove "review", add "needs-changes"
 
 ## Revision Review Report Format
 
