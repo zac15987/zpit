@@ -239,6 +239,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		logPolicy = p.LogPolicy
 	}
 	baseBranch := slot.BaseBranch
+	reviewRound := slot.ReviewRound
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
 
 	return func() tea.Msg {
@@ -256,11 +257,12 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 			return LoopAgentLaunchedMsg{ProjectID: projectID, IssueID: issueID, Role: "reviewer", Err: err}
 		}
 		promptText := prompt.BuildReviewerPrompt(prompt.ReviewerParams{
-			IssueID:    issueID,
-			IssueTitle: issue.Title,
-			Spec:       spec,
-			LogPolicy:  logPolicy,
-			BaseBranch: baseBranch,
+			IssueID:     issueID,
+			IssueTitle:  issue.Title,
+			Spec:        spec,
+			LogPolicy:   logPolicy,
+			BaseBranch:  baseBranch,
+			ReviewRound: reviewRound,
 		})
 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
@@ -274,7 +276,11 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 
 		agentName := fmt.Sprintf("reviewer-%s", issueID)
 		launchedAt := time.Now().Unix()
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, "開始 review")
+		initMsg := "開始 review"
+		if reviewRound > 0 {
+			initMsg = "開始 revision review，專注檢查上次 MUST FIX 項目"
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "reviewer", LaunchedAt: launchedAt,

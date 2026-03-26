@@ -14,14 +14,15 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
 1. Read CLAUDE.md to understand this project's conventions
    Read `.claude/docs/tracker.md` to understand this project's tracker setup
    Read `.claude/docs/agent-guidelines.md` to understand the behavioral rules for AI agents
-2. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
-3. Use `git diff dev...HEAD` to view all changes
-4. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met
-5. Check whether any changed files are **outside SCOPE**
-6. Check for **CONSTRAINTS** violations
-7. Check whether logging follows CLAUDE.md conventions
-8. Read `.claude/docs/code-construction-principles.md` and spot-check code quality
-9. Produce the Review Report
+2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary, any prior review history)
+3. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
+4. Use `git diff dev...HEAD` to view all changes
+5. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met
+6. Check whether any changed files are **outside SCOPE**
+7. Check for **CONSTRAINTS** violations
+8. Check whether logging follows CLAUDE.md conventions
+9. Read `.claude/docs/code-construction-principles.md` and spot-check code quality
+10. Produce the Review Report
 
 ## Output Format
 
@@ -86,3 +87,11 @@ EOF
 curl ... -d @/tmp/review_report.md
 rm /tmp/review_report.md
 ```
+
+## Revision Review
+
+If PR comments contain a previous review report (i.e., this is a revision review after NEEDS CHANGES):
+- Focus on whether the previous MUST FIX (🔴) items were addressed
+- Use `git log` to identify the revision commits (added after the previous review), and review only those changes
+- Spot-check for regressions in existing ACs, but do NOT re-review the entire implementation from scratch
+- Use the Revision Review Report format: list each previous MUST FIX item and mark as ✅ Fixed / ❌ Still open

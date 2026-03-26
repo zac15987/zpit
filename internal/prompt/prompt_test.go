@@ -122,11 +122,12 @@ func TestBuildCodingPrompt_BaseBranch(t *testing.T) {
 
 func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 	p := ReviewerParams{
-		IssueID:    "ASE-47",
-		IssueTitle: "EtherCAT reconnect backoff",
-		Spec:       testSpec(),
-		LogPolicy:  "strict",
-		BaseBranch: "dev",
+		IssueID:     "ASE-47",
+		IssueTitle:  "EtherCAT reconnect backoff",
+		Spec:        testSpec(),
+		LogPolicy:   "strict",
+		BaseBranch:  "dev",
+		ReviewRound: 0,
 	}
 
 	result := BuildReviewerPrompt(p)
@@ -144,12 +145,73 @@ func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 		"target branch",                                  // branch verification step
 		"code-construction-principles.md",                // quality check
 		"All Service methods must have entry/exit logs",  // log policy
+		"issue comments",                                 // read comments step
+		"PR comments",                                    // read comments step
 	}
 
 	for _, c := range checks {
 		if !strings.Contains(result, c) {
 			t.Errorf("reviewer prompt missing %q", c)
 		}
+	}
+}
+
+func TestBuildReviewerPrompt_RevisionReview(t *testing.T) {
+	p := ReviewerParams{
+		IssueID:     "ASE-47",
+		IssueTitle:  "EtherCAT reconnect backoff",
+		Spec:        testSpec(),
+		LogPolicy:   "strict",
+		BaseBranch:  "dev",
+		ReviewRound: 1,
+	}
+
+	result := BuildReviewerPrompt(p)
+
+	mustContain := []string{
+		"REVISION REVIEW",                                // revision indicator
+		"MUST FIX",                                       // focus on previous must fix items
+		"git log --oneline dev...HEAD",                   // identify revision commits
+		"Original Requirements",                          // still has AC sections for reference
+		"AC-1:",                                          // AC items present
+		"PR comments",                                    // reads PR comments for previous review
+		"round 1",                                        // round number
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("revision reviewer prompt missing %q", c)
+		}
+	}
+
+	// Revision review should NOT use git diff base...HEAD as the primary diff step
+	// (it uses git log + git show on revision commits instead)
+	if strings.Contains(result, "Use git diff dev...HEAD to view all changes") {
+		t.Error("revision reviewer prompt should not use full diff as primary review step")
+	}
+}
+
+func TestBuildReviewerPrompt_RevisionRound2(t *testing.T) {
+	result := BuildReviewerPrompt(ReviewerParams{
+		IssueID:     "ASE-47",
+		IssueTitle:  "EtherCAT reconnect backoff",
+		Spec:        testSpec(),
+		LogPolicy:   "strict",
+		BaseBranch:  "dev",
+		ReviewRound: 2,
+	})
+
+	checks := []string{
+		"REVISION REVIEW",
+		"round 2",
+		"MUST FIX",
+	}
+	for _, c := range checks {
+		if !strings.Contains(result, c) {
+			t.Errorf("revision round 2 prompt missing %q", c)
+		}
+	}
+	if strings.Contains(result, "round 1") {
+		t.Error("revision round 2 prompt should not contain 'round 1'")
 	}
 }
 
