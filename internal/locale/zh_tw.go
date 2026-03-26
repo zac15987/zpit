@@ -70,6 +70,12 @@ var zhTW = map[Key]string{
 	KeyLoopSlotHelp:   "Enter: 開啟 Claude  \u2191\u2193: 選擇  Tab/Esc: 返回",
 
 	// Config validation errors
+	// Agent init messages
+	KeyInitCoding:         "開始實作",
+	KeyInitRevisionCoding: "讀取 PR review comment，修正問題",
+	KeyInitReview:         "開始 review",
+	KeyInitRevisionReview: "開始 revision review，專注檢查上次 MUST FIX 項目",
+
 	KeyErrConfigTitle:       "設定錯誤",
 	KeyErrDismissHint:       "按 Esc 或 Enter 關閉",
 	KeyErrPathEmpty:         "專案路徑未設定",

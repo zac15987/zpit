@@ -70,6 +70,12 @@ var en = map[Key]string{
 	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
 
 	// Config validation errors
+	// Agent init messages
+	KeyInitCoding:         "Start implementation",
+	KeyInitRevisionCoding: "Read PR review comments and fix the issues",
+	KeyInitReview:         "Start review",
+	KeyInitRevisionReview: "Start revision review, focus on previous MUST FIX items",
+
 	KeyErrConfigTitle:       "Configuration Error",
 	KeyErrDismissHint:       "Press Esc or Enter to dismiss",
 	KeyErrPathEmpty:         "Project path is not configured",

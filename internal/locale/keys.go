@@ -70,6 +70,12 @@ const (
 	KeyNoWorktreePath Key = "no_worktree_path"
 	KeyLoopSlotHelp   Key = "loop_slot_help"
 
+	// Agent init messages (loop_cmds)
+	KeyInitCoding         Key = "init_coding"
+	KeyInitRevisionCoding Key = "init_revision_coding"
+	KeyInitReview         Key = "init_review"
+	KeyInitRevisionReview Key = "init_revision_review"
+
 	// Config validation errors (error overlay)
 	KeyErrConfigTitle       Key = "err_config_title"
 	KeyErrDismissHint       Key = "err_dismiss_hint"

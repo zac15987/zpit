@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/prompt"
@@ -197,9 +198,9 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
 
-	initMsg := "開始實作"
+	initMsg := locale.T(locale.KeyInitCoding)
 	if slot.ReviewRound > 0 {
-		initMsg = "讀取 PR review comment，修正問題"
+		initMsg = locale.T(locale.KeyInitRevisionCoding)
 	}
 
 	return func() tea.Msg {
@@ -276,9 +277,9 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 
 		agentName := fmt.Sprintf("reviewer-%s", issueID)
 		launchedAt := time.Now().Unix()
-		initMsg := "開始 review"
+		initMsg := locale.T(locale.KeyInitReview)
 		if reviewRound > 0 {
-			initMsg = "開始 revision review，專注檢查上次 MUST FIX 項目"
+			initMsg = locale.T(locale.KeyInitRevisionReview)
 		}
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
 		return LoopAgentLaunchedMsg{
