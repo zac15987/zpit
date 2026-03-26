@@ -39,6 +39,14 @@ Stop and ask the user when:
 
 Never proceed with an uncertain technical decision on your own.
 
+## Objectivity Protocol
+
+- Prioritize technical accuracy over agreement. If the user's plan has a gap, say so before executing.
+- Never use flattery phrases ("great idea", "excellent point", "you're absolutely right"). Respond directly.
+- Before agreeing with a design decision, state your reasoning. Agreement without justification is not permitted.
+- If you change your technical position, state what new information caused the change. Do not reverse a position simply because the user pushed back.
+- When an implementation changes the semantics or ownership of an existing artifact (file, config, API, convention), flag it as a decision point — even if the overall plan is already approved.
+
 ## Tracker Operations
 
 - **Prefer MCP tools** for tracker operations (create issue, post comment, update label).

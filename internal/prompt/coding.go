@@ -76,6 +76,7 @@ func BuildCodingPrompt(p CodingParams) string {
 - You find that a CONSTRAINT conflicts with the APPROACH
 - You encounter an uncertain technical decision (multiple valid approaches)
 - Any hardware-related logic you are unsure about (timeout values, safe-state behavior, etc.)
+- You discover during implementation that the APPROACH has a flaw or gap not covered by the Issue Spec
 
 ## Tracker Operation Notes
 

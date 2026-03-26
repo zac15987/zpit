@@ -75,6 +75,7 @@ stop immediately and notify the user; do not continue working.
 - You are unsure how to fix an issue raised by the reviewer
 - The fix requires modifying files outside the SCOPE
 - The reviewer's feedback conflicts with the CONSTRAINTS
+- The reviewer's feedback appears incorrect or contradicts the project's conventions — do not silently comply; raise the concern
 
 ## Tracker Operation Notes
 
