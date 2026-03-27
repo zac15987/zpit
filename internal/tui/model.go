@@ -794,6 +794,12 @@ func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.launchFocusClaudeCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Open):
+		return m.openSlotFolderCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Tracker):
+		return m.openSlotIssueCmd(keys[m.loopCursor])
 	}
 
 	return m, nil
@@ -843,6 +849,63 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 			Err:         err,
 		}
 	}
+}
+
+// openSlotFolderCmd opens the selected slot's worktree folder in the file manager.
+func (m Model) openSlotFolderCmd(slotKey string) (tea.Model, tea.Cmd) {
+	ls, ok := m.loops[m.focusProjectID]
+	if !ok {
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok || slot.WorktreePath == "" {
+		m.setStatus(locale.T(locale.KeyNoWorktreePath))
+		return m, nil
+	}
+	if _, err := os.Stat(slot.WorktreePath); err != nil {
+		m.showErrorOverlay([]string{locale.T(locale.KeyErrWorktreeMissing)})
+		return m, nil
+	}
+	path := slot.WorktreePath
+	return m, func() tea.Msg {
+		var cmd *exec.Cmd
+		if platform.IsWindows() {
+			cmd = exec.Command("explorer", strings.ReplaceAll(path, "/", `\`))
+		} else {
+			cmd = exec.Command("xdg-open", path)
+		}
+		if err := cmd.Start(); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Failed to open: %s", err)}
+		}
+		return StatusMsg{Text: fmt.Sprintf("Opened %s", path)}
+	}
+}
+
+// openSlotIssueCmd opens the selected slot's issue page in the browser.
+func (m Model) openSlotIssueCmd(slotKey string) (tea.Model, tea.Cmd) {
+	ls, ok := m.loops[m.focusProjectID]
+	if !ok {
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok {
+		return m, nil
+	}
+	project := m.findProject(m.focusProjectID)
+	if project == nil {
+		return m, nil
+	}
+	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		return m, nil
+	}
+	url := tracker.BuildIssueURL(provider, project.Repo, slot.IssueID)
+	if url == "" {
+		m.setStatus(fmt.Sprintf("Cannot build URL for tracker type: %s", provider.Type))
+		return m, nil
+	}
+	return m, openInBrowser(url)
 }
 
 func (m Model) sortedSlotKeys(projectID string) []string {
