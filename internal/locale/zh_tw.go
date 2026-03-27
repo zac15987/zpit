@@ -25,6 +25,7 @@ var zhTW = map[Key]string{
 	// Agent status text
 	KeySessionEnded:    "Session 結束",
 	KeyWaitingForInput: "等待輸入",
+	KeyPermissionWait:  "等待授權",
 	KeyWorking:         "執行中",
 	KeyLaunched:        "已啟動",
 

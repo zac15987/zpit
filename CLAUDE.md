@@ -27,15 +27,16 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Environment detection (Windows Terminal / WSL / Linux tmux)
 - Terminal Launcher: `Enter` opens Claude Code in new WT tab or tmux window
 - `[o]` opens project folder in file manager
-- Session Log Watcher: fsnotify monitors JSONL logs, detects agent state (Working/Waiting/Ended)
-- Active Terminals area: 🟢 Working / 🟡 Waiting for input / ⚫ Session ended (auto-removes after 10s)
+- Session Log Watcher: fsnotify monitors JSONL logs, detects agent state (Working/Waiting/Ended/Permission)
+- Active Terminals area: 🟢 Working / 🟡 Waiting for input / 🟠 Waiting for permission / ⚫ Session ended (auto-removes after 10s)
 - Agent waiting detection: extracts question text from session log, shows preview in TUI
-- Windows Toast notification when agent waits for input (via PowerShell)
+- Permission prompt detection: Notification hook writes signal file to `~/.zpit/signals/`, TUI polls every 2s
+- Windows Toast notification when agent waits for input or permission (via PowerShell)
 - Sound alert (SystemSounds.Asterisk)
 - Notification cooldown (re_remind_minutes, per-project)
 - Session liveness check: PID monitoring every 5s, detects closed sessions + `/resume` session switches
 - Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
-- 3 PreToolUse hook scripts + 1 env wrapper with 32 tests
+- 3 PreToolUse hook scripts + 1 Notification hook + 1 env wrapper with 32 tests
 - Hook auto-deploy: hook scripts embedded via go:embed, deployed to `.claude/hooks/` + `settings.json` merged on every agent launch (`[c]`/`[r]`/`[l]`)
 - Hook deployment script (`scripts/setup-hooks.sh`, manual fallback)
 - 14 client tests + 12 issuespec tests + 6 url tests + 25 watcher tests + 6 notify tests + 7 config tests
@@ -156,6 +157,7 @@ hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands
 ├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
+├── notify-permission.sh         # Notification hook: write permission signal for TUI
 ├── zpit-env.cmd                 # Windows wrapper: sets ZPIT_AGENT=1 for agent launches
 └── hooks_test.go                # Go tests shelling out to each hook (32 tests)
 scripts/setup-hooks.sh           # Manual fallback: deploy hooks + docs + agents to a project's .claude/
@@ -182,9 +184,10 @@ The TUI monitors Claude Code sessions via their JSONL log files:
 2. **Session discovery**: scans `~/.claude/sessions/{pid}.json` for matching project + alive PID
 3. **Two-phase startup**: finds session PID immediately (enables liveness check), then waits for JSONL file creation (happens on first user input)
 4. **State detection**: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
-5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
-6. **Liveness check**: every 5s verifies PID is alive; ended sessions auto-remove after 3s display
-7. **`/resume` detection**: liveness check re-reads `{pid}.json` each cycle; if `sessionId` changed, stops old watcher and restarts for new session. `waitForLogCmd` also re-checks during JSONL wait phase.
+5. **Permission detection**: Notification hook (`notify-permission.sh`) writes signal file to `~/.zpit/signals/permission-{sessionID}.json` when Claude Code needs tool permission approval. TUI polls signal dir every 2s, maps sessionID to ActiveTerminal, sets StatePermission. Signal file is cleaned up when JSONL shows new activity or session ends.
+6. **Notifications**: on state transition to waiting or permission → Windows Toast + sound (respects config + cooldown)
+7. **Liveness check**: every 5s verifies PID is alive; ended sessions auto-remove after 3s display
+8. **`/resume` detection**: liveness check re-reads `{pid}.json` each cycle; if `sessionId` changed, stops old watcher and restarts for new session. `waitForLogCmd` also re-checks during JSONL wait phase.
 
 ### TrackerClient (M3)
 
@@ -209,6 +212,7 @@ Zpit (Go) → TrackerClient interface
    - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
    - `git-guard.sh` — push whitelist (only `feat/*` branches allowed), blocks merge, rebase, branch delete
+   - `notify-permission.sh` — Notification hook: writes signal file to `~/.zpit/signals/` when permission prompt appears (not a safety hook; enables TUI permission detection)
 4. **Git worktree isolation** (physical)
 5. **Human PR review** (final gate)
 
@@ -216,7 +220,7 @@ Hook scripts are embedded in the binary via `go:embed` and auto-deployed to `.cl
 
 Hook strictness is per-project via `hook_mode` (default `"strict"`): `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
 
-**ZPIT_AGENT environment variable**: All hook scripts check for `ZPIT_AGENT=1` — if absent, they `exit 0` (allow everything). This ensures hooks only enforce restrictions in Zpit-launched agent sessions, not in plain Claude Code sessions. On Windows (wt.exe), env var is injected via `.claude/hooks/zpit-env.cmd` wrapper (wt.exe doesn't inherit parent env). On Unix (tmux), `ZPIT_AGENT=1` is inline-prefixed to the command string. Detection is automatic via `--agent` flag in launch args.
+**ZPIT_AGENT environment variable**: PreToolUse hook scripts check for `ZPIT_AGENT=1` — if absent, they `exit 0` (allow everything). This ensures hooks only enforce restrictions in Zpit-launched agent sessions, not in plain Claude Code sessions. On Windows (wt.exe), env var is injected via `.claude/hooks/zpit-env.cmd` wrapper (wt.exe doesn't inherit parent env). On Unix (tmux), `ZPIT_AGENT=1` is inline-prefixed to the command string. Detection is automatic via `--agent` flag in launch args.
 
 ### Agent Anti-Sycophancy & Objectivity Rules
 

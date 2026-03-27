@@ -87,9 +87,10 @@ func TestValidateHookMode_Valid(t *testing.T) {
 // --- DeployHooksToProject / DeployHooksToWorktree tests ---
 
 var testScripts = HookScripts{
-	PathGuard:    []byte("#!/bin/bash\n# path-guard"),
-	BashFirewall: []byte("#!/bin/bash\n# bash-firewall"),
-	GitGuard:     []byte("#!/bin/bash\n# git-guard"),
+	PathGuard:        []byte("#!/bin/bash\n# path-guard"),
+	BashFirewall:     []byte("#!/bin/bash\n# bash-firewall"),
+	GitGuard:         []byte("#!/bin/bash\n# git-guard"),
+	NotifyPermission: []byte("#!/bin/bash\n# notify-permission"),
 }
 
 func TestDeployHooksToProject_ScriptsWritten(t *testing.T) {
@@ -216,6 +217,40 @@ func TestDeployHooksToWorktree_UnknownMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := DeployHooksToWorktree(dir, "banana", testScripts); err == nil {
 		t.Error("expected error for unknown hook_mode")
+	}
+}
+
+func TestDeployHooksToProject_NotifyPermissionScriptDeployed(t *testing.T) {
+	dir := t.TempDir()
+	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+		t.Fatalf("DeployHooksToProject: %v", err)
+	}
+	p := filepath.Join(dir, ".claude", "hooks", "notify-permission.sh")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("notify-permission.sh not found: %v", err)
+	}
+	if string(data) != string(testScripts.NotifyPermission) {
+		t.Error("notify-permission.sh content mismatch")
+	}
+}
+
+func TestDeployHooksToProject_NotificationHookInSettings(t *testing.T) {
+	for _, mode := range []string{"strict", "standard", "relaxed"} {
+		dir := t.TempDir()
+		if err := DeployHooksToProject(dir, mode, testScripts); err != nil {
+			t.Fatalf("DeployHooksToProject(%s): %v", mode, err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+		if err != nil {
+			t.Fatalf("read settings.json: %v", err)
+		}
+		if !containsHook(data, "notify-permission.sh") {
+			t.Errorf("%s mode: settings.json should include notify-permission.sh in Notification hook", mode)
+		}
+		if !strings.Contains(string(data), "Notification") {
+			t.Errorf("%s mode: settings.json should include Notification hook section", mode)
+		}
 	}
 }
 

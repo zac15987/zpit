@@ -40,6 +40,9 @@ var gitGuardSH []byte
 //go:embed hooks/zpit-env.cmd
 var zpitEnvCMD []byte
 
+//go:embed hooks/notify-permission.sh
+var notifyPermissionSH []byte
+
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
 	if err != nil {
@@ -87,10 +90,11 @@ func main() {
 	cleanOldLogs(logDir, 30)
 
 	hookScripts := worktree.HookScripts{
-		PathGuard:    pathGuardSH,
-		BashFirewall: bashFirewallSH,
-		GitGuard:     gitGuardSH,
-		EnvWrapper:   zpitEnvCMD,
+		PathGuard:        pathGuardSH,
+		BashFirewall:     bashFirewallSH,
+		GitGuard:         gitGuardSH,
+		EnvWrapper:       zpitEnvCMD,
+		NotifyPermission: notifyPermissionSH,
 	}
 
 	p := tea.NewProgram(

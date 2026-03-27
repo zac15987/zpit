@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "command": ".claude/hooks/notify-permission.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "hooks": [

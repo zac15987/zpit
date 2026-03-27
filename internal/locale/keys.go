@@ -26,6 +26,7 @@ const (
 	// Agent status text (view_projects)
 	KeySessionEnded    Key = "session_ended"
 	KeyWaitingForInput Key = "waiting_for_input"
+	KeyPermissionWait  Key = "permission_wait"
 	KeyWorking         Key = "working"
 	KeyLaunched        Key = "launched"
 

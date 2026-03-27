@@ -9,10 +9,11 @@ import (
 
 // HookScripts holds embedded hook script content for deployment.
 type HookScripts struct {
-	PathGuard    []byte
-	BashFirewall []byte
-	GitGuard     []byte
-	EnvWrapper   []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches
+	PathGuard        []byte
+	BashFirewall     []byte
+	GitGuard         []byte
+	EnvWrapper       []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches
+	NotifyPermission []byte // Notification hook — writes permission signal for Zpit TUI
 }
 
 // Hook configuration JSON for each mode.
@@ -42,6 +43,16 @@ const settingsStrict = `{
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/notify-permission.sh"
+          }
+        ]
+      }
     ]
   }
 }`
@@ -67,6 +78,16 @@ const settingsStandard = `{
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/notify-permission.sh"
+          }
+        ]
+      }
     ]
   }
 }`
@@ -80,6 +101,16 @@ const settingsRelaxed = `{
           {
             "type": "command",
             "command": ".claude/hooks/git-guard.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/notify-permission.sh"
           }
         ]
       }
@@ -155,10 +186,11 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 		return fmt.Errorf("creating hooks dir: %w", err)
 	}
 	files := map[string][]byte{
-		"path-guard.sh":    scripts.PathGuard,
-		"bash-firewall.sh": scripts.BashFirewall,
-		"git-guard.sh":     scripts.GitGuard,
-		"zpit-env.cmd":     scripts.EnvWrapper,
+		"path-guard.sh":         scripts.PathGuard,
+		"bash-firewall.sh":      scripts.BashFirewall,
+		"git-guard.sh":          scripts.GitGuard,
+		"zpit-env.cmd":          scripts.EnvWrapper,
+		"notify-permission.sh":  scripts.NotifyPermission,
 	}
 	for name, content := range files {
 		p := filepath.Join(hooksDir, name)

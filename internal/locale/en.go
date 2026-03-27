@@ -25,6 +25,7 @@ var en = map[Key]string{
 	// Agent status text
 	KeySessionEnded:    "Session ended",
 	KeyWaitingForInput: "Waiting for input",
+	KeyPermissionWait:  "Waiting for permission",
 	KeyWorking:         "Working",
 	KeyLaunched:        "Launched",
 

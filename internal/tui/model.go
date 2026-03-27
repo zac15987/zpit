@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -32,10 +33,11 @@ import (
 )
 
 const (
-	statusDisplayDuration  = 5 * time.Second
-	tickInterval           = 1 * time.Second
-	livenessCheckInterval  = 5 * time.Second
-	endedDisplayDuration   = 3 * time.Second
+	statusDisplayDuration      = 5 * time.Second
+	tickInterval               = 1 * time.Second
+	livenessCheckInterval      = 5 * time.Second
+	permissionCheckInterval    = 2 * time.Second
+	endedDisplayDuration       = 3 * time.Second
 )
 
 // View represents the current screen.
@@ -75,14 +77,15 @@ type PendingOp struct {
 
 // ActiveTerminal tracks a launched terminal and its agent state.
 type ActiveTerminal struct {
-	LaunchResult   *terminal.LaunchResult
-	SessionPID     int
-	SessionID      string // current session ID (for /resume change detection)
-	WorkDir        string // project work directory (needed to recompute logPath on session switch)
-	State          watcher.AgentState
-	LastQuestion   string
-	StateChangedAt time.Time
-	Watcher        *watcher.Watcher
+	LaunchResult      *terminal.LaunchResult
+	SessionPID        int
+	SessionID         string // current session ID (for /resume change detection)
+	WorkDir           string // project work directory (needed to recompute logPath on session switch)
+	State             watcher.AgentState
+	LastQuestion      string
+	PermissionMessage string // message from permission signal (e.g., "Claude needs your permission to use Bash")
+	StateChangedAt    time.Time
+	Watcher           *watcher.Watcher
 }
 
 // Model is the root Bubble Tea model.
@@ -105,8 +108,9 @@ type Model struct {
 	statusExpiry  time.Time
 
 	// Active terminals
-	activeTerminals    map[string]*ActiveTerminal
-	lastLivenessCheck  time.Time
+	activeTerminals      map[string]*ActiveTerminal
+	lastLivenessCheck    time.Time
+	lastPermissionCheck  time.Time
 
 	// TrackerClients for [s] status and [y] confirm (keyed by provider name)
 	clients map[string]tracker.TrackerClient
@@ -394,6 +398,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TickMsg:
 		cmds := m.checkSessionLiveness()
+		m.checkPermissionSignals()
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
 
@@ -905,6 +910,12 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		at.State = ev.State
 		at.StateChangedAt = time.Now()
 
+		// Clean up permission state on any transition out.
+		if oldState == watcher.StatePermission && ev.State != watcher.StatePermission {
+			at.PermissionMessage = ""
+			deletePermissionSignal(at.SessionID)
+		}
+
 		if ev.State == watcher.StateWaiting {
 			at.LastQuestion = ev.QuestionText
 			// Notify on transition to waiting.
@@ -1198,6 +1209,8 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 			at.State = watcher.StateEnded
 			at.StateChangedAt = now
 			at.LastQuestion = ""
+			at.PermissionMessage = ""
+			deletePermissionSignal(at.SessionID)
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
@@ -1243,6 +1256,94 @@ func (m Model) findProject(id string) *config.ProjectConfig {
 		}
 	}
 	return nil
+}
+
+// signalDir returns the path to the permission signal directory (~/.zpit/signals/).
+func signalDir() string {
+	base, err := config.BaseDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "signals")
+}
+
+// deletePermissionSignal removes the permission signal file for the given session ID.
+func deletePermissionSignal(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	dir := signalDir()
+	if dir == "" {
+		return
+	}
+	os.Remove(filepath.Join(dir, "permission-"+sessionID+".json"))
+}
+
+// permissionSignal is the parsed content of a permission signal file.
+type permissionSignal struct {
+	SessionID string `json:"session_id"`
+	Message   string `json:"message"`
+}
+
+// checkPermissionSignals scans ~/.zpit/signals/ for permission signal files
+// and updates matching ActiveTerminals to StatePermission.
+func (m *Model) checkPermissionSignals() {
+	now := time.Now()
+	if now.Sub(m.lastPermissionCheck) < permissionCheckInterval {
+		return
+	}
+	m.lastPermissionCheck = now
+
+	dir := signalDir()
+	if dir == "" {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // directory may not exist yet
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "permission-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+
+		var sig permissionSignal
+		if err := json.Unmarshal(data, &sig); err != nil || sig.SessionID == "" {
+			continue
+		}
+
+		// Find matching ActiveTerminal by SessionID.
+		matched := false
+		for projectID, at := range m.activeTerminals {
+			if at.SessionID != sig.SessionID {
+				continue
+			}
+			matched = true
+			if at.State == watcher.StatePermission {
+				break // already in permission state
+			}
+			m.logger.Printf("permission detected: key=%s session=%s msg=%q", projectID, sig.SessionID, sig.Message)
+			at.State = watcher.StatePermission
+			at.PermissionMessage = sig.Message
+			at.StateChangedAt = now
+			projectName := m.projectName(projectID)
+			m.notifier.NotifyWaiting(projectID, projectName, sig.Message)
+			break
+		}
+
+		// Stale signal — no matching tracked session.
+		if !matched {
+			os.Remove(filepath.Join(dir, name))
+		}
+	}
 }
 
 func tickCmd() tea.Cmd {

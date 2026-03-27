@@ -11,11 +11,12 @@ import (
 type AgentState int
 
 const (
-	StateUnknown   AgentState = iota
-	StateWorking              // stop_reason="tool_use"
-	StateWaiting              // stop_reason="end_turn" — needs user input
-	StateStreaming            // stop_reason=null — response in progress
-	StateEnded                // session process exited
+	StateUnknown    AgentState = iota
+	StateWorking               // stop_reason="tool_use"
+	StateWaiting               // stop_reason="end_turn" — needs user input
+	StateStreaming              // stop_reason=null — response in progress
+	StateEnded                 // session process exited
+	StatePermission            // waiting for user to approve/deny tool permission
 )
 
 func (s AgentState) String() string {
@@ -28,6 +29,8 @@ func (s AgentState) String() string {
 		return "Streaming"
 	case StateEnded:
 		return "Ended"
+	case StatePermission:
+		return "Permission"
 	default:
 		return "Unknown"
 	}
