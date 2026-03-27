@@ -32,30 +32,29 @@ dev
 `
 
 func TestValidateIssueSpec_AllPresent(t *testing.T) {
-	missing := ValidateIssueSpec(fullIssueBody)
-	if len(missing) != 0 {
-		t.Errorf("expected no missing sections, got %v", missing)
+	result := ValidateIssueSpec(fullIssueBody)
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no errors, got %v", result.Errors)
 	}
 }
 
 func TestValidateIssueSpec_MissingSections(t *testing.T) {
 	body := "## CONTEXT\nSome context\n\n## APPROACH\nSome approach\n"
-	missing := ValidateIssueSpec(body)
-	if len(missing) != 3 {
-		t.Fatalf("expected 3 missing sections, got %d: %v", len(missing), missing)
+	result := ValidateIssueSpec(body)
+	if len(result.Errors) != 3 {
+		t.Fatalf("expected 3 errors for missing sections, got %d: %v", len(result.Errors), result.Errors)
 	}
-	expected := []string{"## ACCEPTANCE_CRITERIA", "## SCOPE", "## CONSTRAINTS"}
-	for i, m := range missing {
-		if m != expected[i] {
-			t.Errorf("missing[%d] = %q, want %q", i, m, expected[i])
+	for _, err := range result.Errors {
+		if !strings.Contains(err, "missing required section") {
+			t.Errorf("unexpected error message: %q", err)
 		}
 	}
 }
 
 func TestValidateIssueSpec_EmptyBody(t *testing.T) {
-	missing := ValidateIssueSpec("")
-	if len(missing) != 5 {
-		t.Errorf("expected 5 missing sections, got %d", len(missing))
+	result := ValidateIssueSpec("")
+	if len(result.Errors) != 5 {
+		t.Errorf("expected 5 errors for empty body, got %d: %v", len(result.Errors), result.Errors)
 	}
 }
 
@@ -225,5 +224,188 @@ func TestParseIssueSpec_BranchCustom(t *testing.T) {
 	}
 	if spec.Branch != "main" {
 		t.Errorf("Branch = %q, want %q", spec.Branch, "main")
+	}
+}
+
+// --- New validation tests (AC-2 through AC-8, AC-13) ---
+
+func TestValidateIssueSpec_UnresolvedPresent(t *testing.T) {
+	body := "## CONTEXT\nSome context\n\n## APPROACH\n[UNRESOLVED: should we use polling or websocket?]\n\n## ACCEPTANCE_CRITERIA\nAC-1: test passes\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "UNRESOLVED") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected an error containing 'UNRESOLVED', got errors: %v", result.Errors)
+	}
+}
+
+func TestValidateIssueSpec_UnresolvedAbsent(t *testing.T) {
+	body := "## CONTEXT\nSome context\n\n## APPROACH\nUse polling because user confirmed.\n\n## ACCEPTANCE_CRITERIA\nAC-1: test passes\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	for _, e := range result.Errors {
+		if strings.Contains(e, "UNRESOLVED") {
+			t.Errorf("unexpected UNRESOLVED error: %q", e)
+		}
+	}
+}
+
+func TestValidateIssueSpec_VagueWord_Appropriate(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: use Appropriate error handling\nAC-2: timeout of 3s\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "AC-1") && strings.Contains(w, "appropriate") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning for AC-1 containing 'appropriate', got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_VagueWord_Reasonable(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: set a reasonable timeout\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "AC-1") && strings.Contains(w, "reasonable") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning for AC-1 containing 'reasonable', got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_VagueWord_Sufficient(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: add sufficient logging\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "AC-1") && strings.Contains(w, "sufficient") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning for AC-1 containing 'sufficient', got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_VagueWord_WhenNecessary(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: retry when necessary\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "AC-1") && strings.Contains(w, "when necessary") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning for AC-1 containing 'when necessary', got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_ScopeFormatError(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test model.go changes\n\n## SCOPE\nmodify internal/tui/model.go\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "SCOPE format") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected SCOPE format error, got errors: %v", result.Errors)
+	}
+}
+
+func TestValidateIssueSpec_ScopeACCoverageWarning(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: the handler returns 200\n\n## SCOPE\n[modify] internal/tui/model.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "model.go") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about uncovered SCOPE entry model.go, got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_ACNumberingGap(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: first\nAC-3: third\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "AC-2") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about AC-2 gap, got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_CleanBody_ZeroErrorsAndWarnings(t *testing.T) {
+	body := "## CONTEXT\nSome context\n\n## APPROACH\nUse polling.\n\n## ACCEPTANCE_CRITERIA\nAC-1: retry interval in EtherCatService.cs increases: 1s, 2s, 4s with max 3 retries\nAC-2: each retry has a 3-second timeout\nAC-3: after 3 failures trigger alarm via AlarmCodes.cs\n\n## SCOPE\n[modify] src/Services/EtherCatService.cs (add retry logic)\n[create] src/Alarms/AlarmCodes.cs (new alarm codes)\n\n## CONSTRAINTS\nNo new dependencies\n"
+	result := ValidateIssueSpec(body)
+	if len(result.Errors) != 0 {
+		t.Errorf("expected zero errors, got %v", result.Errors)
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected zero warnings, got %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_MultipleUnresolved(t *testing.T) {
+	body := "## CONTEXT\n[UNRESOLVED: what version?]\n\n## APPROACH\n[UNRESOLVED: which approach?]\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	unresolvedCount := 0
+	for _, e := range result.Errors {
+		if strings.Contains(e, "UNRESOLVED") {
+			unresolvedCount++
+		}
+	}
+	if unresolvedCount != 2 {
+		t.Errorf("expected 2 UNRESOLVED errors, got %d: %v", unresolvedCount, result.Errors)
+	}
+}
+
+func TestValidateIssueSpec_InvalidScopeAction(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[update] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "SCOPE format") && strings.Contains(e, "update") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected SCOPE format error for invalid action [update], got errors: %v", result.Errors)
+	}
+}
+
+func TestValidateIssueSpec_NoFalsePositiveOnUnresolvedIssue(t *testing.T) {
+	// [UNRESOLVED_ISSUE] should NOT trigger — requires "[UNRESOLVED: " with colon and space
+	body := "## CONTEXT\n[UNRESOLVED_ISSUE] is not a marker\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] main.go (reason)\n\n## CONSTRAINTS\nnone\n"
+	result := ValidateIssueSpec(body)
+	for _, e := range result.Errors {
+		if strings.Contains(e, "UNRESOLVED") {
+			t.Errorf("false positive: [UNRESOLVED_ISSUE] should not trigger UNRESOLVED error, got: %q", e)
+		}
 	}
 }
