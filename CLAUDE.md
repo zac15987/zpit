@@ -35,7 +35,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Notification cooldown (re_remind_minutes, per-project)
 - Session liveness check: PID monitoring every 10s, detects closed sessions
 - Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
-- 3 PreToolUse hook scripts with 29 tests
+- 3 PreToolUse hook scripts + 1 env wrapper with 32 tests
 - Hook auto-deploy: hook scripts embedded via go:embed, deployed to `.claude/hooks/` + `settings.json` merged on every agent launch (`[c]`/`[r]`/`[l]`)
 - Hook deployment script (`scripts/setup-hooks.sh`, manual fallback)
 - 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
@@ -156,7 +156,8 @@ hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands
 ├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
-└── hooks_test.go                # Go tests shelling out to each hook (29 tests)
+├── zpit-env.cmd                 # Windows wrapper: sets ZPIT_AGENT=1 for agent launches
+└── hooks_test.go                # Go tests shelling out to each hook (32 tests)
 scripts/setup-hooks.sh           # Manual fallback: deploy hooks + docs + agents to a project's .claude/
 testdata/
 ├── config.toml                  # Real project config used for tests + manual TUI testing
@@ -213,6 +214,8 @@ Zpit (Go) → TrackerClient interface
 Hook scripts are embedded in the binary via `go:embed` and auto-deployed to `.claude/hooks/` on every agent launch (`[c]`/`[r]`/`[l]`). Hook config is merged into `.claude/settings.json` (preserving existing keys like `enabledPlugins`). For worktrees, `settings.local.json` overlay is used instead. `scripts/setup-hooks.sh` remains as a manual fallback.
 
 Hook strictness is per-project via `hook_mode` (default `"strict"`): `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
+
+**ZPIT_AGENT environment variable**: All hook scripts check for `ZPIT_AGENT=1` — if absent, they `exit 0` (allow everything). This ensures hooks only enforce restrictions in Zpit-launched agent sessions, not in plain Claude Code sessions. On Windows (wt.exe), env var is injected via `.claude/hooks/zpit-env.cmd` wrapper (wt.exe doesn't inherit parent env). On Unix (tmux), `ZPIT_AGENT=1` is inline-prefixed to the command string. Detection is automatic via `--agent` flag in launch args.
 
 ### Agent Anti-Sycophancy & Objectivity Rules
 

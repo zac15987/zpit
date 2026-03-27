@@ -37,6 +37,9 @@ var bashFirewallSH []byte
 //go:embed hooks/git-guard.sh
 var gitGuardSH []byte
 
+//go:embed hooks/zpit-env.cmd
+var zpitEnvCMD []byte
+
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
 	if err != nil {
@@ -87,6 +90,7 @@ func main() {
 		PathGuard:    pathGuardSH,
 		BashFirewall: bashFirewallSH,
 		GitGuard:     gitGuardSH,
+		EnvWrapper:   zpitEnvCMD,
 	}
 
 	p := tea.NewProgram(

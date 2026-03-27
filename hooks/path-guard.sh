@@ -16,6 +16,9 @@ FILE_PATH=$(echo "$INPUT" | jq -r '
 # No file path — let other mechanisms handle it
 [ -z "$FILE_PATH" ] && exit 0
 
+# Skip enforcement for non-agent sessions (plain Claude Code)
+[ -z "${ZPIT_AGENT:-}" ] && exit 0
+
 # Allowed working directory (Claude Code sets this to cwd at startup)
 ALLOWED_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 

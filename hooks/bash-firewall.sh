@@ -8,6 +8,9 @@ set -euo pipefail
 COMMAND=$(cat | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
+# Skip enforcement for non-agent sessions (plain Claude Code)
+[ -z "${ZPIT_AGENT:-}" ] && exit 0
+
 # Blocked command patterns
 BLOCKED_PATTERNS=(
   # Destructive file operations

@@ -11,6 +11,9 @@ COMMAND=$(cat | jq -r '.tool_input.command // empty')
 # Only process git commands — non-git goes to bash-firewall
 echo "$COMMAND" | grep -qiE '^\s*git\s' || exit 0
 
+# Skip enforcement for non-agent sessions (plain Claude Code)
+[ -z "${ZPIT_AGENT:-}" ] && exit 0
+
 # --- Push whitelist ---
 # Agents may only push feat/* branches (needed to open PRs).
 if echo "$COMMAND" | grep -qiE 'git\s+push'; then

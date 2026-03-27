@@ -12,6 +12,7 @@ type HookScripts struct {
 	PathGuard    []byte
 	BashFirewall []byte
 	GitGuard     []byte
+	EnvWrapper   []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches
 }
 
 // Hook configuration JSON for each mode.
@@ -147,7 +148,7 @@ func writeSettingsLocal(worktreePath, content string) error {
 	return nil
 }
 
-// deployHookScripts writes the 3 hook .sh files to .claude/hooks/.
+// deployHookScripts writes hook scripts and env wrapper to .claude/hooks/.
 func deployHookScripts(targetPath string, scripts HookScripts) error {
 	hooksDir := filepath.Join(targetPath, ".claude", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
@@ -157,6 +158,7 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 		"path-guard.sh":    scripts.PathGuard,
 		"bash-firewall.sh": scripts.BashFirewall,
 		"git-guard.sh":     scripts.GitGuard,
+		"zpit-env.cmd":     scripts.EnvWrapper,
 	}
 	for name, content := range files {
 		p := filepath.Join(hooksDir, name)
