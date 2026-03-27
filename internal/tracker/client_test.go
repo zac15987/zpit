@@ -416,6 +416,30 @@ func TestGitHubFindPRByBranch_Merged(t *testing.T) {
 	}
 }
 
+func TestGitHubFindPRByBranch_MergedViaTimestamp(t *testing.T) {
+	// GitHub list endpoint returns "merged":null but includes "merged_at".
+	mergedAt := "2026-01-01T00:00:00Z"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]githubPR{
+			{Number: 9, State: "closed", Merged: false, MergedAt: &mergedAt, HTMLURL: "https://github.com/o/r/pull/9",
+				Head: githubPRRef{Ref: "feat/6-test"}},
+		})
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "owner/repo", "feat/6-test")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+}
+
 func TestForgejoAuthError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)

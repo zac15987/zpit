@@ -30,12 +30,13 @@ type githubLabel struct {
 
 // githubPR is the JSON shape returned by the GitHub pulls API.
 type githubPR struct {
-	Number  int         `json:"number"`
-	Title   string      `json:"title"`
-	State   string      `json:"state"`
-	Merged  bool        `json:"merged"`
-	HTMLURL string      `json:"html_url"`
-	Head    githubPRRef `json:"head"`
+	Number   int         `json:"number"`
+	Title    string      `json:"title"`
+	State    string      `json:"state"`
+	Merged   bool        `json:"merged"`
+	MergedAt *string     `json:"merged_at"` // list endpoint omits "merged"; use as fallback
+	HTMLURL  string      `json:"html_url"`
+	Head     githubPRRef `json:"head"`
 }
 
 type githubPRRef struct {
@@ -115,7 +116,7 @@ func (c *GitHubClient) FindPRByBranch(ctx context.Context, repo string, branch s
 			continue
 		}
 		state := pr.State
-		if pr.Merged {
+		if pr.Merged || pr.MergedAt != nil {
 			state = "merged"
 		}
 		return &PRStatus{
