@@ -31,6 +31,31 @@ dev
 [官方文件] https://example.com — EtherCAT 文件
 `
 
+const fullIssueBodyWithTasks = `## CONTEXT
+Large implementation requiring task decomposition.
+
+## APPROACH
+Implement in ordered tasks for reliability.
+
+## ACCEPTANCE_CRITERIA
+AC-1: TaskEntry struct exists in issuespec.go
+AC-2: IssueSpec has Tasks field
+AC-3: coding.go includes task workflow
+
+## SCOPE
+[modify] internal/tracker/issuespec.go (add TaskEntry struct)
+[modify] internal/tracker/issuespec_test.go (add tests)
+[modify] internal/prompt/coding.go (task workflow)
+
+## CONSTRAINTS
+No new libraries
+
+## TASKS
+T1: Add TaskEntry struct and parsing [modify] internal/tracker/issuespec.go (depends: none)
+T2: [P] Add tests for task parsing [modify] internal/tracker/issuespec_test.go (depends: T1)
+T3: Update coding prompt with task workflow [modify] internal/prompt/coding.go (depends: T1, T2)
+`
+
 func TestValidateIssueSpec_AllPresent(t *testing.T) {
 	result := ValidateIssueSpec(fullIssueBody)
 	if len(result.Errors) != 0 {
@@ -406,6 +431,163 @@ func TestValidateIssueSpec_NoFalsePositiveOnUnresolvedIssue(t *testing.T) {
 	for _, e := range result.Errors {
 		if strings.Contains(e, "UNRESOLVED") {
 			t.Errorf("false positive: [UNRESOLVED_ISSUE] should not trigger UNRESOLVED error, got: %q", e)
+		}
+	}
+}
+
+// --- TASKS parsing tests ---
+
+func TestParseIssueSpec_TasksParsing_FullBody(t *testing.T) {
+	spec, err := ParseIssueSpec(fullIssueBodyWithTasks)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.Tasks) != 3 {
+		t.Fatalf("expected 3 tasks, got %d", len(spec.Tasks))
+	}
+
+	// T1: sequential, one path, depends: none
+	if spec.Tasks[0].ID != "T1" {
+		t.Errorf("Tasks[0].ID = %q, want T1", spec.Tasks[0].ID)
+	}
+	if spec.Tasks[0].Parallel {
+		t.Error("Tasks[0].Parallel should be false")
+	}
+	if len(spec.Tasks[0].Paths) != 1 || spec.Tasks[0].Paths[0] != "internal/tracker/issuespec.go" {
+		t.Errorf("Tasks[0].Paths = %v, want [internal/tracker/issuespec.go]", spec.Tasks[0].Paths)
+	}
+	if len(spec.Tasks[0].DependsOn) != 0 {
+		t.Errorf("Tasks[0].DependsOn = %v, want empty", spec.Tasks[0].DependsOn)
+	}
+
+	// T2: parallel, one path, depends: T1
+	if spec.Tasks[1].ID != "T2" {
+		t.Errorf("Tasks[1].ID = %q, want T2", spec.Tasks[1].ID)
+	}
+	if !spec.Tasks[1].Parallel {
+		t.Error("Tasks[1].Parallel should be true")
+	}
+
+	// T3: sequential, one path, depends: T1, T2
+	if spec.Tasks[2].ID != "T3" {
+		t.Errorf("Tasks[2].ID = %q, want T3", spec.Tasks[2].ID)
+	}
+}
+
+func TestParseIssueSpec_TasksAbsent_Nil(t *testing.T) {
+	spec, err := ParseIssueSpec(fullIssueBody)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.Tasks != nil {
+		t.Errorf("expected nil Tasks when ## TASKS absent, got %v", spec.Tasks)
+	}
+}
+
+func TestParseTaskEntry_ParallelFlag(t *testing.T) {
+	line := "T2: [P] Update prompt generation [modify] coding.go (depends: T1)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false for valid line")
+	}
+	if entry.ID != "T2" {
+		t.Errorf("ID = %q, want T2", entry.ID)
+	}
+	if !entry.Parallel {
+		t.Error("Parallel should be true")
+	}
+	if len(entry.Paths) != 1 || entry.Paths[0] != "coding.go" {
+		t.Errorf("Paths = %v, want [coding.go]", entry.Paths)
+	}
+	if len(entry.DependsOn) != 1 || entry.DependsOn[0] != "T1" {
+		t.Errorf("DependsOn = %v, want [T1]", entry.DependsOn)
+	}
+}
+
+func TestParseTaskEntry_MultipleDependencies(t *testing.T) {
+	line := "T3: Integrate changes [modify] main.go (depends: T1, T2)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if entry.ID != "T3" {
+		t.Errorf("ID = %q, want T3", entry.ID)
+	}
+	if len(entry.DependsOn) != 2 {
+		t.Fatalf("DependsOn length = %d, want 2", len(entry.DependsOn))
+	}
+	if entry.DependsOn[0] != "T1" || entry.DependsOn[1] != "T2" {
+		t.Errorf("DependsOn = %v, want [T1 T2]", entry.DependsOn)
+	}
+}
+
+func TestParseTaskEntry_DependsNone(t *testing.T) {
+	line := "T1: Initial setup [create] newfile.go (depends: none)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if len(entry.DependsOn) != 0 {
+		t.Errorf("DependsOn = %v, want empty slice (not containing 'none')", entry.DependsOn)
+	}
+}
+
+func TestParseTaskEntry_MultipleFileActions(t *testing.T) {
+	line := "T2: [P] Update both files [create] x.go [modify] y.go (depends: T1)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if len(entry.Paths) != 2 {
+		t.Fatalf("Paths length = %d, want 2", len(entry.Paths))
+	}
+	if entry.Paths[0] != "x.go" || entry.Paths[1] != "y.go" {
+		t.Errorf("Paths = %v, want [x.go y.go]", entry.Paths)
+	}
+	if !entry.Parallel {
+		t.Error("Parallel should be true")
+	}
+	if len(entry.DependsOn) != 1 || entry.DependsOn[0] != "T1" {
+		t.Errorf("DependsOn = %v, want [T1]", entry.DependsOn)
+	}
+}
+
+func TestValidateIssueSpec_TasksScopeCrossValidation(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test issuespec.go changes
+
+## SCOPE
+[modify] internal/tracker/issuespec.go (reason)
+
+## CONSTRAINTS
+none
+
+## TASKS
+T1: Update spec [modify] internal/tracker/issuespec.go (depends: none)
+T2: Update unknown file [modify] unknown/file.go (depends: T1)
+`
+	result := ValidateIssueSpec(body)
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "T2") && strings.Contains(w, "unknown/file.go") && strings.Contains(w, "not found in SCOPE") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about T2 referencing unknown/file.go not in SCOPE, got warnings: %v", result.Warnings)
+	}
+
+	// T1's path IS in SCOPE — should NOT produce a warning for it
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "T1") && strings.Contains(w, "issuespec.go") && strings.Contains(w, "not found in SCOPE") {
+			t.Errorf("unexpected warning for T1's valid SCOPE path: %q", w)
 		}
 	}
 }

@@ -49,7 +49,18 @@ func BuildCodingPrompt(p CodingParams) string {
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
-	fmt.Fprintf(&b, `
+	if len(p.Spec.Tasks) > 0 {
+		buildTaskWorkflow(&b, p)
+	} else {
+		buildStandardWorkflow(&b, p)
+	}
+
+	return b.String()
+}
+
+// buildStandardWorkflow writes the default coding workflow (no TASKS decomposition).
+func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
+	fmt.Fprintf(b, `
 
 ## Your Workflow
 
@@ -87,8 +98,70 @@ Prefer MCP tools — pass content directly as a parameter.
 If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
 Never embed long text directly in bash commands.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
+}
 
-	return b.String()
+// buildTaskWorkflow writes the task-ordered coding workflow when TASKS is present.
+func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
+	b.WriteString("\n\n## Task Decomposition\n\n")
+	b.WriteString("This issue has been decomposed into ordered tasks. Execute tasks in order.\n")
+	b.WriteString("Commit after each task with format: [" + p.IssueID + "] T{N}: {short description}\n\n")
+	for _, task := range p.Spec.Tasks {
+		fmt.Fprintf(b, "- %s: ", task.ID)
+		if task.Parallel {
+			b.WriteString("[P] ")
+		}
+		b.WriteString(task.Description)
+		if len(task.Paths) > 0 {
+			b.WriteString(" — files: " + strings.Join(task.Paths, ", "))
+		}
+		if len(task.DependsOn) > 0 {
+			b.WriteString(" (depends: " + strings.Join(task.DependsOn, ", ") + ")")
+		}
+		b.WriteByte('\n')
+	}
+
+	fmt.Fprintf(b, `
+## Your Workflow
+
+Execute tasks in order. Commit after each task.
+
+1. Read CLAUDE.md to understand the project's architecture principles and logging policy
+   Read .claude/docs/tracker.md to understand how to operate the tracker (open PR, update status)
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
+   Read .claude/docs/code-construction-principles.md to understand the code quality baseline
+2. Read all files listed in SCOPE to understand the existing code structure
+3. If references list any reference files, read those too
+4. If implementation depends on external libraries or APIs not fully documented in REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding — do not code against training-data assumptions
+5. Before starting implementation, update issue label: remove "todo", add "wip"
+6. For each task (T1, T2, ...):
+   a. Implement the task according to APPROACH
+   b. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
+   c. After completing the task, re-read modified files to verify consistency
+   d. Verify relevant ACs that relate to this task
+   e. Commit with format: [%s] T{N}: {short description}
+   f. If the task fails (tests break, build error), retry once. If still failing, stop and post issue comment explaining what failed — do NOT open PR
+7. After all tasks complete, self-check against each ACCEPTANCE_CRITERIA item
+8. Use git add + git commit for any final adjustments
+9. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
+   Targeting any other branch is strictly forbidden. If unsure, stop and confirm before opening the PR.
+10. After opening the PR, update issue label: remove "wip", add "review"
+
+## When to Stop and Ask the User
+
+- The APPROACH description is unclear and you are unsure how to proceed
+- You find that you need to modify files outside the SCOPE
+- You find that a CONSTRAINT conflicts with the APPROACH
+- You encounter an uncertain technical decision (multiple valid approaches)
+- Any hardware-related logic you are unsure about (timeout values, safe-state behavior, etc.)
+- You discover during implementation that the APPROACH has a flaw or gap not covered by the Issue Spec
+
+## Tracker Operation Notes
+
+When opening a PR or updating status, follow the instructions in .claude/docs/tracker.md.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
+`, p.IssueID, p.BaseBranch, p.BaseBranch)
 }
 
 func logPolicyText(policy string) string {
