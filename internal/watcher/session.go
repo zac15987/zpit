@@ -66,6 +66,21 @@ func LogFilePath(claudeHome, projectPath, sessionID string) string {
 	return filepath.Join(claudeHome, "projects", encoded, sessionID+".jsonl")
 }
 
+// ReadSessionByPID reads the session file for a specific PID.
+// Returns the parsed SessionInfo or an error if the file doesn't exist or is invalid.
+func ReadSessionByPID(claudeHome string, pid int) (*SessionInfo, error) {
+	sessFile := filepath.Join(claudeHome, "sessions", fmt.Sprintf("%d.json", pid))
+	data, err := os.ReadFile(sessFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading session file: %w", err)
+	}
+	var info SessionInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("parsing session file: %w", err)
+	}
+	return &info, nil
+}
+
 // IsProcessAlive checks if the given PID is still running.
 func IsProcessAlive(pid int) bool {
 	return processAliveFunc(pid)

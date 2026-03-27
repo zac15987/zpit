@@ -27,24 +27,27 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Environment detection (Windows Terminal / WSL / Linux tmux)
 - Terminal Launcher: `Enter` opens Claude Code in new WT tab or tmux window
 - `[o]` opens project folder in file manager
-- Session Log Watcher: fsnotify monitors JSONL logs, detects agent state (Working/Waiting/Ended)
-- Active Terminals area: 🟢 Working / 🟡 Waiting for input / ⚫ Session ended (auto-removes after 10s)
+- Session Log Watcher: fsnotify monitors JSONL logs, detects agent state (Working/Waiting/Ended/Permission)
+- Active Terminals area: 🟢 Working / 🟡 Waiting for input / 🟠 Waiting for permission / ⚫ Session ended (auto-removes after 10s)
 - Agent waiting detection: extracts question text from session log, shows preview in TUI
-- Windows Toast notification when agent waits for input (via PowerShell)
+- Permission prompt detection: Notification hook writes signal file to `~/.zpit/signals/`, TUI polls every 2s
+- Windows Toast notification when agent waits for input or permission (via PowerShell)
 - Sound alert (SystemSounds.Asterisk)
 - Notification cooldown (re_remind_minutes, per-project)
-- Session liveness check: PID monitoring every 10s, detects closed sessions
+- Session liveness check: PID monitoring every 5s, detects closed sessions + `/resume` session switches
 - Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
-- 3 PreToolUse hook scripts with 29 tests
-- Hook deployment script (`scripts/setup-hooks.sh`, also deploys agents)
-- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
-- 11 slug tests + 5 worktree manager tests + 5 hook config tests + 5 prompt tests
+- 3 PreToolUse hook scripts + 1 Notification hook + 1 env wrapper with 32 tests
+- Hook auto-deploy: hook scripts embedded via go:embed, deployed to `.claude/hooks/` + `settings.json` merged on every agent launch (`[c]`/`[r]`/`[l]`)
+- Hook deployment script (`scripts/setup-hooks.sh`, manual fallback)
+- 14 client tests + 12 issuespec tests + 6 url tests + 25 watcher tests + 6 notify tests + 7 config tests
+- 11 slug tests + 5 worktree manager tests + 11 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
 - `[c]` Clarify: opens new terminal with `claude --agent clarifier` (label check + auto-deploy, overlay confirm dialogs)
 - `[s]` Status: readonly issue list via TrackerClient + `[y]` confirm (pending→todo) + `[p]` open in browser
 - `[p]` Open Tracker: opens project issue tracker in browser
 - `[r]` Review: opens new terminal with `claude --agent reviewer` (label check + auto-deploy, overlay confirm dialogs)
+- `[u]` Undeploy: removes all Zpit-deployed files (.claude/agents/, .claude/docs/, .claude/hooks/) with overlay confirm
 - `[l]` Loop: auto-dispatch coding + reviewer agents per todo issue
 - Clarifier agent template (`agents/clarifier.md`, embedded via go:embed)
 - Reviewer agent template (`agents/reviewer.md`, embedded via go:embed)
@@ -53,8 +56,9 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Profile config: `[profiles.*]` with `log_policy` (strict/standard/minimal)
 - Per-project `base_branch` config (default "dev")
 - Makefile with `test-hooks` target
-- Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → NEEDS CHANGES auto-retry → PR merge → cleanup
-- NEEDS CHANGES auto-retry: reviewer 判定 NEEDS CHANGES → 自動重跑 coding agent → 再次 review（max_review_rounds 預設 2）
+- Loop engine: poll todo → create worktree → launch coding agent → label poll detects "review" → launch reviewer → label poll detects "ai-review"/"needs-changes" → auto-retry or wait merge → cleanup
+- Label-driven transitions: loop polls issue labels (not PID monitoring) to detect agent completion. Coding agent sets "review" label → reviewer starts. Reviewer sets "ai-review"/"needs-changes" → next step. Agents don't need to exit for loop to progress.
+- NEEDS CHANGES auto-retry: reviewer 設定 needs-changes label → 自動重跑 coding agent → 再次 review（max_review_rounds 預設 3）
 - LaunchClaudeInDir: worktree path override for loop launches
 - FindPRByBranch: PR detection by branch name (Forgejo + GitHub)
 - TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
@@ -94,7 +98,7 @@ internal/
 │   ├── en.go                    # English translations
 │   └── zh_tw.go                 # Traditional Chinese translations
 ├── loop/
-│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, verdict constants
+│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState
 ├── terminal/
 │   ├── launcher.go              # LaunchClaude() + LaunchClaudeInDir() dispatch + arg builders
 │   ├── launcher_windows.go      # wt.exe (build tag: windows)
@@ -102,7 +106,7 @@ internal/
 ├── watcher/
 │   ├── encode.go                # EncodeCwd() path encoding + ClaudeHome()
 │   ├── parse.go                 # AgentState enum + ParseLine() JSONL parser
-│   ├── session.go               # FindActiveSessions() + IsProcessAlive() + LogFilePath()
+│   ├── session.go               # FindActiveSessions() + ReadSessionByPID() + IsProcessAlive() + LogFilePath()
 │   ├── watcher.go               # Watcher: fsnotify tail + WatchOnce()
 │   ├── process_windows.go       # PID liveness check (Windows tasklist)
 │   ├── process_unix.go          # PID liveness check (Unix signal 0)
@@ -126,7 +130,7 @@ internal/
 ├── worktree/
 │   ├── slug.go                  # Slugify() issue title → URL-safe slug
 │   ├── manager.go               # Worktree Manager: Create/Remove/List + runGit helper
-│   ├── hooks.go                 # SetupHookMode() → settings.local.json per hook_mode
+│   ├── hooks.go                 # HookScripts + DeployHooks() + SetupHookMode() + settings.json merge
 │   ├── slug_test.go             # 11 slug tests
 │   ├── manager_test.go          # Worktree lifecycle tests (real git)
 │   └── hooks_test.go            # 5 hook config tests
@@ -153,8 +157,10 @@ hooks/
 ├── path-guard.sh                # Confine Write/Edit to worktree dir
 ├── bash-firewall.sh             # Block destructive commands
 ├── git-guard.sh                 # Block push/merge/rebase; allow commit/status/diff
-└── hooks_test.go                # Go tests shelling out to each hook (29 tests)
-scripts/setup-hooks.sh           # Deploy hooks + docs + agents to a project's .claude/
+├── notify-permission.sh         # Notification hook: write permission signal for TUI
+├── zpit-env.cmd                 # Windows wrapper: sets ZPIT_AGENT=1 for agent launches
+└── hooks_test.go                # Go tests shelling out to each hook (32 tests)
+scripts/setup-hooks.sh           # Manual fallback: deploy hooks + docs + agents to a project's .claude/
 testdata/
 ├── config.toml                  # Real project config used for tests + manual TUI testing
 ├── config_minimal.toml          # Minimal config for defaults testing
@@ -163,7 +169,9 @@ testdata/
 docs/
 ├── zpit-architecture.md         # Full architecture document
 ├── agent-guidelines.md          # Agent behavioral rules (Layer 1 soft constraints, deployed to .claude/docs/)
-└── code-construction-principles.md  # Code quality baseline for agent review
+├── code-construction-principles.md  # Code quality baseline for agent review
+├── sycophancy-mitigation.md     # LLM sycophancy: definition, manifestations, prompt-level mitigations
+└── llm-stale-context-and-tool-underuse.md  # LLM failure modes: stale context assumption + tool underuse
 ```
 
 ## Architecture
@@ -176,8 +184,10 @@ The TUI monitors Claude Code sessions via their JSONL log files:
 2. **Session discovery**: scans `~/.claude/sessions/{pid}.json` for matching project + alive PID
 3. **Two-phase startup**: finds session PID immediately (enables liveness check), then waits for JSONL file creation (happens on first user input)
 4. **State detection**: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
-5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
-6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
+5. **Permission detection**: Notification hook (`notify-permission.sh`) writes signal file to `~/.zpit/signals/permission-{sessionID}.json` when Claude Code needs tool permission approval. TUI polls signal dir every 2s, maps sessionID to ActiveTerminal, sets StatePermission. Signal file is cleaned up when JSONL shows new activity or session ends.
+6. **Notifications**: on state transition to waiting or permission → Windows Toast + sound (respects config + cooldown)
+7. **Liveness check**: every 5s verifies PID is alive; ended sessions auto-remove after 3s display
+8. **`/resume` detection**: liveness check re-reads `{pid}.json` each cycle; if `sessionId` changed, stops old watcher and restarts for new session. `waitForLogCmd` also re-checks during JSONL wait phase.
 
 ### TrackerClient (M3)
 
@@ -196,16 +206,43 @@ Zpit (Go) → TrackerClient interface
 
 ### Hook-Based Safety System (5 Layers)
 
-1. **agent-guidelines.md behavioral rules** (soft — `.claude/docs/agent-guidelines.md`, deployed by `setup-hooks.sh`)
+1. **agent-guidelines.md behavioral rules** (soft — `.claude/docs/agent-guidelines.md`, auto-deployed by TUI)
 2. **--allowedTools per agent role** (medium)
-3. **PreToolUse hooks** (hard — enforced even with bypass-all-permissions):
+3. **PreToolUse hooks** (hard — enforced even with bypass-all-permissions, auto-deployed from embedded binary):
    - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
    - `git-guard.sh` — push whitelist (only `feat/*` branches allowed), blocks merge, rebase, branch delete
+   - `notify-permission.sh` — Notification hook: writes signal file to `~/.zpit/signals/` when permission prompt appears (not a safety hook; enables TUI permission detection)
 4. **Git worktree isolation** (physical)
 5. **Human PR review** (final gate)
 
-Hook strictness is per-project via `hook_mode`: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only). Applied via `settings.local.json` overlay at worktree creation.
+Hook scripts are embedded in the binary via `go:embed` and auto-deployed to `.claude/hooks/` on every agent launch (`[c]`/`[r]`/`[l]`). Hook config is merged into `.claude/settings.json` (preserving existing keys like `enabledPlugins`). For worktrees, `settings.local.json` overlay is used instead. `scripts/setup-hooks.sh` remains as a manual fallback.
+
+Hook strictness is per-project via `hook_mode` (default `"strict"`): `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
+
+**ZPIT_AGENT environment variable**: PreToolUse hook scripts check for `ZPIT_AGENT=1` — if absent, they `exit 0` (allow everything). This ensures hooks only enforce restrictions in Zpit-launched agent sessions, not in plain Claude Code sessions. On Windows (wt.exe), env var is injected via `.claude/hooks/zpit-env.cmd` wrapper (wt.exe doesn't inherit parent env). On Unix (tmux), `ZPIT_AGENT=1` is inline-prefixed to the command string. Detection is automatic via `--agent` flag in launch args.
+
+### Agent Anti-Sycophancy & Objectivity Rules
+
+All agents read `agent-guidelines.md` which includes an **Objectivity Protocol**:
+- Prioritize accuracy over agreement; flag plan gaps before executing
+- No flattery phrases; respond directly
+- Agreement requires stated reasoning; reversal requires new evidence
+- Semantic/ownership changes to existing artifacts must be flagged as decision points
+
+Role-specific rules (see `docs/sycophancy-mitigation.md` for research background):
+- **Clarifier**: challenge before acceptance, attach confidence levels, no premature closure
+- **Reviewer**: critic-only stance, no praise, ⚠️ must itemize what's missing or becomes ❌
+- **Coding agent**: stop if APPROACH has a flaw or gap discovered during implementation
+- **Revision agent**: challenge reviewer feedback that appears incorrect instead of silently complying
+
+### Known LLM Failure Modes (see `docs/llm-stale-context-and-tool-underuse.md`)
+
+Two failure modes that impact agent reliability:
+1. **Stale context assumption** — LLM operates on a snapshot of state instead of re-verifying. Caused by positional attention bias (U-shaped curve) and context rot. Mitigation: explicit re-verification rules, sub-agent isolation, worktree isolation.
+2. **Tool underuse** — LLM generates from training data instead of calling available tools (web search, file reads). Caused by RLHF bias toward fluent responses over verification. Mitigation: tool-first instructions, mandatory WebSearch for clarifier, Chain of Verification pattern.
+
+Current gaps: no re-read-before-edit mandate for coding agents, no WebSearch mandate for coding/revision agents, no freshness signals in long sessions.
 
 ## Config Location
 
@@ -233,3 +270,5 @@ Top-level `language` field (default `"en"`) controls TUI display language and ag
 - Hook exit codes: 0 = allow, 2 = block (stderr message fed back to Claude), never use exit 1 for safety hooks
 - Agent behavioral rules: `docs/agent-guidelines.md` — deployed to `.claude/docs/`, all agents read on startup
 - Code quality baseline: `docs/code-construction-principles.md` — all agents reference during implementation and review
+- Logging: Use `m.logger` to log all state transitions and lifecycle events (session attach/found/ready/lost/ended/removed, loop dispatch/launch/exit/verdict/cleanup). Logs must include sufficient identifiers (key, PID, state, issue ID, role, round) for post-hoc debugging. Do not log normal ticks or renders — only log state changes.
+- **LOG 是必要的**：所有新功能、狀態機、lifecycle 事件都必須包含 `m.logger` 呼叫。僅用 `setStatus` 不夠 — `setStatus` 是給 TUI 顯示的，`m.logger` 才會寫入 log 檔供事後除錯。在 goroutine closure 中先捕捉 `logger := m.logger` 再使用。

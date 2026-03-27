@@ -19,12 +19,14 @@ const (
 	KeyOpenTracker     Key = "open_issue_tracker"
 	KeyAddProject      Key = "add_project"
 	KeyEditConfig      Key = "edit_config"
+	KeyUndeploy        Key = "undeploy"
 	KeyHelp            Key = "help"
 	KeyQuit            Key = "quit"
 
 	// Agent status text (view_projects)
 	KeySessionEnded    Key = "session_ended"
 	KeyWaitingForInput Key = "waiting_for_input"
+	KeyPermissionWait  Key = "permission_wait"
 	KeyWorking         Key = "working"
 	KeyLaunched        Key = "launched"
 
@@ -58,6 +60,12 @@ const (
 	KeyCancel               Key = "cancel"
 	KeyReviewerNotDeployed  Key = "reviewer_not_deployed"
 
+	// Undeploy confirm dialogs (model.go)
+	KeyUndeployConfirm Key = "undeploy_confirm"
+	KeyUndeployButton  Key = "undeploy_button"
+	KeyUndeployDone    Key = "undeploy_done"
+	KeyUndeployNoop    Key = "undeploy_noop"
+
 	// Label confirm dialogs (model.go)
 	KeyLabelsMissing  Key = "labels_missing"
 	KeyCreateLabels   Key = "create_labels"
@@ -69,4 +77,19 @@ const (
 	KeyCannotLaunch   Key = "cannot_launch"
 	KeyNoWorktreePath Key = "no_worktree_path"
 	KeyLoopSlotHelp   Key = "loop_slot_help"
+
+	// Agent init messages (loop_cmds)
+	KeyInitCoding         Key = "init_coding"
+	KeyInitRevisionCoding Key = "init_revision_coding"
+	KeyInitReview         Key = "init_review"
+	KeyInitRevisionReview Key = "init_revision_review"
+
+	// Config validation errors (error overlay)
+	KeyErrConfigTitle       Key = "err_config_title"
+	KeyErrDismissHint       Key = "err_dismiss_hint"
+	KeyErrPathEmpty         Key = "err_path_empty"
+	KeyErrRepoEmpty         Key = "err_repo_empty"
+	KeyErrTrackerURLEmpty   Key = "err_tracker_url_empty"
+	KeyErrWorktreeBaseEmpty Key = "err_worktree_base_empty"
+	KeyErrWorktreeMissing   Key = "err_worktree_missing"
 )

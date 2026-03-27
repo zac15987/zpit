@@ -18,12 +18,14 @@ var zhTW = map[Key]string{
 	KeyOpenTracker:    "開啟 Issue Tracker",
 	KeyAddProject:     "新增專案",
 	KeyEditConfig:     "編輯設定",
+	KeyUndeploy:       "清除部署檔案",
 	KeyHelp:           "說明",
 	KeyQuit:           "離開",
 
 	// Agent status text
 	KeySessionEnded:    "Session 結束",
 	KeyWaitingForInput: "等待輸入",
+	KeyPermissionWait:  "等待授權",
 	KeyWorking:         "執行中",
 	KeyLaunched:        "已啟動",
 
@@ -57,6 +59,12 @@ var zhTW = map[Key]string{
 	KeyCancel:               "取消",
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
 
+	// Undeploy confirm dialogs
+	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployButton:  "清除",
+	KeyUndeployDone:    "已清除 %d 個項目（%s）",
+	KeyUndeployNoop:    "無已部署檔案（%s）",
+
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit 及其 agent 依賴以下 label 追蹤 issue 狀態。\n%s 缺少以下 label：\n\n%s\n\n建立後才能繼續，是否建立？",
 	KeyCreateLabels:   "建立 Label",
@@ -68,4 +76,19 @@ var zhTW = map[Key]string{
 	KeyCannotLaunch:   "此狀態無法啟動",
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
 	KeyLoopSlotHelp:   "Enter: 開啟 Claude  \u2191\u2193: 選擇  Tab/Esc: 返回",
+
+	// Config validation errors
+	// Agent init messages
+	KeyInitCoding:         "開始實作",
+	KeyInitRevisionCoding: "讀取 PR review comment，修正問題",
+	KeyInitReview:         "開始 review",
+	KeyInitRevisionReview: "開始 revision review，專注檢查上次 MUST FIX 項目",
+
+	KeyErrConfigTitle:       "設定錯誤",
+	KeyErrDismissHint:       "按 Esc 或 Enter 關閉",
+	KeyErrPathEmpty:         "專案路徑未設定",
+	KeyErrRepoEmpty:         "專案 repo 未設定",
+	KeyErrTrackerURLEmpty:   "Tracker URL 未設定",
+	KeyErrWorktreeBaseEmpty: "Worktree base directory 未設定",
+	KeyErrWorktreeMissing:   "Worktree 目錄已不存在",
 }

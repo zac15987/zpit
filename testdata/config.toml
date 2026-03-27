@@ -23,7 +23,6 @@ pr_poll_seconds = 30
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
 url = "http://leyu88.synology.me:3000"
-
 token_env = "FORGEJO_TOKEN"
 
 [providers.tracker.github-personal]
@@ -33,12 +32,10 @@ token_env = "GITHUB_TOKEN"
 [providers.git.forgejo-leyu]
 type = "forgejo"
 url = "http://leyu88.synology.me:3000"
-
 token_env = "FORGEJO_TOKEN"
 
 [providers.git.github]
 type = "github"
-
 token_env = "GITHUB_TOKEN"
 
 # ──────────────────────────────────────────────

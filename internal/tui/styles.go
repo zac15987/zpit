@@ -12,6 +12,7 @@ var (
 	colorStatusBg = lipgloss.Color("236") // dark gray — status bar / header background
 	colorWorking  = lipgloss.Color("78")  // green — agent working
 	colorWaiting  = lipgloss.Color("220") // bright yellow-orange — agent waiting
+	colorError    = lipgloss.Color("203") // red — config error overlay border
 )
 
 var (
@@ -69,5 +70,10 @@ var (
 	confirmOverlayStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorAccent).
+				Padding(1, 2)
+
+	errorOverlayStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorError).
 				Padding(1, 2)
 )

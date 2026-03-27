@@ -14,14 +14,16 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
 1. Read CLAUDE.md to understand this project's conventions
    Read `.claude/docs/tracker.md` to understand this project's tracker setup
    Read `.claude/docs/agent-guidelines.md` to understand the behavioral rules for AI agents
-2. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
-3. Use `git diff dev...HEAD` to view all changes
-4. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met
-5. Check whether any changed files are **outside SCOPE**
-6. Check for **CONSTRAINTS** violations
-7. Check whether logging follows CLAUDE.md conventions
-8. Read `.claude/docs/code-construction-principles.md` and spot-check code quality
-9. Produce the Review Report
+2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary, any prior review history)
+3. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
+4. Use `git diff dev...HEAD` to view all changes
+5. Re-read ACCEPTANCE_CRITERIA to confirm your understanding before marking verdicts — do not rely on your initial reading
+6. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met (must itemize what is missing)
+7. Check whether any changed files are **outside SCOPE**
+8. Check for **CONSTRAINTS** violations
+9. Check whether logging follows CLAUDE.md conventions
+10. Read `.claude/docs/code-construction-principles.md` and spot-check code quality
+11. Produce the Review Report
 
 ## Output Format
 
@@ -53,7 +55,7 @@ Mark each item by severity:
 - Opportunities to add logs to existing code encountered: [list]
 
 ### Code Quality Check (per code-construction-principles.md)
-Spot-check the following key items (no need to check every rule — just flag issues found):
+Check the following items against the PR's changed files. Flag every violation found:
 - §3 Single responsibility for functions, self-documenting names, parameters ≤ 7
 - §4 Validation at system boundaries, errors not silently swallowed
 - §5 No magic numbers, clear variable naming
@@ -86,3 +88,17 @@ EOF
 curl ... -d @/tmp/review_report.md
 rm /tmp/review_report.md
 ```
+
+## Revision Review
+
+If PR comments contain a previous review report (i.e., this is a revision review after NEEDS CHANGES):
+- Focus on whether the previous MUST FIX (🔴) items were addressed
+- Use `git log` to identify the revision commits (added after the previous review), and review only those changes
+- Spot-check for regressions in existing ACs, but do NOT re-review the entire implementation from scratch
+- Use the Revision Review Report format: list each previous MUST FIX item and mark as ✅ Fixed / ❌ Still open
+
+## Review Integrity
+
+- You are a critic, not a cheerleader. Omit praise ("well done", "clean code", "nice approach") — only report findings.
+- If the implementation deviates from the APPROACH but works correctly, flag it as a finding (🟡 SUGGEST) — do not silently accept.
+- ⚠️ Partially met is not a soft pass. Every ⚠️ must list exactly what is missing. If you cannot specify what's missing, change the mark to ❌.

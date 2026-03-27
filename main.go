@@ -13,6 +13,7 @@ import (
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/tui"
+	"github.com/zac15987/zpit/internal/worktree"
 )
 
 //go:embed agents/clarifier.md
@@ -26,6 +27,21 @@ var agentGuidelinesMD []byte
 
 //go:embed docs/code-construction-principles.md
 var codeConstructionPrinciplesMD []byte
+
+//go:embed hooks/path-guard.sh
+var pathGuardSH []byte
+
+//go:embed hooks/bash-firewall.sh
+var bashFirewallSH []byte
+
+//go:embed hooks/git-guard.sh
+var gitGuardSH []byte
+
+//go:embed hooks/zpit-env.cmd
+var zpitEnvCMD []byte
+
+//go:embed hooks/notify-permission.sh
+var notifyPermissionSH []byte
 
 func main() {
 	cfgPath, err := config.DefaultConfigPath()
@@ -57,12 +73,6 @@ func main() {
 
 	locale.SetLanguage(cfg.Language)
 
-	if len(cfg.Projects) == 0 {
-		fmt.Fprintf(os.Stderr, "No projects defined in %s\n", cfgPath)
-		fmt.Fprintf(os.Stderr, "Please add at least one [[projects]] section, then run zpit again.\n")
-		os.Exit(0)
-	}
-
 	// Open daily log file.
 	baseDir, _ := config.BaseDir()
 	logDir := filepath.Join(baseDir, "logs")
@@ -79,8 +89,16 @@ func main() {
 	}
 	cleanOldLogs(logDir, 30)
 
+	hookScripts := worktree.HookScripts{
+		PathGuard:        pathGuardSH,
+		BashFirewall:     bashFirewallSH,
+		GitGuard:         gitGuardSH,
+		EnvWrapper:       zpitEnvCMD,
+		NotifyPermission: notifyPermissionSH,
+	}
+
 	p := tea.NewProgram(
-		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, logFile),
+		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, hookScripts, logFile),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

@@ -10,20 +10,37 @@ import (
 
 // ReviewerParams holds all data needed to assemble a reviewer prompt.
 type ReviewerParams struct {
-	IssueID    string
-	IssueTitle string
-	Spec       *tracker.IssueSpec
-	LogPolicy  string // "strict" | "standard" | "minimal"
-	BaseBranch string // e.g. "dev"
+	IssueID     string
+	IssueTitle  string
+	Spec        *tracker.IssueSpec
+	LogPolicy   string // "strict" | "standard" | "minimal"
+	BaseBranch  string // e.g. "dev"
+	ReviewRound int    // 0 = first review, >0 = revision review
 }
 
+const reviewerTrackerNotes = `
+## Tracker Operation Notes
+
+When writing the Review Report to the tracker (comment), follow the instructions in .claude/docs/tracker.md.
+Prefer MCP tools — pass content directly as a parameter.
+If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+Never embed long text directly in bash commands.
+`
+
 // BuildReviewerPrompt assembles the full reviewer agent prompt from Issue Spec data.
+// When ReviewRound > 0, it generates a revision review prompt that focuses on the delta.
 func BuildReviewerPrompt(p ReviewerParams) string {
 	var b strings.Builder
 
 	b.WriteString(locale.ResponseInstruction())
 
-	fmt.Fprintf(&b, "You are reviewing the implementation of issue %s: %s.\n", p.IssueID, p.IssueTitle)
+	// Common sections: issue info, requirements, approach, AC, scope, constraints, log policy
+	if p.ReviewRound > 0 {
+		fmt.Fprintf(&b, "You are performing a REVISION REVIEW (round %d) of issue %s: %s.\n", p.ReviewRound, p.IssueID, p.IssueTitle)
+		b.WriteString("This is NOT a full review. Focus on whether the previous MUST FIX items were addressed.\n")
+	} else {
+		fmt.Fprintf(&b, "You are reviewing the implementation of issue %s: %s.\n", p.IssueID, p.IssueTitle)
+	}
 
 	b.WriteString("\n## Original Requirements\n\n")
 	b.WriteString(p.Spec.Context)
@@ -42,32 +59,95 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
-	fmt.Fprintf(&b, `
+	if p.ReviewRound > 0 {
+		buildRevisionReviewProcess(&b, p)
+	} else {
+		buildFirstReviewProcess(&b, p)
+	}
+
+	return b.String()
+}
+
+// buildFirstReviewProcess writes the review process for the first review (full scope).
+func buildFirstReviewProcess(b *strings.Builder, p ReviewerParams) {
+	fmt.Fprintf(b, `
 
 ## Your Review Process
 
 1. Read CLAUDE.md to understand the project's conventions
    Read .claude/docs/tracker.md to understand how to operate the tracker (write comment, update label)
    Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
-2. Use git diff %s...HEAD to view all changes
-3. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
-4. Check whether any changes touch files outside the SCOPE
-5. Check whether the PR's target branch is `+"`%s`"+`; if not, mark as FAIL and note it in the Review Report
-6. Check whether any CONSTRAINTS are violated
-7. Check whether logging complies with the CLAUDE.md policy
-8. Read `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`, and spot-check code quality
-9. Produce the Review Report (see format below)
-10. Write the Review Report to both the PR comment and the issue comment
-11. If PASS, update issue label: remove "review", add "ai-review"
-12. If NEEDS CHANGES, update issue label: remove "review", add "needs-changes"
-
-## Tracker Operation Notes
-
-When writing the Review Report to the tracker (comment), follow the instructions in .claude/docs/tracker.md.
-Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
-Never embed long text directly in bash commands.
+2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary)
+3. Use git diff %s...HEAD to view all changes
+4. Re-read ACCEPTANCE_CRITERIA to confirm your understanding before marking verdicts — do not rely on your initial reading
+5. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
+6. Check whether any changes touch files outside the SCOPE
+7. Check whether the PR's target branch is `+"`%s`"+`; if not, mark as FAIL and note it in the Review Report
+8. Check whether any CONSTRAINTS are violated
+9. Check whether logging complies with the CLAUDE.md policy
+10. Read `+"`"+`.claude/docs/code-construction-principles.md`+"`"+`, and spot-check code quality
+11. Produce the Review Report (see format below)
+12. Write the Review Report to both the PR comment and the issue comment
+13. If PASS, update issue label: remove "review", add "ai-review"
+14. If NEEDS CHANGES, update issue label: remove "review", add "needs-changes"
 `, p.BaseBranch, p.BaseBranch)
 
-	return b.String()
+	b.WriteString(reviewerTrackerNotes)
+}
+
+// buildRevisionReviewProcess writes the review process for revision reviews (delta only).
+func buildRevisionReviewProcess(b *strings.Builder, p ReviewerParams) {
+	fmt.Fprintf(b, `
+
+## Your Revision Review Process
+
+This is a revision review. The coding agent has attempted to fix issues from the previous review.
+You must focus on the delta — do NOT re-review the entire implementation from scratch.
+
+1. Read CLAUDE.md to understand the project's conventions
+   Read .claude/docs/tracker.md to understand how to operate the tracker (write comment, update label)
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
+   Read .claude/docs/code-construction-principles.md for code quality reference
+2. Read PR comments to find the previous NEEDS CHANGES review report
+   Read issue comments for any additional context
+3. List all MUST FIX (🔴) items from the previous review
+4. Use git log --oneline %s...HEAD to see all commits; identify the revision commits
+   (typically the latest commits with [%s] fix: prefix, added after the previous review)
+5. Use git show or git diff on only the revision commits to view the delta
+6. For each previous MUST FIX item, verify whether it was addressed — mark as ✅ Fixed / ❌ Still open
+7. Re-read ACCEPTANCE_CRITERIA before the regression check — confirm your understanding of what each AC requires
+8. Spot-check the full diff (git diff %s...HEAD) to verify no regressions in existing ACs
+   You do NOT need to re-verify every AC in detail — only check for regressions introduced by the revision
+9. Check scope + constraints on the new changes only
+10. Produce the Revision Review Report (see format below)
+11. Write the Review Report to both the PR comment and the issue comment
+12. If all previous MUST FIX items are fixed and no regressions: update issue label: remove "review", add "ai-review"
+13. If any MUST FIX item remains unfixed or regressions found: update issue label: remove "review", add "needs-changes"
+
+## Revision Review Report Format
+
+### Revision Review Summary
+- Overall verdict: PASS / NEEDS CHANGES
+- Round: %d
+
+### Previous MUST FIX Verification
+(List each MUST FIX item from the previous review)
+- 🔴 Item 1: ✅ Fixed — [how it was fixed]
+- 🔴 Item 2: ❌ Still open — [what's still missing]
+...
+
+### Regression Check
+- Regressions found: ✅ None / ❌ [describe regression]
+
+### New Findings (if any)
+- 🔴 MUST FIX: [new blocking issue introduced by the revision]
+- 🟡 SUGGEST: [improvement suggestion]
+
+### Verdict Rules
+- Any previous MUST FIX still open → NEEDS CHANGES
+- Any regression found → NEEDS CHANGES
+- All MUST FIX items fixed + no regressions → PASS (even if there are 🟡 suggestions)
+`, p.BaseBranch, p.IssueID, p.BaseBranch, p.ReviewRound)
+
+	b.WriteString(reviewerTrackerNotes)
 }

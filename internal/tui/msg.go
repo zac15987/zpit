@@ -37,6 +37,12 @@ type WatcherErrorMsg struct {
 	Err       error
 }
 
+// sessionLostMsg indicates session discovery or log wait failed; the entry should be cleaned up.
+type sessionLostMsg struct {
+	ProjectID string
+	Text      string
+}
+
 // IssuesLoadedMsg carries the result of a TrackerClient.ListIssues call.
 type IssuesLoadedMsg struct {
 	ProjectID string
@@ -92,18 +98,12 @@ type LoopAgentWrittenMsg struct {
 
 // LoopAgentLaunchedMsg indicates a coding/reviewer agent was launched.
 type LoopAgentLaunchedMsg struct {
-	ProjectID string
-	IssueID   string
-	Role      string // "coder" or "reviewer"
-	Result    *terminal.LaunchResult
-	Err       error
-}
-
-// LoopAgentExitedMsg indicates an agent's PID is no longer alive.
-type LoopAgentExitedMsg struct {
-	ProjectID string
-	IssueID   string
-	Role      string // "coder" or "reviewer"
+	ProjectID  string
+	IssueID    string
+	Role       string // "coder" or "reviewer"
+	LaunchedAt int64  // unix timestamp captured just before terminal launch
+	Result     *terminal.LaunchResult
+	Err        error
 }
 
 // LoopPRStatusMsg carries the result of polling PR status for merge detection.
@@ -121,19 +121,12 @@ type LoopCleanupMsg struct {
 	Err       error
 }
 
-// LoopReviewResultMsg carries the verdict after checking issue labels post-review.
-type LoopReviewResultMsg struct {
-	ProjectID string
-	IssueID   string
-	Verdict   string // loop.VerdictApproved / VerdictNeedsChanges / VerdictUnknown
-	Err       error
-}
-
 // LoopOpenPRsMsg carries results of scanning open PRs at loop startup.
 type LoopOpenPRsMsg struct {
-	ProjectID string
-	PRs       []tracker.PRInfo
-	Err       error
+	ProjectID   string
+	PRs         []tracker.PRInfo
+	IssueLabels map[string][]string // issueID → labels (for state recovery)
+	Err         error
 }
 
 // loopPollTickMsg triggers the next poll cycle (unexported).
@@ -141,6 +134,20 @@ type loopPollTickMsg struct{ ProjectID string }
 
 // loopPRPollTickMsg triggers the next PR status poll (unexported).
 type loopPRPollTickMsg struct {
+	ProjectID string
+	IssueID   string
+}
+
+// LoopLabelPollMsg carries results of polling issue labels for state transitions.
+type LoopLabelPollMsg struct {
+	ProjectID string
+	IssueID   string
+	Labels    []string
+	Err       error
+}
+
+// loopLabelPollTickMsg triggers the next label poll (unexported).
+type loopLabelPollTickMsg struct {
 	ProjectID string
 	IssueID   string
 }

@@ -134,3 +134,6 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
   For temp files needed by curl fallback, use Bash heredoc (`cat << 'EOF' > /tmp/file`).**
 - **Branch strategy: If the user doesn't specify a particular branch, don't add the `## BRANCH` section
   (the Loop engine will use the project's default base branch). Only add it when the user explicitly specifies a different branch.**
+- **Challenge before acceptance**: When the user picks an approach, present the strongest counterargument before proceeding. If you genuinely have no concerns, state that explicitly.
+- **Confidence level**: When recommending an approach, attach a confidence level (high / medium / low). If medium or low, explain what information would raise your confidence.
+- **No premature closure**: If the user says "OK" or "go ahead" but you notice an unaddressed gap in the spec, raise it before proceeding — do not treat user approval as a signal to stop thinking critically.

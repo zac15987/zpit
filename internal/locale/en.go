@@ -18,12 +18,14 @@ var en = map[Key]string{
 	KeyOpenTracker:    "Open Issue Tracker",
 	KeyAddProject:     "Add project",
 	KeyEditConfig:     "Edit config",
+	KeyUndeploy:       "Undeploy agents",
 	KeyHelp:           "Help",
 	KeyQuit:           "Quit",
 
 	// Agent status text
 	KeySessionEnded:    "Session ended",
 	KeyWaitingForInput: "Waiting for input",
+	KeyPermissionWait:  "Waiting for permission",
 	KeyWorking:         "Working",
 	KeyLaunched:        "Launched",
 
@@ -57,6 +59,12 @@ var en = map[Key]string{
 	KeyCancel:               "Cancel",
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
 
+	// Undeploy confirm dialogs
+	KeyUndeployConfirm: "Remove all Zpit-deployed files from this project?\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployButton:  "Undeploy",
+	KeyUndeployDone:    "Undeployed %d item(s) from %s",
+	KeyUndeployNoop:    "No deployed files found (%s)",
+
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",
 	KeyCreateLabels:   "Create Labels",
@@ -68,4 +76,19 @@ var en = map[Key]string{
 	KeyCannotLaunch:   "Cannot launch in this state",
 	KeyNoWorktreePath: "Slot has no worktree",
 	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
+
+	// Config validation errors
+	// Agent init messages
+	KeyInitCoding:         "Start implementation",
+	KeyInitRevisionCoding: "Read PR review comments and fix the issues",
+	KeyInitReview:         "Start review",
+	KeyInitRevisionReview: "Start revision review, focus on previous MUST FIX items",
+
+	KeyErrConfigTitle:       "Configuration Error",
+	KeyErrDismissHint:       "Press Esc or Enter to dismiss",
+	KeyErrPathEmpty:         "Project path is not configured",
+	KeyErrRepoEmpty:         "Project repo is not configured",
+	KeyErrTrackerURLEmpty:   "Tracker URL is not configured",
+	KeyErrWorktreeBaseEmpty: "Worktree base directory is not configured",
+	KeyErrWorktreeMissing:   "Worktree directory no longer exists",
 }

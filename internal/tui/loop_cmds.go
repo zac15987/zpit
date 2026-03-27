@@ -10,12 +10,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/prompt"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
-	"github.com/zac15987/zpit/internal/watcher"
 	"github.com/zac15987/zpit/internal/worktree"
 )
 
@@ -66,6 +66,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	branchName := fmt.Sprintf("feat/%s-%s", issueID, slug)
 	mgr := m.wtManager
 	hookMode := project.HookMode
+	hookScripts := m.hookScripts
 	baseBranch := slot.BaseBranch
 
 	return func() tea.Msg {
@@ -80,7 +81,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 		if err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
-		if err := worktree.SetupHookMode(wtPath, hookMode); err != nil {
+		if err := worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts); err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
 		return LoopWorktreeCreatedMsg{
@@ -125,8 +126,13 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	agentGuidelines := m.agentGuidelinesMD
 	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	hookScripts := m.hookScripts
+	hookMode := project.HookMode
 
 	return func() tea.Msg {
+		// Safety-net: ensure hooks exist (handles resume from previous session)
+		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
@@ -154,13 +160,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 			BaseBranch: baseBranch,
 		})
 
-		// Deploy docs to worktree
-		if trackerDocContent != "" {
-			docsDir := filepath.Join(wtPath, ".claude", "docs")
-			_ = os.MkdirAll(docsDir, 0o755)
-			_ = os.WriteFile(filepath.Join(docsDir, "tracker.md"), []byte(trackerDocContent), 0o644)
-		}
-		deployStaticDocs(wtPath, agentGuidelines, codeConstructionPrinciples)
+		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
@@ -197,16 +197,18 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
 
-	initMsg := "開始實作"
+	initMsg := locale.T(locale.KeyInitCoding)
 	if slot.ReviewRound > 0 {
-		initMsg = "讀取 PR review comment，修正問題"
+		initMsg = locale.T(locale.KeyInitRevisionCoding)
 	}
 
 	return func() tea.Msg {
+		launchedAt := time.Now().Unix()
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
-			Role: "coder", Result: result, Err: err,
+			Role: "coder", LaunchedAt: launchedAt,
+			Result: result, Err: err,
 		}
 	}
 }
@@ -237,9 +239,22 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		logPolicy = p.LogPolicy
 	}
 	baseBranch := slot.BaseBranch
+	reviewRound := slot.ReviewRound
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
+	hookScripts := m.hookScripts
+	hookMode := project.HookMode
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	var trackerDocContent string
+	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
+	}
 
 	return func() tea.Msg {
+		// Safety-net: ensure hooks + docs exist
+		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
+		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
+
 		// Fetch issue for reviewer prompt
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -254,11 +269,12 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 			return LoopAgentLaunchedMsg{ProjectID: projectID, IssueID: issueID, Role: "reviewer", Err: err}
 		}
 		promptText := prompt.BuildReviewerPrompt(prompt.ReviewerParams{
-			IssueID:    issueID,
-			IssueTitle: issue.Title,
-			Spec:       spec,
-			LogPolicy:  logPolicy,
-			BaseBranch: baseBranch,
+			IssueID:     issueID,
+			IssueTitle:  issue.Title,
+			Spec:        spec,
+			LogPolicy:   logPolicy,
+			BaseBranch:  baseBranch,
+			ReviewRound: reviewRound,
 		})
 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
@@ -271,59 +287,16 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		}
 
 		agentName := fmt.Sprintf("reviewer-%s", issueID)
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, "開始 review")
+		launchedAt := time.Now().Unix()
+		initMsg := locale.T(locale.KeyInitReview)
+		if reviewRound > 0 {
+			initMsg = locale.T(locale.KeyInitRevisionReview)
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
-			Role: "reviewer", Result: result, Err: err,
-		}
-	}
-}
-
-// loopStartWatcherCmd finds the session PID and monitors until exit.
-func (m Model) loopStartWatcherCmd(projectID, issueID, role string) tea.Cmd {
-	ls := m.loops[projectID]
-	if ls == nil {
-		return nil
-	}
-	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
-	if slot == nil {
-		return nil
-	}
-	wtPath := slot.WorktreePath
-
-	return func() tea.Msg {
-		claudeHome, err := watcher.ClaudeHome()
-		if err != nil {
-			return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
-		}
-
-		// Retry to find session (agent needs time to start)
-		var pid int
-		for attempt := 0; attempt < sessionRetryMax; attempt++ {
-			sessions, err := watcher.FindActiveSessions(claudeHome, wtPath)
-			if err == nil && len(sessions) > 0 {
-				latest := sessions[0]
-				for _, s := range sessions[1:] {
-					if s.StartedAt > latest.StartedAt {
-						latest = s
-					}
-				}
-				pid = latest.PID
-				break
-			}
-			time.Sleep(sessionRetryInterval)
-		}
-
-		if pid == 0 {
-			return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
-		}
-
-		// Monitor PID until exit
-		for {
-			time.Sleep(loop.LivenessInterval)
-			if !watcher.IsProcessAlive(pid) {
-				return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
-			}
+			Role: "reviewer", LaunchedAt: launchedAt,
+			Result: result, Err: err,
 		}
 	}
 }
@@ -440,8 +413,8 @@ func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
 	})
 }
 
-// loopScanOpenPRsCmd queries open PRs to detect issues waiting for merge.
-func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
+// loopPollLabelsCmd fetches issue labels from tracker for state transitions.
+func (m Model) loopPollLabelsCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
@@ -455,8 +428,57 @@ func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+		issue, err := client.GetIssue(ctx, repo, issueID)
+		if err != nil {
+			return LoopLabelPollMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+		return LoopLabelPollMsg{ProjectID: projectID, IssueID: issueID, Labels: issue.Labels}
+	}
+}
+
+// loopScheduleLabelPoll schedules the next label poll after configured interval.
+func (m Model) loopScheduleLabelPoll(projectID, issueID string) tea.Cmd {
+	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
+		return loopLabelPollTickMsg{ProjectID: projectID, IssueID: issueID}
+	})
+}
+
+// loopScanOpenPRsCmd queries open PRs to detect issues waiting for merge.
+func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		prs, err := client.ListOpenPRs(ctx, repo)
-		return LoopOpenPRsMsg{ProjectID: projectID, PRs: prs, Err: err}
+		if err != nil {
+			return LoopOpenPRsMsg{ProjectID: projectID, Err: err}
+		}
+
+		// Fetch issue labels for each PR to determine correct resume state.
+		issueLabels := make(map[string][]string)
+		for _, pr := range prs {
+			issueID := extractIssueID(pr.Branch)
+			if issueID == "" {
+				continue
+			}
+			issue, err := client.GetIssue(ctx, repo, issueID)
+			if err != nil {
+				continue // fallback: handler will use default WaitingPRMerge
+			}
+			issueLabels[issueID] = issue.Labels
+		}
+
+		return LoopOpenPRsMsg{ProjectID: projectID, PRs: prs, IssueLabels: issueLabels}
 	}
 }
 
@@ -473,43 +495,6 @@ func extractIssueID(branch string) string {
 	return after[:idx]
 }
 
-// loopCheckReviewResultCmd fetches issue labels to determine reviewer verdict.
-func (m Model) loopCheckReviewResultCmd(projectID, issueID string) tea.Cmd {
-	project := m.findProject(projectID)
-	if project == nil {
-		return nil
-	}
-	client, ok := m.clients[project.Tracker]
-	if !ok {
-		return nil
-	}
-	repo := project.Repo
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		issue, err := client.GetIssue(ctx, repo, issueID)
-		if err != nil {
-			return LoopReviewResultMsg{ProjectID: projectID, IssueID: issueID, Err: err}
-		}
-
-		verdict := loop.VerdictUnknown
-		for _, label := range issue.Labels {
-			lower := strings.ToLower(label)
-			if lower == "ai-review" {
-				verdict = loop.VerdictApproved
-				break
-			}
-			if lower == "needs-changes" {
-				verdict = loop.VerdictNeedsChanges
-				break
-			}
-		}
-
-		return LoopReviewResultMsg{ProjectID: projectID, IssueID: issueID, Verdict: verdict}
-	}
-}
 
 // loopWriteRevisionAgentCmd writes a revision coding agent prompt and returns LoopAgentWrittenMsg.
 func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
@@ -537,8 +522,16 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	baseBranch := slot.BaseBranch
 	reviewRound := slot.ReviewRound
+	hookScripts := m.hookScripts
+	hookMode := project.HookMode
+	agentGuidelines := m.agentGuidelinesMD
+	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
+		// Safety-net: ensure hooks + docs exist
+		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
+		deployDocs(wtPath, "", agentGuidelines, codeConstructionPrinciples)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 

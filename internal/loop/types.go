@@ -1,19 +1,9 @@
 package loop
 
-import "time"
-
 const (
-	DefaultPollSeconds   = 15 // how often to poll tracker for todo issues (seconds)
-	DefaultPRPollSeconds = 30 // how often to poll for PR merge (seconds)
-	LivenessInterval       = 5 * time.Second  // how often to check agent PID liveness
-	DefaultMaxReviewRounds = 2                // max coding↔review cycles before human intervention
-)
-
-// Verdict constants for review result detection.
-const (
-	VerdictApproved     = "approved"
-	VerdictNeedsChanges = "needs_changes"
-	VerdictUnknown      = "unknown"
+	DefaultPollSeconds     = 15 // how often to poll tracker for todo issues (seconds)
+	DefaultPRPollSeconds   = 30 // how often to poll for PR/label changes (seconds)
+	DefaultMaxReviewRounds = 3  // max coding↔review cycles before human intervention
 )
 
 // SlotState represents the pipeline state of a single issue in the loop.
@@ -26,7 +16,6 @@ const (
 	SlotCoding
 	SlotLaunchingReviewer
 	SlotReviewing
-	SlotCheckingReview
 	SlotWaitingPRMerge
 	SlotCleaningUp
 	SlotDone
@@ -48,8 +37,6 @@ func (s SlotState) String() string {
 		return "launching reviewer"
 	case SlotReviewing:
 		return "reviewing"
-	case SlotCheckingReview:
-		return "checking review"
 	case SlotWaitingPRMerge:
 		return "waiting PR merge"
 	case SlotCleaningUp:
@@ -77,6 +64,7 @@ type Slot struct {
 	ReviewRound  int // 0-based; incremented on each NEEDS CHANGES retry
 	Error        error
 	SessionPID   int
+	LaunchedAt   int64 // unix timestamp captured just before agent launch
 }
 
 // LoopState tracks per-project loop status.

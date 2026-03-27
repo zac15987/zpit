@@ -6,36 +6,67 @@ A TUI-based AI development cockpit that orchestrates [Claude Code](https://claud
 
 ## TUI Preview
 
+### Main View
+
 ```
-  Zpit v0.1                                    03/23 22:24  Windows Terminal
+ Zpit v0.1                                        03/27 14:07  Windows Terminal
 
-  Projects                                Hotkeys
-  ────────────────────────────────        ──────────────────────────
 
- › ⚙️ AI Inspection Cleaning Demo         [Enter] Launch Claude Code
-     machine │ wpf, ethercat, basler      [c] Clarify requirement
-                                          [l] Loop auto-implement
-   ⚙️ ENR DUC                             [r] Review changes
-     machine │ wpf, secsgem               [s] Status overview
-                                          [o] Open project folder
-   🖥️ DisplayProfileManager               [p] Open Issue Tracker
-     desktop │ wpf, nlog
-                                          [Tab] Switch to slots
-   🖥️ Zpit                                [?] Help
-     desktop │ go, bubbletea              [q] Quit
+  Projects                                                Hotkeys
+  ────────────────────────────────                        ──────────────────────────
+
+   ⚙️ AI Inspection Cleaning Demo                         [Enter] Launch Claude Code
+     machine │ wpf, ethercat, basler                      [c] Clarify requirement
+                                                          [l] Loop auto-implement
+   ⚙️ ENR DUC                                             [r] Review changes
+     machine │ wpf, secsgem                               [s] Status overview
+                                                          [o] Open project folder
+   🖥️ DisplayProfileManager                               [p] Open Issue Tracker
+     desktop │ wpf, nlog                                  [u] Undeploy agents
+
+ › 🖥️ Zpit                                                [a] Add project
+     desktop │ go, bubbletea                              [e] Edit config
+
+                                                          [Tab] Switch to slots
+                                                          [?] Help
+                                                          [q] Quit
 
 
   Active Terminals
   ──────────────────────────────────────────────────
-  [1] AI Inspection Cleaning Demo │ 🟢 Working 02:15
+  [1] AI Inspection Cleaning Demo │ 🟡 Waiting for input 04:15
+      Q: Issue B pushed: **[#25 — feat(manual-control): Safety Interlock + Soft Lim
+  [2] Zpit │ 🟡 Waiting for input 08:36
+      Q: Pushed to `origin/dev`. Commit `2094bea`.
+  [3] Zpit │ 🟢 Launched 00:09
+      Tab: Zpit
+
 
   Loop Status
   ──────────────────────────────────────────────────
   AI Inspection Cleaning Demo (running)
-   › 🟡 #17 Refactor config to TOML  waiting PR merge
-    🟢 #19 Write README docs         coding
+    🟢 #25 feat(manual-control): Safety Interlock...  coding
 
-  Enter: open Claude  ↑↓: navigate  Tab/Esc: back
+
+
+  Press ? for help, q to quit
+```
+
+### Status View
+
+```
+ Zpit v0.1                                        03/27 14:04  Windows Terminal
+
+
+  Issues — AI Inspection Cleaning Demo
+  ────────────────────────────────────────────────────────────
+
+ › #25   [pending] feat(manual-control): Safety Interlock + Soft Limit + Reset Zero
+
+
+
+
+  [y] Confirm (pending→todo)  [p] Open in browser  [Esc] Back
 ```
 
 ## Status
@@ -73,8 +104,8 @@ You (TUI)                    Claude Code Agents
 
 - **Multi-project dashboard** — switch between projects with arrow keys, mouse scroll support
 - **Loop engine** — fully automated: poll todo issues → create worktree → coding agent → reviewer → PR merge → cleanup
-- **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Ended), auto-detects running sessions on startup
-- **Notifications** — Windows Toast + sound when an agent needs your input
+- **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Permission / Ended), auto-detects running sessions on startup, survives `/resume` session switches
+- **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
@@ -158,6 +189,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
+| `u` | Undeploy — remove deployed agents, docs, hooks |
 | `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
 | `q` | Quit |
 
@@ -167,10 +199,10 @@ The loop engine automates the full coding cycle:
 
 1. **Poll** tracker for `todo` issues (configurable interval)
 2. **Create worktree** — isolated git worktree from `base_branch`
-3. **Launch coding agent** — writes implementation, commits, opens PR
-4. **Detect PR** — polls tracker for PR by branch name
-5. **Launch reviewer** — checks acceptance criteria, writes review report
-6. **Verdict** — PASS (wait for human merge) or NEEDS CHANGES (auto-retry up to `max_review_rounds`)
+3. **Launch coding agent** — writes implementation, commits, opens PR, sets `review` label
+4. **Detect completion** — polls issue labels for `review` (agents don't need to exit)
+5. **Launch reviewer** — checks acceptance criteria, writes review report, sets verdict label
+6. **Detect verdict** — polls issue labels for `ai-review` (PASS → wait for human merge) or `needs-changes` (auto-retry up to `max_review_rounds`)
 7. **Cleanup** — after PR merge, removes worktree and branch
 
 Multiple issues run in parallel, limited by `max_per_project`.
@@ -192,7 +224,10 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
 - `git-guard.sh` — blocks push, merge, rebase; agents only commit
 
-Hook strictness is per-project: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
+**Notification hook:**
+- `notify-permission.sh` — writes signal file when Claude Code needs tool permission approval; TUI detects and shows 🟠 status + toast notification
+
+Hook strictness is per-project: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only). Notification hook is always active in all modes.
 
 ## Issue Spec Format
 

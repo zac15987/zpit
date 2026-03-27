@@ -19,9 +19,10 @@ const (
 	iconWeb      = "🌐 "
 	iconDesktop  = "🖥️ "
 	iconAndroid  = "📱 "
-	iconWorking  = "🟢"
-	iconWaiting  = "🟡"
-	iconEnded    = "⚫"
+	iconWorking    = "🟢"
+	iconWaiting    = "🟡"
+	iconPermission = "🟠"
+	iconEnded      = "⚫"
 	cursorMarker = " › "
 	boxHoriz     = "─"
 	boxVert      = "│"
@@ -173,6 +174,7 @@ func (m Model) renderHotkeys() string {
 		{"s", locale.T(locale.KeyStatusOverview), false},
 		{"o", locale.T(locale.KeyOpenFolder), false},
 		{"p", locale.T(locale.KeyOpenTracker), false},
+		{"u", locale.T(locale.KeyUndeploy), false},
 		{"a", locale.T(locale.KeyAddProject), true},
 		{"e", locale.T(locale.KeyEditConfig), false},
 		{"Tab", locale.T(locale.KeyFocusSlot), true},
@@ -193,8 +195,13 @@ func (m Model) renderHotkeys() string {
 }
 
 func (m Model) projectName(id string) string {
+	// Strip "#N" suffix used for multi-session tracking keys.
+	lookupID := id
+	if idx := strings.Index(id, "#"); idx != -1 {
+		lookupID = id[:idx]
+	}
 	for _, p := range m.projects {
-		if p.ID == id {
+		if p.ID == lookupID {
 			return p.Name
 		}
 	}
@@ -231,13 +238,11 @@ func (m Model) renderActiveTerminals() string {
 			detailStyle.Render(elapsed),
 		))
 
-		// Question preview when waiting (single line).
-		if at.LastQuestion != "" && statusIcon == iconWaiting {
-			oneline := strings.Join(strings.Fields(at.LastQuestion), " ")
-			preview := truncate(oneline, 80)
+		// Context preview (question or permission message).
+		if prefix, text := agentContextPreview(at, statusIcon); text != "" {
 			b.WriteString(fmt.Sprintf("      %s %s\n",
-				detailStyle.Render("Q:"),
-				questionStyle.Render(preview),
+				detailStyle.Render(prefix),
+				questionStyle.Render(text),
 			))
 		}
 
@@ -257,6 +262,8 @@ func renderAgentStatus(at *ActiveTerminal) (string, string) {
 	switch at.State {
 	case watcher.StateEnded:
 		return iconEnded, detailStyle.Render(iconEnded + " " + locale.T(locale.KeySessionEnded))
+	case watcher.StatePermission:
+		return iconPermission, waitingStyle.Render(iconPermission + " " + locale.T(locale.KeyPermissionWait))
 	case watcher.StateWaiting:
 		return iconWaiting, waitingStyle.Render(iconWaiting + " " + locale.T(locale.KeyWaitingForInput))
 	case watcher.StateWorking:
@@ -326,8 +333,6 @@ func (m Model) renderLoopStatus() string {
 			switch slot.State {
 			case loop.SlotError:
 				icon = "🔴"
-			case loop.SlotCheckingReview:
-				icon = "🔍"
 			case loop.SlotNeedsHuman:
 				icon = "🟠"
 			case loop.SlotWaitingPRMerge:
@@ -361,6 +366,22 @@ func (m Model) renderLoopStatus() string {
 	}
 
 	return b.String()
+}
+
+// agentContextPreview returns a prefix and truncated one-line preview for the
+// active terminal's current context (question or permission message).
+func agentContextPreview(at *ActiveTerminal, statusIcon string) (string, string) {
+	var prefix, raw string
+	switch {
+	case at.LastQuestion != "" && statusIcon == iconWaiting:
+		prefix, raw = "Q:", at.LastQuestion
+	case at.PermissionMessage != "" && statusIcon == iconPermission:
+		prefix, raw = "P:", at.PermissionMessage
+	default:
+		return "", ""
+	}
+	oneline := strings.Join(strings.Fields(raw), " ")
+	return prefix, truncate(oneline, 80)
 }
 
 func truncate(s string, maxLen int) string {
