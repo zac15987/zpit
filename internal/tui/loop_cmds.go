@@ -141,10 +141,10 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
 
-		missing := tracker.ValidateIssueSpec(issue.Body)
-		if len(missing) > 0 {
+		validation := tracker.ValidateIssueSpec(issue.Body)
+		if len(validation.Errors) > 0 {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID,
-				Err: fmt.Errorf("issue #%s missing sections: %v", issueID, missing)}
+				Err: fmt.Errorf("issue #%s validation errors: %v", issueID, validation.Errors)}
 		}
 
 		spec, err := tracker.ParseIssueSpec(issue.Body)

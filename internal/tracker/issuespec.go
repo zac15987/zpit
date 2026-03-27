@@ -1,6 +1,8 @@
 package tracker
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +13,12 @@ var requiredSections = []string{
 	"## SCOPE",
 	"## CONSTRAINTS",
 }
+
+// validScopeActions lists the allowed action keywords in SCOPE entries.
+var validScopeActions = []string{"modify", "create", "delete"}
+
+// vagueWords lists forbidden vague words/phrases in acceptance criteria.
+var vagueWords = []string{"appropriate", "reasonable", "sufficient", "when necessary"}
 
 // IssueSpec is the structured representation of an issue body.
 type IssueSpec struct {
@@ -30,16 +38,248 @@ type ScopeEntry struct {
 	Reason string
 }
 
-// ValidateIssueSpec returns a list of missing required section headers.
-// An empty slice means the body is valid.
-func ValidateIssueSpec(body string) []string {
-	var missing []string
+// ValidationResult holds structured validation output with two severity levels.
+// Errors are hard blocks (Loop engine refuses to execute).
+// Warnings are soft signals (TUI can display, Loop proceeds).
+type ValidationResult struct {
+	Errors   []string
+	Warnings []string
+}
+
+// ValidateIssueSpec performs comprehensive validation on an issue body and
+// returns a ValidationResult with Errors (hard block) and Warnings (soft).
+func ValidateIssueSpec(body string) ValidationResult {
+	result := ValidationResult{}
+
+	// --- Errors ---
+
+	// Check required sections
 	for _, section := range requiredSections {
 		if !strings.Contains(body, section) {
-			missing = append(missing, section)
+			result.Errors = append(result.Errors, fmt.Sprintf("missing required section: %s", section))
 		}
 	}
-	return missing
+
+	// Check for unresolved markers
+	checkUnresolvedMarkers(body, &result)
+
+	// Check SCOPE entry format
+	checkScopeFormat(body, &result)
+
+	// --- Warnings ---
+
+	// Check vague words in AC lines
+	checkVagueWords(body, &result)
+
+	// Check AC numbering gaps
+	checkACNumberingGaps(body, &result)
+
+	// Check SCOPE-AC coverage
+	checkScopeACCoverage(body, &result)
+
+	return result
+}
+
+// checkUnresolvedMarkers detects [UNRESOLVED: ...] markers left in the body.
+func checkUnresolvedMarkers(body string, result *ValidationResult) {
+	idx := 0
+	for {
+		pos := strings.Index(body[idx:], "[UNRESOLVED: ")
+		if pos < 0 {
+			break
+		}
+		absPos := idx + pos
+		// Extract the marker text up to the closing bracket
+		endPos := strings.Index(body[absPos:], "]")
+		marker := body[absPos:]
+		if endPos >= 0 {
+			marker = body[absPos : absPos+endPos+1]
+		}
+		result.Errors = append(result.Errors,
+			fmt.Sprintf("UNRESOLVED marker found: %s", marker))
+		idx = absPos + 1
+	}
+}
+
+// checkScopeFormat validates that lines in the SCOPE section start with a valid
+// bracketed action keyword ([modify], [create], or [delete]).
+func checkScopeFormat(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	scopeContent, ok := sections["SCOPE"]
+	if !ok || scopeContent == "" {
+		return
+	}
+
+	for _, line := range strings.Split(scopeContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Lines that look like scope entries (contain a path-like string) but
+		// don't start with a valid bracket action are format errors.
+		if !strings.HasPrefix(trimmed, "[") {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("SCOPE format error: line does not start with [modify], [create], or [delete]: %s", trimmed))
+			continue
+		}
+
+		// Has bracket — extract action and validate
+		closeBracket := strings.Index(trimmed, "]")
+		if closeBracket < 0 {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("SCOPE format error: unclosed bracket: %s", trimmed))
+			continue
+		}
+		action := strings.ToLower(trimmed[1:closeBracket])
+		isValid := false
+		for _, valid := range validScopeActions {
+			if action == valid {
+				isValid = true
+				break
+			}
+		}
+		if !isValid {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("SCOPE format error: invalid action [%s], must be [modify], [create], or [delete]: %s", action, trimmed))
+		}
+	}
+}
+
+// checkVagueWords scans AC lines for forbidden vague words/phrases.
+func checkVagueWords(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	acContent, ok := sections["ACCEPTANCE_CRITERIA"]
+	if !ok || acContent == "" {
+		return
+	}
+
+	for _, line := range strings.Split(acContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "AC-") {
+			continue
+		}
+
+		// Extract AC identifier (e.g., "AC-2")
+		acID := extractACID(trimmed)
+
+		lower := strings.ToLower(trimmed)
+		for _, vw := range vagueWords {
+			if strings.Contains(lower, vw) {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("vague word in %s: \"%s\"", acID, vw))
+			}
+		}
+	}
+}
+
+// checkACNumberingGaps detects gaps in AC-N numbering (e.g., AC-1 and AC-3 but no AC-2).
+func checkACNumberingGaps(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	acContent, ok := sections["ACCEPTANCE_CRITERIA"]
+	if !ok || acContent == "" {
+		return
+	}
+
+	// Collect all AC numbers
+	var numbers []int
+	for _, line := range strings.Split(acContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "AC-") {
+			continue
+		}
+		// Parse number after "AC-"
+		rest := trimmed[3:]
+		numStr := ""
+		for _, ch := range rest {
+			if ch >= '0' && ch <= '9' {
+				numStr += string(ch)
+			} else {
+				break
+			}
+		}
+		if num, err := strconv.Atoi(numStr); err == nil {
+			numbers = append(numbers, num)
+		}
+	}
+
+	if len(numbers) == 0 {
+		return
+	}
+
+	// Find min and max
+	minN, maxN := numbers[0], numbers[0]
+	present := make(map[int]bool)
+	for _, n := range numbers {
+		present[n] = true
+		if n < minN {
+			minN = n
+		}
+		if n > maxN {
+			maxN = n
+		}
+	}
+
+	// Check for gaps between min and max
+	for i := minN; i <= maxN; i++ {
+		if !present[i] {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("AC numbering gap: AC-%d is missing", i))
+		}
+	}
+}
+
+// checkScopeACCoverage warns when a SCOPE entry's filename does not appear in any AC line.
+func checkScopeACCoverage(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	scopeContent := sections["SCOPE"]
+	acContent := sections["ACCEPTANCE_CRITERIA"]
+
+	if scopeContent == "" || acContent == "" {
+		return
+	}
+
+	// Collect all AC lines for substring matching
+	acLower := strings.ToLower(acContent)
+
+	for _, line := range strings.Split(scopeContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "[") {
+			continue
+		}
+		entry := parseScopeEntry(trimmed)
+		if entry.Path == "" {
+			continue
+		}
+
+		// Extract the filename (last segment of path)
+		filename := entry.Path
+		if lastSlash := strings.LastIndex(entry.Path, "/"); lastSlash >= 0 {
+			filename = entry.Path[lastSlash+1:]
+		}
+
+		if !strings.Contains(acLower, strings.ToLower(filename)) {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("SCOPE entry not covered by any AC: %s", entry.Path))
+		}
+	}
+}
+
+// extractACID extracts the "AC-N" identifier from an AC line.
+func extractACID(line string) string {
+	// line starts with "AC-", extract "AC-N"
+	rest := line[3:]
+	numStr := ""
+	for _, ch := range rest {
+		if ch >= '0' && ch <= '9' {
+			numStr += string(ch)
+		} else {
+			break
+		}
+	}
+	if numStr == "" {
+		return "AC-?"
+	}
+	return "AC-" + numStr
 }
 
 // ParseIssueSpec splits the body by ## headers and parses each section.
