@@ -77,6 +77,8 @@ type PendingOp struct {
 type ActiveTerminal struct {
 	LaunchResult   *terminal.LaunchResult
 	SessionPID     int
+	SessionID      string // current session ID (for /resume change detection)
+	WorkDir        string // project work directory (needed to recompute logPath on session switch)
 	State          watcher.AgentState
 	LastQuestion   string
 	StateChangedAt time.Time
@@ -278,8 +280,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// If error overlay is showing, only allow dismiss (Esc/Enter) and tick.
 	if m.errorOverlay != "" {
 		if _, ok := msg.(TickMsg); ok {
-			m.checkSessionLiveness()
-			return m, tickCmd()
+			cmds := m.checkSessionLiveness()
+			cmds = append(cmds, tickCmd())
+			return m, tea.Batch(cmds...)
 		}
 		if msg, ok := msg.(tea.KeyMsg); ok {
 			if key.Matches(msg, m.keys.Enter) || key.Matches(msg, m.keys.Back) {
@@ -293,8 +296,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.confirmForm != nil {
 		// Let tick through so the UI stays responsive after confirm closes.
 		if _, ok := msg.(TickMsg); ok {
-			m.checkSessionLiveness()
-			return m, tickCmd()
+			cmds := m.checkSessionLiveness()
+			cmds = append(cmds, tickCmd())
+			return m, tea.Batch(cmds...)
 		}
 		form, cmd := m.confirmForm.Update(msg)
 		if f, ok := form.(*huh.Form); ok {
@@ -341,25 +345,38 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		for _, entry := range msg.Entries {
 			key := m.nextTrackingKey(entry.ProjectID)
-			m.logger.Printf("  attach: key=%s PID=%d", key, entry.PID)
+			m.logger.Printf("  attach: key=%s PID=%d sessionID=%s", key, entry.PID, entry.SessionID)
 			m.activeTerminals[key] = &ActiveTerminal{
 				State:          watcher.StateUnknown,
 				SessionPID:     entry.PID,
+				SessionID:      entry.SessionID,
+				WorkDir:        entry.WorkDir,
 				StateChangedAt: time.Now(),
 			}
-			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.LogPath, m.logger))
+			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.logger))
 		}
 		return m, tea.Batch(cmds...)
 
 	case sessionFoundMsg:
-		m.logger.Printf("session found: key=%s PID=%d", msg.ProjectID, msg.PID)
-		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
-			at.SessionPID = msg.PID
+		m.logger.Printf("session found: key=%s PID=%d sessionID=%s", msg.ProjectID, msg.PID, msg.SessionID)
+		at, ok := m.activeTerminals[msg.ProjectID]
+		if !ok {
+			return m, nil
 		}
-		return m, waitForLogCmd(msg.ProjectID, msg.PID, msg.LogPath, m.logger)
+		at.SessionPID = msg.PID
+		at.SessionID = msg.SessionID
+		return m, waitForLogCmd(msg.ProjectID, msg.PID, msg.SessionID, msg.LogPath, at.WorkDir, m.logger)
 
 	case watcherReadyMsg:
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
+			// Stale guard: if session has already switched past this msg, discard.
+			if at.SessionID != "" && msg.SessionID != "" && at.SessionID != msg.SessionID {
+				m.logger.Printf("watcher ready: key=%s STALE (at=%s, msg=%s), discarding",
+					msg.ProjectID, at.SessionID, msg.SessionID)
+				msg.Watcher.Stop()
+				return m, nil
+			}
+			at.SessionID = msg.SessionID
 			at.Watcher = msg.Watcher
 			if at.State == watcher.StateUnknown && msg.LogPath != "" {
 				state, question := watcher.ReadLastState(msg.LogPath)
@@ -376,8 +393,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TickMsg:
-		m.checkSessionLiveness()
-		return m, tickCmd()
+		cmds := m.checkSessionLiveness()
+		cmds = append(cmds, tickCmd())
+		return m, tea.Batch(cmds...)
 
 	case WatcherErrorMsg:
 		m.logger.Printf("watcher error: key=%s err=%v", msg.ProjectID, msg.Err)
@@ -850,22 +868,25 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	trackKey = m.nextTrackingKey(trackKey)
 	m.logger.Printf("launch: key=%s (PID pending)", trackKey)
 
+	// Resolve WorkDir before creating ActiveTerminal so it's always stored.
+	workDir := msg.WorkDir
+	if workDir == "" {
+		project := m.findProject(msg.ProjectID)
+		if project == nil {
+			return m, nil
+		}
+		workDir = platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	}
+
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
+		WorkDir:        workDir,
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}
 	m.activeTerminals[trackKey] = at
 
-	// Try to start watching the session log.
-	if msg.WorkDir == "" {
-		project := m.findProject(msg.ProjectID)
-		if project == nil {
-			return m, nil
-		}
-		msg.WorkDir = platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	}
-	return m, m.startWatcherDirCmd(trackKey, msg.WorkDir)
+	return m, m.startWatcherDirCmd(trackKey, workDir)
 }
 
 func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
@@ -979,6 +1000,8 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 				entries = append(entries, existingSessionEntry{
 					ProjectID: p.id,
 					PID:       s.PID,
+					SessionID: s.SessionID,
+					WorkDir:   p.path,
 					LogPath:   logPath,
 				})
 			}
@@ -1031,7 +1054,7 @@ func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 		}
 
 		logPath := watcher.LogFilePath(claudeHome, workDir, latest.SessionID)
-		return sessionFoundMsg{ProjectID: trackingKey, PID: latest.PID, LogPath: logPath}
+		return sessionFoundMsg{ProjectID: trackingKey, PID: latest.PID, SessionID: latest.SessionID, LogPath: logPath}
 	}
 }
 
@@ -1039,6 +1062,7 @@ func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 type sessionFoundMsg struct {
 	ProjectID string
 	PID       int
+	SessionID string
 	LogPath   string
 }
 
@@ -1046,6 +1070,8 @@ type sessionFoundMsg struct {
 type existingSessionEntry struct {
 	ProjectID string
 	PID       int
+	SessionID string
+	WorkDir   string
 	LogPath   string
 }
 
@@ -1080,22 +1106,49 @@ type existingSessionsMsg struct {
 }
 
 // waitForLogCmd phase 2: wait for the JSONL file to be created, then start the watcher.
-func waitForLogCmd(projectID string, pid int, logPath string, logger *log.Logger) tea.Cmd {
+// Re-reads {pid}.json each iteration to detect /resume session switches.
+func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string, logger *log.Logger) tea.Cmd {
 	return func() tea.Msg {
-		logger.Printf("waitForLog: key=%s pid=%d path=%s", projectID, pid, logPath)
+		logger.Printf("waitForLog: key=%s pid=%d sessionID=%s path=%s", projectID, pid, sessionID, logPath)
+
+		claudeHome, _ := watcher.ClaudeHome() // best-effort; empty means skip re-check
+
 		for attempt := range logWaitRetryMax {
 			if !watcher.IsProcessAlive(pid) {
 				logger.Printf("waitForLog: key=%s pid=%d died at attempt %d", projectID, pid, attempt)
 				return sessionLostMsg{ProjectID: projectID, Text: "session ended before log created"}
 			}
+
+			// Re-check session file for /resume detection.
+			// On switch, return sessionFoundMsg to let update loop sync AT.SessionID first.
+			if claudeHome != "" && workDir != "" {
+				if info, err := watcher.ReadSessionByPID(claudeHome, pid); err == nil {
+					if info.SessionID != sessionID {
+						newLogPath := watcher.LogFilePath(claudeHome, workDir, info.SessionID)
+						logger.Printf("waitForLog: key=%s session switched %s → %s",
+							projectID, sessionID, info.SessionID)
+						return sessionFoundMsg{
+							ProjectID: projectID,
+							PID:       pid,
+							SessionID: info.SessionID,
+							LogPath:   newLogPath,
+						}
+					}
+				} else {
+					logger.Printf("waitForLog: key=%s ReadSessionByPID failed: %v", projectID, err)
+				}
+			} else {
+				logger.Printf("waitForLog: key=%s skip re-check (claudeHome=%q workDir=%q)", projectID, claudeHome, workDir)
+			}
+
 			if _, err := os.Stat(logPath); err == nil {
-				logger.Printf("waitForLog: key=%s file found at attempt %d", projectID, attempt)
+				logger.Printf("waitForLog: key=%s file found at attempt %d (sessionID=%s)", projectID, attempt, sessionID)
 				w, err := watcher.New(projectID, logPath)
 				if err != nil {
 					logger.Printf("waitForLog: key=%s watcher creation failed: %v", projectID, err)
 					return WatcherErrorMsg{ProjectID: projectID, Err: err}
 				}
-				return watcherReadyMsg{ProjectID: projectID, Watcher: w, LogPath: logPath}
+				return watcherReadyMsg{ProjectID: projectID, SessionID: sessionID, Watcher: w, LogPath: logPath}
 			}
 			time.Sleep(sessionRetryInterval)
 		}
@@ -1111,16 +1164,21 @@ func waitForLogCmd(projectID string, pid int, logPath string, logger *log.Logger
 // watcherReadyMsg is an internal message to attach a watcher to an ActiveTerminal.
 type watcherReadyMsg struct {
 	ProjectID string
+	SessionID string
 	Watcher   *watcher.Watcher
 	LogPath   string
 }
 
-func (m *Model) checkSessionLiveness() {
+func (m *Model) checkSessionLiveness() []tea.Cmd {
 	now := time.Now()
 	if now.Sub(m.lastLivenessCheck) < livenessCheckInterval {
-		return
+		return nil
 	}
 	m.lastLivenessCheck = now
+
+	claudeHome, _ := watcher.ClaudeHome() // best-effort; empty means skip /resume detection
+
+	var cmds []tea.Cmd
 
 	for projectID, at := range m.activeTerminals {
 		// Clean up ended sessions after display duration.
@@ -1143,8 +1201,39 @@ func (m *Model) checkSessionLiveness() {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
+			continue
+		}
+
+		// /resume detection: re-read {pid}.json and check if sessionId changed.
+		if claudeHome != "" && at.SessionID != "" && at.WorkDir != "" {
+			if info, err := watcher.ReadSessionByPID(claudeHome, at.SessionPID); err == nil {
+				if info.SessionID != at.SessionID {
+					newLogPath := watcher.LogFilePath(claudeHome, at.WorkDir, info.SessionID)
+					m.logger.Printf("session switch detected: key=%s old=%s new=%s",
+						projectID, at.SessionID, info.SessionID)
+
+					// Stop old watcher and restart for new session.
+					if at.Watcher != nil {
+						at.Watcher.Stop()
+						at.Watcher = nil
+					}
+					at.SessionID = info.SessionID
+					at.State = watcher.StateUnknown
+					at.StateChangedAt = now
+					at.LastQuestion = ""
+
+					cmds = append(cmds, waitForLogCmd(
+						projectID, at.SessionPID, info.SessionID, newLogPath, at.WorkDir, m.logger))
+				}
+			} else {
+				m.logger.Printf("liveness: key=%s ReadSessionByPID(%d) failed: %v", projectID, at.SessionPID, err)
+			}
+		} else if claudeHome != "" {
+			m.logger.Printf("liveness: key=%s skip resume check (sessionID=%q workDir=%q)", projectID, at.SessionID, at.WorkDir)
 		}
 	}
+
+	return cmds
 }
 
 func (m Model) findProject(id string) *config.ProjectConfig {

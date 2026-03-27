@@ -33,12 +33,12 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Windows Toast notification when agent waits for input (via PowerShell)
 - Sound alert (SystemSounds.Asterisk)
 - Notification cooldown (re_remind_minutes, per-project)
-- Session liveness check: PID monitoring every 10s, detects closed sessions
+- Session liveness check: PID monitoring every 5s, detects closed sessions + `/resume` session switches
 - Startup session scan: detects already-running Claude Code sessions on launch, auto-attaches watchers
 - 3 PreToolUse hook scripts + 1 env wrapper with 32 tests
 - Hook auto-deploy: hook scripts embedded via go:embed, deployed to `.claude/hooks/` + `settings.json` merged on every agent launch (`[c]`/`[r]`/`[l]`)
 - Hook deployment script (`scripts/setup-hooks.sh`, manual fallback)
-- 14 client tests + 12 issuespec tests + 6 url tests + 22 watcher tests + 6 notify tests + 7 config tests
+- 14 client tests + 12 issuespec tests + 6 url tests + 25 watcher tests + 6 notify tests + 7 config tests
 - 11 slug tests + 5 worktree manager tests + 11 hook config tests + 5 prompt tests
 - TrackerClient: 直接 REST API（Forgejo / GitHub），token_env auth
 - Issue Spec validation (`ValidateIssueSpec`) + parsing (`ParseIssueSpec`)
@@ -105,7 +105,7 @@ internal/
 ├── watcher/
 │   ├── encode.go                # EncodeCwd() path encoding + ClaudeHome()
 │   ├── parse.go                 # AgentState enum + ParseLine() JSONL parser
-│   ├── session.go               # FindActiveSessions() + IsProcessAlive() + LogFilePath()
+│   ├── session.go               # FindActiveSessions() + ReadSessionByPID() + IsProcessAlive() + LogFilePath()
 │   ├── watcher.go               # Watcher: fsnotify tail + WatchOnce()
 │   ├── process_windows.go       # PID liveness check (Windows tasklist)
 │   ├── process_unix.go          # PID liveness check (Unix signal 0)
@@ -183,7 +183,8 @@ The TUI monitors Claude Code sessions via their JSONL log files:
 3. **Two-phase startup**: finds session PID immediately (enables liveness check), then waits for JSONL file creation (happens on first user input)
 4. **State detection**: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
 5. **Notifications**: on state transition to waiting → Windows Toast + sound (respects config + cooldown)
-6. **Liveness check**: every 10s verifies PID is alive; ended sessions auto-remove after 10s display
+6. **Liveness check**: every 5s verifies PID is alive; ended sessions auto-remove after 3s display
+7. **`/resume` detection**: liveness check re-reads `{pid}.json` each cycle; if `sessionId` changed, stops old watcher and restarts for new session. `waitForLogCmd` also re-checks during JSONL wait phase.
 
 ### TrackerClient (M3)
 

@@ -240,6 +240,87 @@ func writeSessionJSON(t *testing.T, dir, name string, info SessionInfo) {
 	}
 }
 
+// --- ReadSessionByPID ---
+
+func TestReadSessionByPID(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessDir := filepath.Join(tmpDir, "sessions")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeSessionJSON(t, sessDir, "42.json", SessionInfo{
+		PID:       42,
+		SessionID: "session-abc",
+		Cwd:       "/home/user/project",
+		StartedAt: 1000,
+	})
+
+	info, err := ReadSessionByPID(tmpDir, 42)
+	if err != nil {
+		t.Fatalf("ReadSessionByPID failed: %v", err)
+	}
+	if info.SessionID != "session-abc" {
+		t.Errorf("SessionID = %q, want %q", info.SessionID, "session-abc")
+	}
+	if info.PID != 42 {
+		t.Errorf("PID = %d, want 42", info.PID)
+	}
+}
+
+func TestReadSessionByPID_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessDir := filepath.Join(tmpDir, "sessions")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ReadSessionByPID(tmpDir, 99999)
+	if err == nil {
+		t.Error("expected error for missing session file")
+	}
+}
+
+func TestReadSessionByPID_SessionSwitch(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessDir := filepath.Join(tmpDir, "sessions")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initial session
+	writeSessionJSON(t, sessDir, "42.json", SessionInfo{
+		PID:       42,
+		SessionID: "session-v1",
+		Cwd:       "/home/user/project",
+		StartedAt: 1000,
+	})
+
+	info1, err := ReadSessionByPID(tmpDir, 42)
+	if err != nil {
+		t.Fatalf("first read failed: %v", err)
+	}
+	if info1.SessionID != "session-v1" {
+		t.Fatalf("initial SessionID = %q, want %q", info1.SessionID, "session-v1")
+	}
+
+	// Simulate /resume: overwrite with new sessionId
+	writeSessionJSON(t, sessDir, "42.json", SessionInfo{
+		PID:       42,
+		SessionID: "session-v2",
+		Cwd:       "/home/user/project",
+		StartedAt: 2000,
+	})
+
+	info2, err := ReadSessionByPID(tmpDir, 42)
+	if err != nil {
+		t.Fatalf("second read failed: %v", err)
+	}
+	if info2.SessionID != "session-v2" {
+		t.Errorf("updated SessionID = %q, want %q", info2.SessionID, "session-v2")
+	}
+}
+
 // --- AgentState.String ---
 
 func TestAgentState_String(t *testing.T) {

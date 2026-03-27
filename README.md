@@ -73,7 +73,7 @@ You (TUI)                    Claude Code Agents
 
 - **Multi-project dashboard** — switch between projects with arrow keys, mouse scroll support
 - **Loop engine** — fully automated: poll todo issues → create worktree → coding agent → reviewer → PR merge → cleanup
-- **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Ended), auto-detects running sessions on startup
+- **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Ended), auto-detects running sessions on startup, survives `/resume` session switches
 - **Notifications** — Windows Toast + sound when an agent needs your input
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
