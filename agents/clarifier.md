@@ -123,6 +123,10 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 ## BRANCH
 [PR target branch (optional — omit to use the project default)]
 
+## TASKS
+T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
+(Optional section — see TASKS generation rules below)
+
 ## REFERENCES
 [Source type] URL or path — brief description (optional, but required if you looked up any sources)
 ```
@@ -139,6 +143,25 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 - Each line format: `[modify|create|delete] relative-path (reason)`
 - Only list files that definitely need changes — don't list files that "might" need changes
 - If the Coding Agent discovers during implementation that files outside SCOPE need changes, it will stop and ask the user
+
+**Rules for writing TASKS (## TASKS section):**
+- When SCOPE contains 3 or more entries, generate a `## TASKS` section to decompose the implementation into ordered tasks
+- When SCOPE contains fewer than 3 entries, do NOT generate a TASKS section (the issue is small enough for single-pass implementation)
+- Each task touches at most 3 files — if a task needs more than 3 files, split it into smaller tasks
+- Format: `T{N}: [description] [create|modify|delete] file-path (depends: T{M}, T{K} | none)`
+  - `T{N}:` — task ID, incrementing from T1
+  - `[P]` — optional parallel marker, placed after the colon and before the description; indicates the task can run in parallel with its dependencies' successors
+  - `[create|modify|delete] file-path` — file action brackets (same keywords as SCOPE), can appear multiple times for multi-file tasks
+  - `(depends: T{M}, T{K})` — explicit dependency list at the end; use `(depends: none)` for tasks with no dependencies
+- Every file path in TASKS must also appear in a SCOPE entry — no undeclared files
+- Task ordering should respect logical dependencies: data structures before logic, logic before tests
+- Example:
+  ```
+  ## TASKS
+  T1: Add TaskEntry struct [modify] internal/tracker/issuespec.go (depends: none)
+  T2: [P] Add parsing tests [modify] internal/tracker/issuespec_test.go (depends: T1)
+  T3: Update coding prompt [modify] internal/prompt/coding.go (depends: T1)
+  ```
 
 ## Rules
 

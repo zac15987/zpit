@@ -20,6 +20,15 @@ var validScopeActions = []string{"modify", "create", "delete"}
 // vagueWords lists forbidden vague words/phrases in acceptance criteria.
 var vagueWords = []string{"appropriate", "reasonable", "sufficient", "when necessary"}
 
+// TaskEntry represents a single task line in the ## TASKS section.
+type TaskEntry struct {
+	ID          string   // e.g. "T1", "T2"
+	Description string   // task description text
+	Parallel    bool     // true if [P] marker is present
+	Paths       []string // file paths extracted from [create], [modify], [delete] actions
+	DependsOn   []string // task IDs this task depends on; empty if (depends: none)
+}
+
 // IssueSpec is the structured representation of an issue body.
 type IssueSpec struct {
 	Context            string
@@ -29,6 +38,7 @@ type IssueSpec struct {
 	Constraints        string
 	References         string // optional section
 	Branch             string // optional: PR target branch (from ## BRANCH section)
+	Tasks              []TaskEntry // optional: task decomposition from ## TASKS section
 }
 
 // ScopeEntry represents a single file scope line.
@@ -76,6 +86,9 @@ func ValidateIssueSpec(body string) ValidationResult {
 
 	// Check SCOPE-AC coverage
 	checkScopeACCoverage(body, &result)
+
+	// Check TASKS-SCOPE cross-validation
+	checkTasksScopeCoverage(body, &result)
 
 	return result
 }
@@ -309,6 +322,16 @@ func ParseIssueSpec(body string) (*IssueSpec, error) {
 		}
 	}
 
+	// Parse TASKS entries (optional section)
+	if tasksContent, ok := sections["TASKS"]; ok && tasksContent != "" {
+		for _, line := range strings.Split(tasksContent, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if entry, ok := parseTaskEntry(trimmed); ok {
+				spec.Tasks = append(spec.Tasks, entry)
+			}
+		}
+	}
+
 	return spec, nil
 }
 
@@ -341,6 +364,168 @@ func splitBySections(body string) map[string]string {
 	}
 
 	return sections
+}
+
+// checkTasksScopeCoverage warns when a TASKS entry references a file path
+// not found in any SCOPE entry.
+func checkTasksScopeCoverage(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	tasksContent, ok := sections["TASKS"]
+	if !ok || tasksContent == "" {
+		return
+	}
+	scopeContent := sections["SCOPE"]
+	if scopeContent == "" {
+		return
+	}
+
+	// Collect all SCOPE file paths
+	scopePaths := make(map[string]bool)
+	for _, line := range strings.Split(scopeContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			entry := parseScopeEntry(trimmed)
+			if entry.Path != "" {
+				scopePaths[entry.Path] = true
+			}
+		}
+	}
+
+	// Check each task's paths against SCOPE
+	for _, line := range strings.Split(tasksContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		entry, ok := parseTaskEntry(trimmed)
+		if !ok {
+			continue
+		}
+		for _, p := range entry.Paths {
+			if !scopePaths[p] {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("TASKS entry %s references file %s not found in SCOPE", entry.ID, p))
+			}
+		}
+	}
+}
+
+// parseTaskEntry parses a task line like:
+// T1: Add TaskEntry struct [modify] issuespec.go (depends: none)
+// T2: [P] Update prompt [modify] coding.go [modify] common.go (depends: T1)
+// Returns the parsed entry and true if the line is a valid task line.
+func parseTaskEntry(line string) (TaskEntry, bool) {
+	// Task lines start with T followed by a number and a colon
+	if !strings.HasPrefix(line, "T") {
+		return TaskEntry{}, false
+	}
+
+	// Extract ID (e.g., "T1", "T12")
+	colonIdx := strings.Index(line, ":")
+	if colonIdx < 2 {
+		return TaskEntry{}, false
+	}
+	id := line[:colonIdx]
+	// Validate ID is T followed by digits
+	numPart := id[1:]
+	if _, err := strconv.Atoi(numPart); err != nil {
+		return TaskEntry{}, false
+	}
+
+	rest := strings.TrimSpace(line[colonIdx+1:])
+
+	entry := TaskEntry{ID: id}
+
+	// Check for [P] parallel marker at the start of rest
+	if strings.HasPrefix(rest, "[P]") {
+		entry.Parallel = true
+		rest = strings.TrimSpace(rest[3:])
+	}
+
+	// Extract (depends: ...) from the end
+	if depStart := strings.LastIndex(rest, "(depends:"); depStart >= 0 {
+		depSection := rest[depStart:]
+		rest = strings.TrimSpace(rest[:depStart])
+
+		// Extract the content between "depends:" and ")"
+		depContent := strings.TrimPrefix(depSection, "(depends:")
+		depContent = strings.TrimSuffix(strings.TrimSpace(depContent), ")")
+		depContent = strings.TrimSpace(depContent)
+
+		if depContent != "none" && depContent != "" {
+			for _, dep := range strings.Split(depContent, ",") {
+				dep = strings.TrimSpace(dep)
+				if dep != "" {
+					entry.DependsOn = append(entry.DependsOn, dep)
+				}
+			}
+		}
+	}
+
+	// Extract file paths from bracket patterns: [create], [modify], [delete]
+	// and collect the description (everything that's not a file action)
+	var descParts []string
+	remaining := rest
+	for remaining != "" {
+		bracketIdx := strings.Index(remaining, "[")
+		if bracketIdx < 0 {
+			// No more brackets — rest is description
+			if part := strings.TrimSpace(remaining); part != "" {
+				descParts = append(descParts, part)
+			}
+			break
+		}
+
+		// Text before the bracket is description
+		if bracketIdx > 0 {
+			if part := strings.TrimSpace(remaining[:bracketIdx]); part != "" {
+				descParts = append(descParts, part)
+			}
+		}
+
+		closeBracket := strings.Index(remaining[bracketIdx:], "]")
+		if closeBracket < 0 {
+			// Malformed bracket — treat rest as description
+			if part := strings.TrimSpace(remaining[bracketIdx:]); part != "" {
+				descParts = append(descParts, part)
+			}
+			break
+		}
+		closeBracket += bracketIdx
+
+		action := strings.ToLower(remaining[bracketIdx+1 : closeBracket])
+		isFileAction := false
+		for _, valid := range validScopeActions {
+			if action == valid {
+				isFileAction = true
+				break
+			}
+		}
+
+		if isFileAction {
+			// Extract the file path (next whitespace-delimited token)
+			afterAction := strings.TrimSpace(remaining[closeBracket+1:])
+			spaceIdx := strings.IndexAny(afterAction, " \t")
+			var filePath string
+			if spaceIdx >= 0 {
+				filePath = afterAction[:spaceIdx]
+				remaining = afterAction[spaceIdx:]
+			} else {
+				filePath = afterAction
+				remaining = ""
+			}
+			if filePath != "" {
+				entry.Paths = append(entry.Paths, filePath)
+			}
+		} else {
+			// Not a file action bracket — treat as description
+			if part := strings.TrimSpace(remaining[bracketIdx : closeBracket+1]); part != "" {
+				descParts = append(descParts, part)
+			}
+			remaining = remaining[closeBracket+1:]
+		}
+	}
+
+	entry.Description = strings.Join(descParts, " ")
+
+	return entry, true
 }
 
 // parseScopeEntry parses a line like "[modify] path/to/file (reason)".

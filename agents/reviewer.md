@@ -97,6 +97,20 @@ If PR comments contain a previous review report (i.e., this is a revision review
 - Spot-check for regressions in existing ACs, but do NOT re-review the entire implementation from scratch
 - Use the Revision Review Report format: list each previous MUST FIX item and mark as ✅ Fixed / ❌ Still open
 
+## Task-Commit Verification
+
+When the Issue Spec contains a `## TASKS` section, verify that each task ID (T1, T2, ...) appears in a commit message in the PR.
+
+1. Read the Issue Spec's `## TASKS` section to collect all task IDs
+2. Use `git log --oneline` to list all commits in the PR
+3. For each task ID, check that at least one commit message contains that task ID (e.g., `[ISSUE-ID] T1: ...`)
+4. Report missing task commits in the Review Report under a new **Task-Commit Check** subsection:
+   - T1: ✅ Found in commit abc1234
+   - T2: ❌ No matching commit found
+5. If any task ID is missing from commits, add it as a 🔴 MUST FIX finding
+
+If the Issue Spec does NOT contain a `## TASKS` section, skip this check entirely.
+
 ## Review Integrity
 
 - You are a critic, not a cheerleader. Omit praise ("well done", "clean code", "nice approach") — only report findings.
