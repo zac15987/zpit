@@ -39,6 +39,7 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Err != nil {
+		m.logger.Printf("loop: poll error key=%s err=%v", msg.ProjectID, msg.Err)
 		m.setStatus(fmt.Sprintf("Loop poll error: %s", msg.Err))
 		return m, m.loopSchedulePoll(msg.ProjectID)
 	}
@@ -244,6 +245,7 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Err != nil {
+		m.logger.Printf("loop: PR poll error key=%s issue=#%s err=%v", msg.ProjectID, msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("PR poll error #%s: %s", msg.IssueID, msg.Err))
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
@@ -319,6 +321,7 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Err != nil {
+		m.logger.Printf("loop: open PR scan error key=%s err=%v", msg.ProjectID, msg.Err)
 		m.setStatus(fmt.Sprintf("Open PR scan error: %s", msg.Err))
 		return m, nil
 	}

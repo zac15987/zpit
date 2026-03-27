@@ -347,7 +347,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				SessionPID:     entry.PID,
 				StateChangedAt: time.Now(),
 			}
-			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.LogPath))
+			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.LogPath, m.logger))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -356,7 +356,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
 			at.SessionPID = msg.PID
 		}
-		return m, waitForLogCmd(msg.ProjectID, msg.PID, msg.LogPath)
+		return m, waitForLogCmd(msg.ProjectID, msg.PID, msg.LogPath, m.logger)
 
 	case watcherReadyMsg:
 		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
@@ -380,6 +380,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case WatcherErrorMsg:
+		m.logger.Printf("watcher error: key=%s err=%v", msg.ProjectID, msg.Err)
 		m.setStatus(fmt.Sprintf("Watcher error (%s): %s", msg.ProjectID, msg.Err))
 		return m, nil
 
@@ -936,7 +937,8 @@ func (m Model) openFolderCmd() tea.Cmd {
 
 const (
 	sessionRetryInterval = 2 * time.Second
-	sessionRetryMax      = 8 // 8 * 2s = 16s max wait
+	sessionRetryMax      = 8  // 8 * 2s = 16s max wait
+	logWaitRetryMax      = 15 // 15 * 2s = 30s max wait for JSONL file
 )
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
@@ -1078,20 +1080,30 @@ type existingSessionsMsg struct {
 }
 
 // waitForLogCmd phase 2: wait for the JSONL file to be created, then start the watcher.
-func waitForLogCmd(projectID string, pid int, logPath string) tea.Cmd {
+func waitForLogCmd(projectID string, pid int, logPath string, logger *log.Logger) tea.Cmd {
 	return func() tea.Msg {
-		for {
+		logger.Printf("waitForLog: key=%s pid=%d path=%s", projectID, pid, logPath)
+		for attempt := range logWaitRetryMax {
 			if !watcher.IsProcessAlive(pid) {
+				logger.Printf("waitForLog: key=%s pid=%d died at attempt %d", projectID, pid, attempt)
 				return sessionLostMsg{ProjectID: projectID, Text: "session ended before log created"}
 			}
 			if _, err := os.Stat(logPath); err == nil {
+				logger.Printf("waitForLog: key=%s file found at attempt %d", projectID, attempt)
 				w, err := watcher.New(projectID, logPath)
 				if err != nil {
+					logger.Printf("waitForLog: key=%s watcher creation failed: %v", projectID, err)
 					return WatcherErrorMsg{ProjectID: projectID, Err: err}
 				}
 				return watcherReadyMsg{ProjectID: projectID, Watcher: w, LogPath: logPath}
 			}
 			time.Sleep(sessionRetryInterval)
+		}
+		logger.Printf("waitForLog: key=%s timed out after %d attempts, file not found: %s",
+			projectID, logWaitRetryMax, logPath)
+		return sessionLostMsg{
+			ProjectID: projectID,
+			Text:      fmt.Sprintf("log file not found after %ds: %s", logWaitRetryMax*int(sessionRetryInterval/time.Second), logPath),
 		}
 	}
 }
