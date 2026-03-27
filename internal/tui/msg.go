@@ -106,13 +106,6 @@ type LoopAgentLaunchedMsg struct {
 	Err        error
 }
 
-// LoopAgentExitedMsg indicates an agent's PID is no longer alive.
-type LoopAgentExitedMsg struct {
-	ProjectID string
-	IssueID   string
-	Role      string // "coder" or "reviewer"
-}
-
 // LoopPRStatusMsg carries the result of polling PR status for merge detection.
 type LoopPRStatusMsg struct {
 	ProjectID string
@@ -125,14 +118,6 @@ type LoopPRStatusMsg struct {
 type LoopCleanupMsg struct {
 	ProjectID string
 	IssueID   string
-	Err       error
-}
-
-// LoopReviewResultMsg carries the verdict after checking issue labels post-review.
-type LoopReviewResultMsg struct {
-	ProjectID string
-	IssueID   string
-	Verdict   string // loop.VerdictApproved / VerdictNeedsChanges / VerdictUnknown
 	Err       error
 }
 
@@ -149,6 +134,20 @@ type loopPollTickMsg struct{ ProjectID string }
 
 // loopPRPollTickMsg triggers the next PR status poll (unexported).
 type loopPRPollTickMsg struct {
+	ProjectID string
+	IssueID   string
+}
+
+// LoopLabelPollMsg carries results of polling issue labels for state transitions.
+type LoopLabelPollMsg struct {
+	ProjectID string
+	IssueID   string
+	Labels    []string
+	Err       error
+}
+
+// loopLabelPollTickMsg triggers the next label poll (unexported).
+type loopLabelPollTickMsg struct {
 	ProjectID string
 	IssueID   string
 }

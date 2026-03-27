@@ -154,83 +154,69 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 	if msg.Role == "coder" {
 		slot.State = loop.SlotCoding
 		m.logger.Printf("loop: coder launched #%s (round=%d)", msg.IssueID, slot.ReviewRound)
-		if slot.ReviewRound > 0 {
-			// Revision round: PR already exists, use PID monitoring instead of PR poll
-			return m, m.loopStartWatcherCmd(msg.ProjectID, msg.IssueID, "coder")
-		}
-		// First round: poll for PR creation as completion signal
-		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
+		// Poll labels: "review" label = coding done → launch reviewer
+		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
 	}
 
 	slot.State = loop.SlotReviewing
 	m.logger.Printf("loop: reviewer launched #%s (round=%d)", msg.IssueID, slot.ReviewRound)
-	// Reviewer uses PID monitoring (terminal close = done)
-	return m, m.loopStartWatcherCmd(msg.ProjectID, msg.IssueID, msg.Role)
+	// Poll labels: "ai-review"/"needs-changes" = reviewer done
+	return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
 }
 
-func (m Model) handleLoopAgentExited(msg LoopAgentExitedMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
 	if slot == nil {
 		return m, nil
 	}
 
-	m.logger.Printf("loop: %s exited #%s", msg.Role, msg.IssueID)
-
-	if msg.Role == "coder" {
-		// Revision coder exited → launch reviewer
-		slot.State = loop.SlotLaunchingReviewer
-		return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
-	}
-
-	// Reviewer PID died → check labels to determine verdict.
-	slot.State = loop.SlotCheckingReview
-	return m, m.loopCheckReviewResultCmd(msg.ProjectID, msg.IssueID)
-}
-
-func (m Model) handleLoopReviewResult(msg LoopReviewResultMsg) (tea.Model, tea.Cmd) {
-	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
-	if slot == nil {
+	if slot.State != loop.SlotCoding && slot.State != loop.SlotReviewing {
 		return m, nil
 	}
 
 	if msg.Err != nil {
-		slot.State = loop.SlotError
-		slot.Error = fmt.Errorf("check review result: %w", msg.Err)
-		m.logger.Printf("loop: review check error #%s: %s", msg.IssueID, msg.Err)
-		return m, nil
+		m.logger.Printf("loop: label poll error key=%s issue=#%s err=%v", msg.ProjectID, msg.IssueID, msg.Err)
+		m.setStatus(fmt.Sprintf("Label poll error #%s: %s", msg.IssueID, msg.Err))
+		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
 	}
 
-	m.logger.Printf("loop: review result #%s verdict=%s round=%d", msg.IssueID, msg.Verdict, slot.ReviewRound)
-
-	switch msg.Verdict {
-	case loop.VerdictApproved:
-		slot.State = loop.SlotWaitingPRMerge
-		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
-
-	case loop.VerdictNeedsChanges:
-		maxRounds := m.cfg.Worktree.MaxReviewRounds
-		if slot.ReviewRound >= maxRounds {
-			slot.State = loop.SlotNeedsHuman
-			m.logger.Printf("loop: #%s review rounds exhausted (%d), needs human", msg.IssueID, maxRounds)
-			m.setStatus(fmt.Sprintf("Issue #%s: %d review rounds exhausted, needs human", msg.IssueID, maxRounds))
-			projectName := m.projectName(msg.ProjectID)
-			m.notifier.NotifyWaiting(msg.ProjectID, projectName,
-				fmt.Sprintf("Issue #%s exceeded %d review rounds", msg.IssueID, maxRounds))
-			return m, nil
+	switch slot.State {
+	case loop.SlotCoding:
+		if hasLabel(msg.Labels, "review") {
+			slot.State = loop.SlotLaunchingReviewer
+			m.logger.Printf("loop: label 'review' found #%s → launching reviewer", msg.IssueID)
+			return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
 		}
-		slot.ReviewRound++
-		slot.State = loop.SlotWritingAgent
-		m.logger.Printf("loop: #%s needs changes, starting revision round %d/%d", msg.IssueID, slot.ReviewRound, maxRounds)
-		m.setStatus(fmt.Sprintf("Issue #%s needs changes (round %d/%d), re-launching coder",
-			msg.IssueID, slot.ReviewRound, maxRounds))
-		return m, m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID)
+		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
 
-	default: // VerdictUnknown
-		slot.State = loop.SlotError
-		slot.Error = fmt.Errorf("reviewer exited without setting verdict label")
-		m.logger.Printf("loop: #%s reviewer exited without verdict label", msg.IssueID)
-		return m, nil
+	case loop.SlotReviewing:
+		if hasLabel(msg.Labels, "ai-review") {
+			slot.State = loop.SlotWaitingPRMerge
+			m.logger.Printf("loop: label 'ai-review' found #%s → waiting PR merge", msg.IssueID)
+			return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
+		}
+		if hasLabel(msg.Labels, "needs-changes") {
+			maxRounds := m.cfg.Worktree.MaxReviewRounds
+			if slot.ReviewRound >= maxRounds {
+				slot.State = loop.SlotNeedsHuman
+				m.logger.Printf("loop: #%s review rounds exhausted (%d), needs human", msg.IssueID, maxRounds)
+				m.setStatus(fmt.Sprintf("Issue #%s: %d review rounds exhausted, needs human", msg.IssueID, maxRounds))
+				projectName := m.projectName(msg.ProjectID)
+				m.notifier.NotifyWaiting(msg.ProjectID, projectName,
+					fmt.Sprintf("Issue #%s exceeded %d review rounds", msg.IssueID, maxRounds))
+				return m, nil
+			}
+			slot.ReviewRound++
+			slot.State = loop.SlotWritingAgent
+			m.logger.Printf("loop: #%s needs changes, starting revision round %d/%d", msg.IssueID, slot.ReviewRound, maxRounds)
+			m.setStatus(fmt.Sprintf("Issue #%s needs changes (round %d/%d), re-launching coder",
+				msg.IssueID, slot.ReviewRound, maxRounds))
+			return m, m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID)
+		}
+		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
 	}
+
+	return m, nil
 }
 
 func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
@@ -239,8 +225,8 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Only poll PR in states that need it; ignore stale ticks from other states.
-	if slot.State != loop.SlotCoding && slot.State != loop.SlotWaitingPRMerge {
+	// Only process PR poll in WaitingPRMerge state; ignore stale ticks from other states.
+	if slot.State != loop.SlotWaitingPRMerge {
 		return m, nil
 	}
 
@@ -250,18 +236,7 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
 
-	// Coding stage: PR appearing = coding done → launch reviewer
-	if slot.State == loop.SlotCoding {
-		if msg.PR != nil {
-			slot.State = loop.SlotLaunchingReviewer
-			m.logger.Printf("loop: PR found #%s → launching reviewer", msg.IssueID)
-			return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
-		}
-		// No PR yet, keep polling
-		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
-	}
-
-	// Reviewer stage: PR merged = done → cleanup
+	// PR merged = done → cleanup
 	if msg.PR == nil || msg.PR.State == "open" {
 		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
 	}
@@ -379,8 +354,8 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 
 		case hasLabel(labels, "wip"):
 			slot.State = loop.SlotCoding
-			m.logger.Printf("loop: resume #%s (branch=%s, label=wip) → PR poll", issueID, pr.Branch)
-			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, issueID))
+			m.logger.Printf("loop: resume #%s (branch=%s, label=wip) → label poll", issueID, pr.Branch)
+			cmds = append(cmds, m.loopScheduleLabelPoll(msg.ProjectID, issueID))
 
 		default: // ai-review or no matching label → waiting for merge
 			slot.State = loop.SlotWaitingPRMerge

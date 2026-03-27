@@ -1345,21 +1345,21 @@ TUI 按 [l]
 │  │    Agent 自己負責: build, test, commit,                │
 │  │                    開 PR (MCP), 更新 status (MCP)      │
 │  │                                                        │
-│  │ 6. 輪詢 PR 出現（每 60 秒 FindPRByBranch）             │
-│  │    PR 出現 = coding agent 完成（終端保留不用關）       │
+│  │ 6. 輪詢 issue labels（每 30 秒 GetIssue）               │
+│  │    偵測到 "review" label = coding agent 完成            │
+│  │    （終端保留不用關，label 驅動而非 PID 驅動）          │
 │  │                                                        │
 │  │ 7. 啟動 reviewer agent（同一 worktree，唯讀）          │
 │  │    Agent 自己負責: 讀 diff, 檢查 AC, 寫 comment (MCP) │
 │  │                                                        │
-│  │ 8. 等待 reviewer 結束（監控 PID exit）                 │
-│  │                                                        │
-│  │ 9. 檢查 review 結果（透過 issue labels 判定）          │
-│  │    ├─ ai-review label → PASS → 等待 PR merge           │
-│  │    ├─ needs-changes label → NEEDS CHANGES               │
+│  │ 8. 輪詢 issue labels（每 30 秒 GetIssue）               │
+│  │    偵測到 "ai-review" 或 "needs-changes" label          │
+│  │    ├─ ai-review → PASS → 等待 PR merge                 │
+│  │    ├─ needs-changes → NEEDS CHANGES                     │
 │  │    │  └─ round < max_review_rounds?                     │
 │  │    │     ├─ 是 → 回到步驟 4 寫修正版 prompt，重跑 coder│
 │  │    │     └─ 否 → 進入 NeedsHuman 狀態，通知你介入      │
-│  │    └─ 都沒有 → reviewer 可能 crash → Error              │
+│  │    └─ label 未變 → 繼續輪詢                             │
 │  │                                                        │
 │  │ 10. 回到步驟 1 抓下一個 issue                          │
 │  │     （平行化的關鍵：做完一個就去抓下一個，             │
@@ -1945,7 +1945,7 @@ echo $?   # 應該是 2
 - [x] TUI [l] toggle + Loop Status 顯示
 - [x] PR merge 偵測（FindPRByBranch）+ 自動清理 worktree
 - [x] LaunchClaudeInDir — worktree path override
-- [x] Coding 完成信號：PR 出現（非 PID 消失），終端保留
+- [x] Coding 完成信號：label poll 偵測 "review" label（非 PID 消失），終端保留
 - [x] NEEDS CHANGES 自動重試（reviewer 判定→重跑 coding→再 review，max_review_rounds 限制）
 - [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
 - [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）

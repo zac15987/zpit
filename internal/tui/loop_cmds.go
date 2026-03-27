@@ -16,7 +16,6 @@ import (
 	"github.com/zac15987/zpit/internal/prompt"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
-	"github.com/zac15987/zpit/internal/watcher"
 	"github.com/zac15987/zpit/internal/worktree"
 )
 
@@ -302,67 +301,6 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	}
 }
 
-// findNewSessionPID retries finding a session started after launchedAfter.
-// Returns 0 if no matching session is found within the retry window.
-func findNewSessionPID(claudeHome, wtPath string, launchedAfter int64) int {
-	for range sessionRetryMax {
-		sessions, _ := watcher.FindActiveSessions(claudeHome, wtPath)
-		var best int
-		var bestStarted int64
-		for _, s := range sessions {
-			if s.StartedAt > launchedAfter && s.StartedAt > bestStarted {
-				bestStarted = s.StartedAt
-				best = s.PID
-			}
-		}
-		if best != 0 {
-			return best
-		}
-		time.Sleep(sessionRetryInterval)
-	}
-	return 0
-}
-
-// loopStartWatcherCmd finds the session PID and monitors until exit.
-func (m Model) loopStartWatcherCmd(projectID, issueID, role string) tea.Cmd {
-	ls := m.loops[projectID]
-	if ls == nil {
-		return nil
-	}
-	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
-	if slot == nil {
-		return nil
-	}
-	wtPath := slot.WorktreePath
-	launchedAfter := slot.LaunchedAt
-	logger := m.logger
-
-	return func() tea.Msg {
-		claudeHome, err := watcher.ClaudeHome()
-		if err != nil {
-			logger.Printf("loop: watcher failed #%s role=%s (ClaudeHome error: %v)", issueID, role, err)
-			return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
-		}
-
-		pid := findNewSessionPID(claudeHome, wtPath, launchedAfter)
-
-		if pid == 0 {
-			logger.Printf("loop: watcher failed #%s role=%s (no session found after %d)", issueID, role, launchedAfter)
-			return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
-		}
-
-		logger.Printf("loop: watcher attached #%s role=%s PID=%d", issueID, role, pid)
-
-		// Monitor PID until exit
-		for {
-			time.Sleep(loop.LivenessInterval)
-			if !watcher.IsProcessAlive(pid) {
-				return LoopAgentExitedMsg{ProjectID: projectID, IssueID: issueID, Role: role}
-			}
-		}
-	}
-}
-
 // loopPollPRCmd polls tracker for PR by branch name.
 func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
@@ -475,6 +413,37 @@ func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
 	})
 }
 
+// loopPollLabelsCmd fetches issue labels from tracker for state transitions.
+func (m Model) loopPollLabelsCmd(projectID, issueID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	repo := project.Repo
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		issue, err := client.GetIssue(ctx, repo, issueID)
+		if err != nil {
+			return LoopLabelPollMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+		return LoopLabelPollMsg{ProjectID: projectID, IssueID: issueID, Labels: issue.Labels}
+	}
+}
+
+// loopScheduleLabelPoll schedules the next label poll after configured interval.
+func (m Model) loopScheduleLabelPoll(projectID, issueID string) tea.Cmd {
+	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
+		return loopLabelPollTickMsg{ProjectID: projectID, IssueID: issueID}
+	})
+}
+
 // loopScanOpenPRsCmd queries open PRs to detect issues waiting for merge.
 func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
@@ -526,43 +495,6 @@ func extractIssueID(branch string) string {
 	return after[:idx]
 }
 
-// loopCheckReviewResultCmd fetches issue labels to determine reviewer verdict.
-func (m Model) loopCheckReviewResultCmd(projectID, issueID string) tea.Cmd {
-	project := m.findProject(projectID)
-	if project == nil {
-		return nil
-	}
-	client, ok := m.clients[project.Tracker]
-	if !ok {
-		return nil
-	}
-	repo := project.Repo
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		issue, err := client.GetIssue(ctx, repo, issueID)
-		if err != nil {
-			return LoopReviewResultMsg{ProjectID: projectID, IssueID: issueID, Err: err}
-		}
-
-		verdict := loop.VerdictUnknown
-		for _, label := range issue.Labels {
-			lower := strings.ToLower(label)
-			if lower == "ai-review" {
-				verdict = loop.VerdictApproved
-				break
-			}
-			if lower == "needs-changes" {
-				verdict = loop.VerdictNeedsChanges
-				break
-			}
-		}
-
-		return LoopReviewResultMsg{ProjectID: projectID, IssueID: issueID, Verdict: verdict}
-	}
-}
 
 // loopWriteRevisionAgentCmd writes a revision coding agent prompt and returns LoopAgentWrittenMsg.
 func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {

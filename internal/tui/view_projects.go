@@ -332,8 +332,6 @@ func (m Model) renderLoopStatus() string {
 			switch slot.State {
 			case loop.SlotError:
 				icon = "🔴"
-			case loop.SlotCheckingReview:
-				icon = "🔍"
 			case loop.SlotNeedsHuman:
 				icon = "🟠"
 			case loop.SlotWaitingPRMerge:

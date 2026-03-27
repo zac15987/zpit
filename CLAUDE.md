@@ -55,8 +55,9 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 - Profile config: `[profiles.*]` with `log_policy` (strict/standard/minimal)
 - Per-project `base_branch` config (default "dev")
 - Makefile with `test-hooks` target
-- Loop engine: poll todo → create worktree → launch coding agent → PR appears → launch reviewer → NEEDS CHANGES auto-retry → PR merge → cleanup
-- NEEDS CHANGES auto-retry: reviewer 判定 NEEDS CHANGES → 自動重跑 coding agent → 再次 review（max_review_rounds 預設 2）
+- Loop engine: poll todo → create worktree → launch coding agent → label poll detects "review" → launch reviewer → label poll detects "ai-review"/"needs-changes" → auto-retry or wait merge → cleanup
+- Label-driven transitions: loop polls issue labels (not PID monitoring) to detect agent completion. Coding agent sets "review" label → reviewer starts. Reviewer sets "ai-review"/"needs-changes" → next step. Agents don't need to exit for loop to progress.
+- NEEDS CHANGES auto-retry: reviewer 設定 needs-changes label → 自動重跑 coding agent → 再次 review（max_review_rounds 預設 3）
 - LaunchClaudeInDir: worktree path override for loop launches
 - FindPRByBranch: PR detection by branch name (Forgejo + GitHub)
 - TrackerDoc auto-deploy: `.claude/docs/tracker.md` written on agent deploy (Forgejo→gitea MCP/REST, GitHub→gh CLI/REST)
@@ -96,7 +97,7 @@ internal/
 │   ├── en.go                    # English translations
 │   └── zh_tw.go                 # Traditional Chinese translations
 ├── loop/
-│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState, verdict constants
+│   └── types.go                 # Loop state machine: SlotState, Slot, LoopState
 ├── terminal/
 │   ├── launcher.go              # LaunchClaude() + LaunchClaudeInDir() dispatch + arg builders
 │   ├── launcher_windows.go      # wt.exe (build tag: windows)

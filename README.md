@@ -168,10 +168,10 @@ The loop engine automates the full coding cycle:
 
 1. **Poll** tracker for `todo` issues (configurable interval)
 2. **Create worktree** — isolated git worktree from `base_branch`
-3. **Launch coding agent** — writes implementation, commits, opens PR
-4. **Detect PR** — polls tracker for PR by branch name
-5. **Launch reviewer** — checks acceptance criteria, writes review report
-6. **Verdict** — PASS (wait for human merge) or NEEDS CHANGES (auto-retry up to `max_review_rounds`)
+3. **Launch coding agent** — writes implementation, commits, opens PR, sets `review` label
+4. **Detect completion** — polls issue labels for `review` (agents don't need to exit)
+5. **Launch reviewer** — checks acceptance criteria, writes review report, sets verdict label
+6. **Detect verdict** — polls issue labels for `ai-review` (PASS → wait for human merge) or `needs-changes` (auto-retry up to `max_review_rounds`)
 7. **Cleanup** — after PR merge, removes worktree and branch
 
 Multiple issues run in parallel, limited by `max_per_project`.

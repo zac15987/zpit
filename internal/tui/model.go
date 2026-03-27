@@ -459,10 +459,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoopAgentWritten(msg)
 	case LoopAgentLaunchedMsg:
 		return m.handleLoopAgentLaunched(msg)
-	case LoopAgentExitedMsg:
-		return m.handleLoopAgentExited(msg)
-	case LoopReviewResultMsg:
-		return m.handleLoopReviewResult(msg)
 	case LoopPRStatusMsg:
 		return m.handleLoopPRStatus(msg)
 	case LoopCleanupMsg:
@@ -476,6 +472,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case loopPRPollTickMsg:
 		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+	case LoopLabelPollMsg:
+		return m.handleLoopLabelPoll(msg)
+	case loopLabelPollTickMsg:
+		return m, m.loopPollLabelsCmd(msg.ProjectID, msg.IssueID)
 
 	}
 
