@@ -75,7 +75,7 @@ var zhTW = map[Key]string{
 	KeyFocusSlot:      "切換至 Slot",
 	KeyCannotLaunch:   "此狀態無法啟動",
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
-	KeyLoopSlotHelp:   "Enter: 開啟 Claude  \u2191\u2193: 選擇  Tab/Esc: 返回",
+	KeyLoopSlotHelp:   "Enter: 開啟 Claude  o: 開啟資料夾  p: 開啟 issue  \u2191\u2193: 選擇  Tab/Esc: 返回",
 
 	// Config validation errors
 	// Agent init messages

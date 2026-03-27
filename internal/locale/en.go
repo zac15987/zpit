@@ -75,7 +75,7 @@ var en = map[Key]string{
 	KeyFocusSlot:      "Switch to slots",
 	KeyCannotLaunch:   "Cannot launch in this state",
 	KeyNoWorktreePath: "Slot has no worktree",
-	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
+	KeyLoopSlotHelp:   "Enter: open Claude  o: open folder  p: open issue  \u2191\u2193: navigate  Tab/Esc: back",
 
 	// Config validation errors
 	// Agent init messages
