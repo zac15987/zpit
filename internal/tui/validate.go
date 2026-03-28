@@ -101,7 +101,7 @@ func validateTrackerURL(project config.ProjectConfig, providers map[string]confi
 	if !ok {
 		return nil
 	}
-	if provider.URL == "" {
+	if provider.URL == "" && provider.Type != "github_issues" {
 		return []string{locale.T(locale.KeyErrTrackerURLEmpty)}
 	}
 	return nil
