@@ -1033,7 +1033,7 @@ func (m Model) openFolderCmd() tea.Cmd {
 const (
 	sessionRetryInterval = 2 * time.Second
 	sessionRetryMax      = 8  // 8 * 2s = 16s max wait
-	logWaitRetryMax      = 15 // 15 * 2s = 30s max wait for JSONL file
+	logWaitWarnAfter     = 15 // log a warning after 15 * 2s = 30s, but keep waiting
 )
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
@@ -1186,8 +1186,9 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 		logger.Printf("waitForLog: key=%s pid=%d sessionID=%s path=%s", projectID, pid, sessionID, logPath)
 
 		claudeHome, _ := watcher.ClaudeHome() // best-effort; empty means skip re-check
+		warned := false
 
-		for attempt := range logWaitRetryMax {
+		for attempt := 0; ; attempt++ {
 			if !watcher.IsProcessAlive(pid) {
 				logger.Printf("waitForLog: key=%s pid=%d died at attempt %d", projectID, pid, attempt)
 				return sessionLostMsg{ProjectID: projectID, Text: "session ended before log created"}
@@ -1224,13 +1225,13 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 				}
 				return watcherReadyMsg{ProjectID: projectID, SessionID: sessionID, Watcher: w, LogPath: logPath}
 			}
+
+			if !warned && attempt >= logWaitWarnAfter {
+				logger.Printf("waitForLog: key=%s still waiting after %d attempts, PID %d alive — continuing",
+					projectID, attempt, pid)
+				warned = true
+			}
 			time.Sleep(sessionRetryInterval)
-		}
-		logger.Printf("waitForLog: key=%s timed out after %d attempts, file not found: %s",
-			projectID, logWaitRetryMax, logPath)
-		return sessionLostMsg{
-			ProjectID: projectID,
-			Text:      fmt.Sprintf("log file not found after %ds: %s", logWaitRetryMax*int(sessionRetryInterval/time.Second), logPath),
 		}
 	}
 }
