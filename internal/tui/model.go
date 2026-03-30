@@ -93,6 +93,10 @@ type Model struct {
 	// Shared application state (common across all connected clients)
 	state *AppState
 
+	// isRemote is true for SSH sessions. When true, pressing q only closes this
+	// session (tea.Quit) without stopping watchers or deactivating loops.
+	isRemote bool
+
 	// Per-connection UI state
 	keys KeyMap
 
@@ -133,10 +137,12 @@ type Model struct {
 	viewport viewport.Model
 }
 
-// NewModel creates a per-connection Model backed by the given shared AppState.
+// NewModelWithState creates a per-connection Model backed by the given shared AppState.
 // Each connected client (local terminal, SSH session) gets its own Model instance
 // with independent UI state while sharing the same AppState.
-func NewModel(appState *AppState) Model {
+// When isRemote is true, pressing q only closes this session without stopping
+// shared watchers or deactivating loops.
+func NewModelWithState(appState *AppState, isRemote bool) Model {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 3
@@ -144,28 +150,74 @@ func NewModel(appState *AppState) Model {
 
 	return Model{
 		state:       appState,
+		isRemote:    isRemote,
 		keys:        DefaultKeyMap(),
 		currentView: ViewProjects,
 		viewport:    vp,
 	}
 }
 
+// NewModel creates a local (non-remote) Model backed by the given AppState.
+// Equivalent to NewModelWithState(appState, false).
+func NewModel(appState *AppState) Model {
+	return NewModelWithState(appState, false)
+}
+
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
+
+	// SSH remote sessions skip server-init (session scan, .gitignore, provider check).
+	// These are run once at zpit serve startup via RunServerInit.
+	if m.isRemote {
+		return tea.Batch(cmds...)
+	}
+
+	cmds = append(cmds, m.serverInitCmds()...)
+	return tea.Batch(cmds...)
+}
+
+// RunServerInit performs server-init logic synchronously (for zpit serve startup).
+// Runs session scan, .gitignore check, and provider validation on the AppState.
+func RunServerInit(state *AppState) {
+	seenPath := make(map[string]bool)
+	seenMissing := make(map[string]bool)
+	var missingProviders []string
+
+	for _, project := range state.projects {
+		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		if projectPath != "" && !seenPath[projectPath] {
+			seenPath[projectPath] = true
+			ensureGitignore(projectPath)
+		}
+		if project.Tracker == "" || project.Repo == "" {
+			continue
+		}
+		if _, ok := state.clients[project.Tracker]; !ok {
+			if !seenMissing[project.Tracker] {
+				seenMissing[project.Tracker] = true
+				missingProviders = append(missingProviders, project.Tracker)
+			}
+		}
+	}
+	if len(missingProviders) > 0 {
+		state.logger.Printf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
+	}
+}
+
+// serverInitCmds returns tea.Cmd slices for server-init tasks (used by local TUI Init).
+func (m Model) serverInitCmds() []tea.Cmd {
+	var cmds []tea.Cmd
 
 	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
 
 	for _, project := range m.state.projects {
-		// Ensure .gitignore has Zpit-deployed paths (sync, fast).
 		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 		if projectPath != "" && !seenPath[projectPath] {
 			seenPath[projectPath] = true
 			ensureGitignore(projectPath)
 		}
-
-		// Log missing tracker providers for awareness.
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -188,7 +240,7 @@ func (m Model) Init() tea.Cmd {
 	// Scan for already-running Claude Code sessions.
 	cmds = append(cmds, m.scanExistingSessionsCmd())
 
-	return tea.Batch(cmds...)
+	return cmds
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -490,6 +542,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.currentView = ViewProjects
 			return m, nil
 		}
+		// Remote sessions: only close this session, don't stop shared state.
+		if m.isRemote {
+			m.state.logger.Println("SSH session quit (remote)")
+			return m, tea.Quit
+		}
+		// Local TUI: stop all watchers and loops before exiting.
 		for _, at := range m.state.activeTerminals {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
