@@ -19,8 +19,8 @@ const (
 
 // selectedProject returns the currently selected project, or nil if the list is empty.
 func (m Model) selectedProject() *config.ProjectConfig {
-	if m.cursor >= 0 && m.cursor < len(m.projects) {
-		return &m.projects[m.cursor]
+	if m.cursor >= 0 && m.cursor < len(m.state.projects) {
+		return &m.state.projects[m.cursor]
 	}
 	return nil
 }
@@ -35,21 +35,21 @@ func (m *Model) checkConfig(op string, project config.ProjectConfig, groups ...s
 		case valPath:
 			errs = append(errs, validatePath(project)...)
 		case valTracker:
-			errs = append(errs, validateTracker(project, m.clients)...)
+			errs = append(errs, validateTracker(project, m.state.clients)...)
 		case valTrackerURL:
-			trackerErrs := validateTracker(project, m.clients)
+			trackerErrs := validateTracker(project, m.state.clients)
 			errs = append(errs, trackerErrs...)
 			if len(trackerErrs) == 0 {
-				errs = append(errs, validateTrackerURL(project, m.cfg.Providers.Tracker)...)
+				errs = append(errs, validateTrackerURL(project, m.state.cfg.Providers.Tracker)...)
 			}
 		case valWorktree:
-			errs = append(errs, validateWorktree(m.cfg.Worktree)...)
+			errs = append(errs, validateWorktree(m.state.cfg.Worktree)...)
 		}
 	}
 	if len(errs) == 0 {
 		return true
 	}
-	m.logger.Printf("config check failed %s project=%s: %s", op, project.ID, strings.Join(errs, "; "))
+	m.state.logger.Printf("config check failed %s project=%s: %s", op, project.ID, strings.Join(errs, "; "))
 	m.showErrorOverlay(errs)
 	return false
 }
