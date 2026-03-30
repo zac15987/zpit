@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/zac15987/zpit/internal/config"
@@ -16,7 +17,20 @@ import (
 // AppState holds shared application state common across all connected clients.
 // Multiple tea.Program instances (local TUI + SSH remote) share a single *AppState pointer,
 // ensuring active terminals, loop progress, and agent states remain consistent.
+//
+// Mutable fields protected by mu: activeTerminals, loops, lastLivenessCheck, lastPermissionCheck.
+// Read-only fields (safe without locks): cfg, env, projects, clients, embedded MDs, hookScripts, wtManager.
 type AppState struct {
+	// mu protects mutable shared fields: activeTerminals, loops,
+	// lastLivenessCheck, lastPermissionCheck.
+	mu sync.RWMutex
+
+	// subMu protects the subscribers map independently of mu,
+	// allowing NotifyAll to be called while mu is held.
+	subMu       sync.Mutex
+	subscribers map[int]chan struct{}
+	nextSubID   int
+
 	cfg      *config.Config
 	env      platform.Environment
 	notifier *notify.Notifier
@@ -38,6 +52,58 @@ type AppState struct {
 	agentGuidelinesMD            []byte
 	codeConstructionPrinciplesMD []byte
 	hookScripts                  worktree.HookScripts
+}
+
+// Lock acquires the write lock for mutable shared state.
+func (s *AppState) Lock() { s.mu.Lock() }
+
+// Unlock releases the write lock.
+func (s *AppState) Unlock() { s.mu.Unlock() }
+
+// RLock acquires a read lock for mutable shared state.
+func (s *AppState) RLock() { s.mu.RLock() }
+
+// RUnlock releases the read lock.
+func (s *AppState) RUnlock() { s.mu.RUnlock() }
+
+// Subscribe registers a new subscriber for state change notifications.
+// Returns the subscriber ID and a receive-only channel (buffered size 1).
+// The caller should listen on the channel and call Unsubscribe when done.
+func (s *AppState) Subscribe() (int, <-chan struct{}) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	id := s.nextSubID
+	s.nextSubID++
+	ch := make(chan struct{}, 1)
+	s.subscribers[id] = ch
+	s.logger.Printf("subscriber registered: id=%d", id)
+	return id, ch
+}
+
+// Unsubscribe removes a subscriber and closes its channel.
+func (s *AppState) Unsubscribe(id int) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	if ch, ok := s.subscribers[id]; ok {
+		close(ch)
+		delete(s.subscribers, id)
+		s.logger.Printf("subscriber unregistered: id=%d", id)
+	}
+}
+
+// NotifyAll performs non-blocking sends to all subscriber channels.
+// The buffered channel (size 1) coalesces rapid state changes into a single
+// notification — if a subscriber already has a pending signal, the send is skipped.
+// Safe to call while mu (write lock) is held, since subMu is independent.
+func (s *AppState) NotifyAll() {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	for _, ch := range s.subscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // NewAppState creates and initializes a new AppState. logWriter may be nil (uses io.Discard).
@@ -74,6 +140,7 @@ func NewAppState(
 		clients:                      clients,
 		loops:                        make(map[string]*loop.LoopState),
 		wtManager:                    worktree.NewManager(cfg.Worktree),
+		subscribers:                  make(map[int]chan struct{}),
 		clarifierMD:                  clarifierMD,
 		reviewerMD:                   reviewerMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
