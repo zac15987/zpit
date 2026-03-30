@@ -97,8 +97,9 @@ func main() {
 		NotifyPermission: notifyPermissionSH,
 	}
 
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, hookScripts, logFile)
 	p := tea.NewProgram(
-		tui.NewModel(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, hookScripts, logFile),
+		tui.NewModel(appState),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
