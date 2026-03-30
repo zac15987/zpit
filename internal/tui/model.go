@@ -273,7 +273,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // syncViewportContent re-renders the scrollable area into the viewport.
+// Acquires RLock to safely read mutable shared fields (activeTerminals, loops)
+// used by render methods. Called after handlers release their write locks.
 func (m *Model) syncViewportContent() {
+	m.state.RLock()
+	defer m.state.RUnlock()
+
 	var header, footer string
 	switch m.currentView {
 	case ViewProjects:
@@ -541,10 +546,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case loopPRPollTickMsg:
-		m.state.RLock()
-		cmd := m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
-		m.state.RUnlock()
-		return m, cmd
+		// loopPollPRCmd acquires its own RLock internally.
+		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
 	case LoopLabelPollMsg:
 		return m.handleLoopLabelPoll(msg)
 	case loopLabelPollTickMsg:
@@ -556,6 +559,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	m.state.RLock()
+	defer m.state.RUnlock()
+
 	var bg string
 	switch m.currentView {
 	case ViewProjects:
@@ -821,7 +827,9 @@ func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	project := m.state.projects[m.cursor]
+	m.state.RLock()
 	keys := m.sortedSlotKeys(project.ID)
+	m.state.RUnlock()
 	if len(keys) == 0 {
 		return m, nil
 	}
@@ -832,7 +840,9 @@ func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.state.RLock()
 	keys := m.sortedSlotKeys(m.focusProjectID)
+	m.state.RUnlock()
 	if len(keys) == 0 {
 		m.focusedPanel = FocusProjects
 		return m, nil
@@ -991,9 +1001,10 @@ func (m Model) openSlotIssueCmd(slotKey string) (tea.Model, tea.Cmd) {
 	return m, openInBrowser(url)
 }
 
+// sortedSlotKeys returns sorted slot keys for the given project.
+// Caller must hold at least a read lock on state, or call from a context
+// where mutable state is not concurrently modified.
 func (m Model) sortedSlotKeys(projectID string) []string {
-	m.state.RLock()
-	defer m.state.RUnlock()
 	ls, ok := m.state.loops[projectID]
 	if !ok || len(ls.Slots) == 0 {
 		return nil
