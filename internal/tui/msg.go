@@ -151,3 +151,7 @@ type loopLabelPollTickMsg struct {
 	ProjectID string
 	IssueID   string
 }
+
+// StateRefreshMsg is sent when shared state changes and the UI needs to re-render.
+// Triggered by the broadcast mechanism when another client mutates shared state.
+type StateRefreshMsg struct{}
