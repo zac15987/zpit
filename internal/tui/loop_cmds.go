@@ -25,7 +25,7 @@ func (m Model) loopPollCmd(projectID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -53,7 +53,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -64,9 +64,9 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	slug := worktree.Slugify(issueTitle, 40)
 	branchName := fmt.Sprintf("feat/%s-%s", issueID, slug)
-	mgr := m.wtManager
+	mgr := m.state.wtManager
 	hookMode := project.HookMode
-	hookScripts := m.hookScripts
+	hookScripts := m.state.hookScripts
 	baseBranch := slot.BaseBranch
 
 	return func() tea.Msg {
@@ -99,7 +99,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -107,26 +107,26 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	if slot == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
 	wtPath := slot.WorktreePath
 	logPolicy := ""
-	if p, ok := m.cfg.Profiles[project.Profile]; ok {
+	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
 	baseBranch := slot.BaseBranch
 
-	// Build tracker doc content outside closure (avoid accessing m.cfg inside goroutine)
+	// Build tracker doc content outside closure (avoid accessing m.state.cfg inside goroutine)
 	var trackerDocContent string
-	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
-	hookScripts := m.hookScripts
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 
 	return func() tea.Msg {
@@ -184,7 +184,7 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -193,7 +193,7 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	wtPath := slot.WorktreePath
-	cfg := m.cfg.Terminal
+	cfg := m.state.cfg.Terminal
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
 
@@ -219,7 +219,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -227,26 +227,26 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	if slot == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
 	wtPath := slot.WorktreePath
-	cfg := m.cfg.Terminal
+	cfg := m.state.cfg.Terminal
 	logPolicy := ""
-	if p, ok := m.cfg.Profiles[project.Profile]; ok {
+	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
 	baseBranch := slot.BaseBranch
 	reviewRound := slot.ReviewRound
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
-	hookScripts := m.hookScripts
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	var trackerDocContent string
-	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
 
@@ -307,7 +307,7 @@ func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -315,7 +315,7 @@ func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 	if slot == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -337,7 +337,7 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -346,7 +346,7 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	wtPath := slot.WorktreePath
-	mgr := m.wtManager
+	mgr := m.state.wtManager
 
 	return func() tea.Msg {
 		err := mgr.Remove(projectPath, wtPath, true)
@@ -361,12 +361,12 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 		return nil
 	}
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
-	mgr := m.wtManager
+	mgr := m.state.wtManager
 
 	return func() tea.Msg {
 		worktrees, err := mgr.List(projectPath)
@@ -399,7 +399,7 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 
 // loopSchedulePoll schedules the next tracker poll after configured interval.
 func (m Model) loopSchedulePoll(projectID string) tea.Cmd {
-	interval := time.Duration(m.cfg.Worktree.PollSeconds) * time.Second
+	interval := time.Duration(m.state.cfg.Worktree.PollSeconds) * time.Second
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopPollTickMsg{ProjectID: projectID}
 	})
@@ -407,7 +407,7 @@ func (m Model) loopSchedulePoll(projectID string) tea.Cmd {
 
 // loopSchedulePRPoll schedules the next PR status poll after configured interval.
 func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
-	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	interval := time.Duration(m.state.cfg.Worktree.PRPollSeconds) * time.Second
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopPRPollTickMsg{ProjectID: projectID, IssueID: issueID}
 	})
@@ -419,7 +419,7 @@ func (m Model) loopPollLabelsCmd(projectID, issueID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -438,7 +438,7 @@ func (m Model) loopPollLabelsCmd(projectID, issueID string) tea.Cmd {
 
 // loopScheduleLabelPoll schedules the next label poll after configured interval.
 func (m Model) loopScheduleLabelPoll(projectID, issueID string) tea.Cmd {
-	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	interval := time.Duration(m.state.cfg.Worktree.PRPollSeconds) * time.Second
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopLabelPollTickMsg{ProjectID: projectID, IssueID: issueID}
 	})
@@ -450,7 +450,7 @@ func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -502,11 +502,11 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
-	ls := m.loops[projectID]
+	ls := m.state.loops[projectID]
 	if ls == nil {
 		return nil
 	}
@@ -517,15 +517,15 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	repo := project.Repo
 	wtPath := slot.WorktreePath
 	logPolicy := ""
-	if p, ok := m.cfg.Profiles[project.Profile]; ok {
+	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
 	baseBranch := slot.BaseBranch
 	reviewRound := slot.ReviewRound
-	hookScripts := m.hookScripts
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + docs exist
