@@ -29,15 +29,20 @@ func (m Model) selectedProject() *config.ProjectConfig {
 // If any check fails, it sets the error overlay, logs the errors, and returns false.
 // op is the triggering operation label (e.g. "[o]", "[l]") used only in log output.
 func (m *Model) checkConfig(op string, project config.ProjectConfig, groups ...string) bool {
+	// Snapshot clients under RLock for thread-safe access.
+	m.state.RLock()
+	clients := m.state.clients
+	m.state.RUnlock()
+
 	var errs []string
 	for _, g := range groups {
 		switch g {
 		case valPath:
 			errs = append(errs, validatePath(project)...)
 		case valTracker:
-			errs = append(errs, validateTracker(project, m.state.clients)...)
+			errs = append(errs, validateTracker(project, clients)...)
 		case valTrackerURL:
-			trackerErrs := validateTracker(project, m.state.clients)
+			trackerErrs := validateTracker(project, clients)
 			errs = append(errs, trackerErrs...)
 			if len(trackerErrs) == 0 {
 				errs = append(errs, validateTrackerURL(project, m.state.cfg.Providers.Tracker)...)
