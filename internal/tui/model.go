@@ -36,6 +36,7 @@ const (
 	livenessCheckInterval      = 5 * time.Second
 	permissionCheckInterval    = 2 * time.Second
 	endedDisplayDuration       = 3 * time.Second
+	sessionScanInterval        = 10 * time.Second
 )
 
 // View represents the current screen.
@@ -378,7 +379,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case existingSessionsMsg:
 		m.state.Lock()
-		m.state.logger.Printf("startup scan: found %d session(s)", len(msg.Entries))
+		m.state.logger.Printf("session scan [%s]: found %d session(s)", msg.Source, len(msg.Entries))
 		var cmds []tea.Cmd
 		for _, entry := range msg.Entries {
 			key := m.nextTrackingKey(entry.ProjectID)
@@ -444,6 +445,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		cmds := m.checkSessionLiveness()
 		m.checkPermissionSignals()
+		if scanCmd := m.checkNewSessions(); scanCmd != nil {
+			cmds = append(cmds, scanCmd)
+		}
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
 
@@ -1171,7 +1175,7 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
-			return existingSessionsMsg{}
+			return existingSessionsMsg{Source: "startup"}
 		}
 		var entries []existingSessionEntry
 		for _, p := range projects {
@@ -1191,7 +1195,7 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 				})
 			}
 		}
-		return existingSessionsMsg{Entries: entries}
+		return existingSessionsMsg{Source: "startup", Entries: entries}
 	}
 }
 
@@ -1294,8 +1298,10 @@ func (m Model) trackedPIDs() map[int]bool {
 	return pids
 }
 
-// existingSessionsMsg carries results of scanning for already-running sessions at startup.
+// existingSessionsMsg carries results of scanning for already-running sessions.
+// Source distinguishes "startup" (initial scan) from "periodic" (tick-driven scan).
 type existingSessionsMsg struct {
+	Source  string // "startup" or "periodic"
 	Entries []existingSessionEntry
 }
 
@@ -1441,6 +1447,78 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 	}
 	m.state.Unlock()
 	return cmds
+}
+
+// checkNewSessions checks if sessionScanInterval has elapsed and, if so, returns a tea.Cmd
+// that scans for externally-launched Claude Code sessions not yet tracked in activeTerminals.
+// Follows the same tick + interval + lock pattern as checkSessionLiveness.
+func (m *Model) checkNewSessions() tea.Cmd {
+	m.state.Lock()
+	now := time.Now()
+	if now.Sub(m.state.lastSessionScan) < sessionScanInterval {
+		m.state.Unlock()
+		return nil
+	}
+	m.state.lastSessionScan = now
+	trackedPIDs := m.trackedPIDs()
+	m.state.Unlock()
+
+	// Build project list (same logic as scanExistingSessionsCmd).
+	type projectInfo struct {
+		id   string
+		path string
+	}
+	seen := make(map[string]bool)
+	var projects []projectInfo
+	m.state.RLock()
+	for _, p := range m.state.projects {
+		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
+		if path == "" {
+			continue
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		projects = append(projects, projectInfo{id: p.ID, path: path})
+	}
+	logger := m.state.logger
+	m.state.RUnlock()
+
+	return func() tea.Msg {
+		logger.Println("periodic session scan: started")
+		claudeHome, err := watcher.ClaudeHome()
+		if err != nil {
+			logger.Printf("periodic session scan: ClaudeHome error: %v", err)
+			return nil
+		}
+		var entries []existingSessionEntry
+		for _, p := range projects {
+			sessions, err := watcher.FindActiveSessions(claudeHome, p.path)
+			if err != nil || len(sessions) == 0 {
+				continue
+			}
+			for _, s := range sessions {
+				if trackedPIDs[s.PID] {
+					continue
+				}
+				logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
+				entries = append(entries, existingSessionEntry{
+					ProjectID: p.id,
+					PID:       s.PID,
+					SessionID: s.SessionID,
+					WorkDir:   p.path,
+					LogPath:   logPath,
+				})
+			}
+		}
+		if len(entries) == 0 {
+			logger.Println("periodic session scan: no new sessions found")
+			return nil
+		}
+		logger.Printf("periodic session scan: found %d new session(s)", len(entries))
+		return existingSessionsMsg{Source: "periodic", Entries: entries}
+	}
 }
 
 func (m Model) findProject(id string) *config.ProjectConfig {
