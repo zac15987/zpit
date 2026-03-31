@@ -110,6 +110,7 @@ You (TUI)                    Claude Code Agents
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
+- **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync
 
 ## Requirements
 
@@ -128,6 +129,10 @@ go build -o zpit .
 ./zpit
 # Edit the config with your projects and tracker tokens, then:
 ./zpit
+
+# SSH server mode (remote access)
+./zpit serve      # Start headless SSH daemon (default port 2222)
+./zpit connect    # SSH connect to local server
 ```
 
 ## Configuration
@@ -176,6 +181,14 @@ tags = ["go"]
 [projects.path]
 windows = "D:/Projects/my-project"
 wsl = "/mnt/d/Projects/my-project"
+
+# SSH server (optional — for remote TUI access)
+# [ssh]
+# port = 2222
+# host = "0.0.0.0"
+# host_key_path = "~/.zpit/ssh/host_ed25519"
+# password_env = "ZPIT_SSH_PASSWORD"
+# authorized_keys_path = "~/.ssh/authorized_keys"
 ```
 
 ## Hotkeys
@@ -264,6 +277,9 @@ AC-2: ...
 go build ./...           # Build
 go test ./...            # Run all tests
 make test-hooks          # Run hook tests (requires bash)
+go run .                 # Local TUI
+go run . serve           # SSH server mode
+go run . connect         # SSH client shortcut
 ```
 
 Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
@@ -282,6 +298,7 @@ Zpit is built on top of the following open source libraries:
 | [Bubbles](https://github.com/charmbracelet/bubbles) | TUI components (list, text input, etc.) | MIT |
 | [Lip Gloss](https://github.com/charmbracelet/lipgloss) | TUI styling and layout | MIT |
 | [Huh](https://github.com/charmbracelet/huh) | Form and confirm dialogs | MIT |
+| [Wish](https://github.com/charmbracelet/wish) | SSH server for TUI remote access | MIT |
 | [BurntSushi/toml](https://github.com/BurntSushi/toml) | TOML config parser | MIT |
 | [fsnotify](https://github.com/fsnotify/fsnotify) | Filesystem watcher (session log monitoring) | BSD-3-Clause |
 | [go-colorful](https://github.com/lucasb-eyer/go-colorful) | Color math for terminal rendering | MIT |
@@ -290,7 +307,7 @@ Zpit is built on top of the following open source libraries:
 | [mattn/go-runewidth](https://github.com/mattn/go-runewidth) | Rune display width calculation | MIT |
 | [golang.org/x/sys, x/text, x/sync](https://pkg.go.dev/golang.org/x) | Go extended standard library | BSD-3-Clause |
 
-All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
+All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`, `wish`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
 `fsnotify` and `golang.org/x/*` are BSD-3-Clause; their copyright notices are retained as required.
 
 ## License

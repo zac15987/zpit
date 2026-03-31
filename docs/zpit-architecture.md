@@ -274,6 +274,11 @@ TUI 透過 tail session log 即時顯示 agent 正在做什麼。
 
 ## 3. 系統架構（調度模式）
 
+> **運行模式：**
+> - `zpit` — 本機 TUI（直接操作）
+> - `zpit serve` — 無頭 SSH daemon（Wish），多個 SSH 客戶端共享同一 AppState
+> - `zpit connect` — SSH 連線便利包裝
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     你的電腦 (Windows / WSL)                        │
@@ -1921,7 +1926,157 @@ echo $?   # 應該是 2
 
 ---
 
-## 14. Milestone 計畫
+## 14. AppState 與多客戶端架構
+
+### 14.1 AppState 分離（PR #19）
+
+原本 `Model` struct 直接包含 16 個共享欄位（`cfg`、`activeTerminals`、`loops`、`clients` 等）。
+為支援 SSH 多客戶端同時連線，將這些共享狀態抽出為獨立的 `AppState` struct：
+
+```
+AppState (shared, one instance)
+  ├── cfg, env, clients, notifier, logger     (read-only after init)
+  ├── projects                                (read-only after init)
+  ├── activeTerminals                         (mutable)
+  ├── loops, wtManager                        (mutable)
+  ├── lastLivenessCheck, lastPermissionCheck  (mutable)
+  ├── clarifierMD, reviewerMD, ...            (read-only, embedded templates)
+  └── hookScripts                             (read-only)
+```
+
+- `NewAppState()` 接管原本 `NewModel()` 的初始化邏輯（logger 建立、tracker client 建立、map 初始化）
+- `NewModel(appState)` 大幅簡化，只設定 viewport 和 keymap
+- `main.go` 先建立 `appState`，再傳給 `NewModel(appState)`
+- 所有共享狀態存取從 `m.cfg` 改為 `m.state.cfg` 模式
+
+**這是純結構重構，零行為變更。**
+
+### 14.2 SSH Server Mode（PR #20, Wish）
+
+三個子命令透過 `os.Args` routing：
+
+```
+zpit           → runLocalTUI()     # 原有行為不變
+zpit serve     → runServe()        # 無頭 SSH daemon
+zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
+```
+
+**架構圖：**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  zpit serve (headless)                                  │
+│                                                         │
+│  AppState ─────────────────────────────────────────┐    │
+│    (shared, one instance)                          │    │
+│                                                    │    │
+│  Wish SSH Server (charmbracelet/wish v1.4.7)       │    │
+│    │                                               │    │
+│    ├── SSH Client A ──► tea.Program ──► Model A    │    │
+│    │   (isRemote=true)    (alt screen)   ├─ cursor │    │
+│    │                                     ├─ viewport│   │
+│    │                                     └─ overlays│   │
+│    │                                               │    │
+│    ├── SSH Client B ──► tea.Program ──► Model B    │    │
+│    │   (isRemote=true)                             │    │
+│    │                                               │    │
+│    └── (each session: NewModelWithState(state,true))│   │
+│                                                    │    │
+│  RunServerInit(state) — 啟動時同步執行一次          │    │
+│    ├── session scan (找已跑的 Claude Code)          │    │
+│    ├── .gitignore check                            │    │
+│    └── provider validation                         │    │
+│                                                    │    │
+│  Graceful shutdown: SIGINT/SIGTERM → 30s timeout   │    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**SSH Config（`[ssh]` section in config.toml）：**
+
+```toml
+[ssh]
+port = 2222                                    # 預設
+host = "0.0.0.0"                               # 預設
+host_key_path = "~/.zpit/ssh/host_ed25519"     # 預設，支援 ~/ 展開
+password_env = "ZPIT_SSH_PASSWORD"              # env var 名稱，選配
+authorized_keys_path = "~/.ssh/authorized_keys" # 預設，選配
+```
+
+**認證機制：**
+- Public key auth: 讀取 `authorized_keys_path` 檔案（`wish.WithAuthorizedKeys`）
+- Password auth: 從 `password_env` 指向的環境變數讀取密碼（`wish.WithPasswordAuth`）
+- 兩者至少啟用一個，否則啟動時 hard error
+
+**Remote vs Local session 差異：**
+
+| 行為 | Local (`isRemote=false`) | Remote (`isRemote=true`) |
+|------|--------------------------|--------------------------|
+| `Init()` | `serverInitCmds()` + `tickCmd()` | `tickCmd()` only |
+| Quit (`q`) | 停 watchers + loops + `tea.Quit` | `tea.Quit` only |
+| Server init | 在 `Init()` 中執行 | `zpit serve` 啟動時同步執行一次 |
+
+### 14.3 多客戶端併發安全（PR #21）
+
+**問題：** 多個 SSH 客戶端（tea.Program）共享同一個 `AppState`，Bubble Tea 的 `Update` 在各自 goroutine 執行，會造成 race condition。
+
+**解決方案：** `sync.RWMutex` + channel-based pub/sub
+
+```
+AppState
+  ├── mu (sync.RWMutex)     ← 保護 mutable fields
+  │     ├── activeTerminals
+  │     ├── loops
+  │     ├── lastLivenessCheck
+  │     └── lastPermissionCheck
+  │
+  └── subMu (sync.Mutex)    ← 保護 subscribers map（獨立於 mu）
+        └── subscribers map[int]chan struct{}
+```
+
+**兩個獨立的 mutex：**
+- `mu`（RWMutex）：保護共享狀態。Write lock 用於 mutation，Read lock 用於讀取。
+- `subMu`（Mutex）：保護 subscriber map。獨立於 `mu`，避免 `NotifyAll` 在持有 `mu` 時 deadlock。
+
+**Pub/Sub 廣播機制：**
+
+```
+Model A (SSH Client)                   AppState
+  │                                      │
+  │  Subscribe() ──────────────────────► subscribers[1] = chan(1)
+  │                                      │
+  │  waitForStateRefresh()               │
+  │    └── blocks on subscriberCh        │
+  │                                      │
+  │                           Model B mutates state
+  │                             └── Lock() → mutate → NotifyAll() → Unlock()
+  │                                      │
+  │  ◄── StateRefreshMsg ───────── ch ◄──┘  (non-blocking send)
+  │                                      │
+  │  re-render View() (RLock)            │
+  │  re-subscribe → waitForStateRefresh  │
+```
+
+- `Subscribe()` 回傳 ID + buffered channel (size 1)
+- `NotifyAll()` non-blocking send 到所有 subscriber channel，合併快速連續變更
+- `Unsubscribe(id)` 在 quit 時清理
+
+**Lock patterns（程式碼規範）：**
+
+| 場景 | Pattern |
+|------|---------|
+| 讀取 loops/terminals 建立 cmd | `RLock` → 複製到 local vars → `RUnlock` → return cmd closure |
+| 修改 loops/terminals | `Lock` → mutate → `NotifyAll` → `Unlock` → create cmds |
+| handlers 需要讀+寫 | `Lock` → collect actions into slice → `Unlock` → create cmds（action-defer pattern） |
+| View rendering | `RLock` → render → `RUnlock` |
+| Read-only fields (`cfg`, `clients`, `env`) | No lock needed（init 後不變） |
+
+**禁止事項：**
+- 持有 `mu` 時呼叫會取 `RLock` 的 cmd 方法（會 deadlock）
+- cmd closure 中直接引用 `AppState` 的 mutable fields（必須先複製）
+
+---
+
+## 15. Milestone 計畫
 
 ### M1: 能用的最小版本 ✅
 - [x] Go 專案骨架 + Bubble Tea 基礎框架
@@ -1962,7 +2117,7 @@ echo $?   # 應該是 2
 - [x] Per-project base_branch config（預設 "dev"）
 - [x] Slug 工具（issue title → URL-safe slug）
 
-### M4b: Loop 引擎 + 自動化（自動化核心）
+### M4b: Loop 引擎 + 自動化（自動化核心） ✅
 - [x] Loop 引擎實作（抓 todo → 建 worktree → coding agent → PR 出現觸發 reviewer → PR merge 清理）
 - [x] 同一專案多 agent 平行執行（受 max_per_project 限制）
 - [x] TUI [l] toggle + Loop Status 顯示
@@ -1974,6 +2129,20 @@ echo $?   # 應該是 2
 - [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
 - [x] Label on-demand 檢查：操作前檢查 required labels，缺少時 overlay confirm dialog 確認後建立（LabelManager interface）
 - [x] Per-issue branch 控制：Issue Spec `## BRANCH` → coding prompt 強制 PR target、reviewer 驗證、trackerdoc 分支策略
+
+### M4c: SSH 遠端存取 + 併發安全 ✅
+- [x] AppState 分離：共享狀態抽出為獨立 struct，Model 只保留 per-connection UI 狀態（PR #19）
+- [x] SSH Server（Wish）：`zpit serve` 無頭 SSH daemon + `zpit connect` 便利包裝（PR #20）
+- [x] SSH 認證：public key（authorized_keys）+ password（env var），至少啟用一個
+- [x] SSHConfig：`[ssh]` section in config.toml（port、host、host_key_path、password_env、authorized_keys_path）
+- [x] Remote session lifecycle：`isRemote=true` quit 不停 watchers/loops，server init 只跑一次
+- [x] `main.go` 重構為子命令 routing（runLocalTUI / runServe / runConnect）
+- [x] `sync.RWMutex` 保護 AppState mutable fields（activeTerminals、loops、lastLivenessCheck、lastPermissionCheck）（PR #21）
+- [x] Channel-based pub/sub（Subscribe/Unsubscribe/NotifyAll）：狀態變更廣播 StateRefreshMsg 給所有客戶端
+- [x] 兩個獨立 mutex（`mu` for state、`subMu` for subscribers）避免 deadlock
+- [x] Copy-before-closure + action-defer pattern 避免 nested lock
+- [x] 所有 loop handlers 加 write lock + NotifyAll，所有 loop cmds 加 read lock
+- [x] View rendering 加 RLock
 
 ### M5: 完整體驗（1-2 週）
 - [ ] Agent 自主判斷 agent teams
