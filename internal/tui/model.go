@@ -1942,7 +1942,12 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 
 	case PendingConfirmIssue:
 		m.pendingOp = nil
-		return m, m.confirmIssueCmd()
+		if m.statusCursor < len(m.statusIssues) {
+			issue := m.statusIssues[m.statusCursor]
+			m.showIssueConfirm(issue.ID, issue.Title)
+			return m, m.confirmForm.Init()
+		}
+		return m, nil
 	}
 
 	m.pendingOp = nil
@@ -2081,6 +2086,25 @@ func (m *Model) showUndeployConfirm(project config.ProjectConfig) {
 			}
 			return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyUndeployDone), count, projectName)}
 		}
+	}
+}
+
+// showIssueConfirm displays an overlay confirm dialog before changing an issue from pending to todo.
+func (m *Model) showIssueConfirm(issueID, issueTitle string) {
+	title := fmt.Sprintf(locale.T(locale.KeyIssueConfirmTitle), issueID, issueTitle)
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative(locale.T(locale.KeyIssueConfirmButton)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(50)
+	m.confirmAction = func() tea.Cmd {
+		return m.confirmIssueCmd()
 	}
 }
 

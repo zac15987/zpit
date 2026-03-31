@@ -65,6 +65,10 @@ var zhTW = map[Key]string{
 	KeyUndeployDone:    "已清除 %d 個項目（%s）",
 	KeyUndeployNoop:    "無已部署檔案（%s）",
 
+	// Issue confirm dialog
+	KeyIssueConfirmTitle:  "確認將 #%s 設為 todo？\n「%s」",
+	KeyIssueConfirmButton: "確認",
+
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit 及其 agent 依賴以下 label 追蹤 issue 狀態。\n%s 缺少以下 label：\n\n%s\n\n建立後才能繼續，是否建立？",
 	KeyCreateLabels:   "建立 Label",
