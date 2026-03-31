@@ -65,6 +65,10 @@ var en = map[Key]string{
 	KeyUndeployDone:    "Undeployed %d item(s) from %s",
 	KeyUndeployNoop:    "No deployed files found (%s)",
 
+	// Issue confirm dialog
+	KeyIssueConfirmTitle:  "Set #%s to todo?\n「%s」",
+	KeyIssueConfirmButton: "Confirm",
+
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",
 	KeyCreateLabels:   "Create Labels",
