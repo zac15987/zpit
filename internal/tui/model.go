@@ -1486,7 +1486,6 @@ func (m *Model) checkNewSessions() tea.Cmd {
 	m.state.RUnlock()
 
 	return func() tea.Msg {
-		logger.Println("periodic session scan: started")
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
 			logger.Printf("periodic session scan: ClaudeHome error: %v", err)
@@ -1513,7 +1512,6 @@ func (m *Model) checkNewSessions() tea.Cmd {
 			}
 		}
 		if len(entries) == 0 {
-			logger.Println("periodic session scan: no new sessions found")
 			return nil
 		}
 		logger.Printf("periodic session scan: found %d new session(s)", len(entries))
