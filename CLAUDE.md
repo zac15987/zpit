@@ -30,6 +30,7 @@ main.go                  # Entry point: subcommand routing, go:embed declaration
 agents/                  # Agent templates (clarifier.md, reviewer.md) — embedded via go:embed
 hooks/                   # PreToolUse hook scripts — embedded via go:embed, + hook_test.go
 docs/                    # Agent behavioral rules, code quality baseline, LLM failure mode research
+docs/architecture/       # Architecture docs (split by topic) — see docs/architecture/README.md for index
 scripts/                 # Manual hook deployment fallback (setup-hooks.sh)
 testdata/                # Config fixtures + JSONL session fixtures
 internal/

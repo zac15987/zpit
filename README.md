@@ -286,7 +286,7 @@ Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 
 ## Architecture
 
-See [docs/zpit-architecture.md](docs/zpit-architecture.md) for the full architecture document.
+See [docs/architecture/](docs/architecture/) for the full architecture documents (split by topic, with an [index](docs/architecture/README.md)).
 
 ## Open Source Attributions
 
