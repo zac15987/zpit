@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/huh"
 	overlay "github.com/rmhubbert/bubbletea-overlay"
 
+	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
@@ -636,6 +637,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			ls.Active = false
 		}
 		m.state.Unlock()
+		// Close broker if running.
+		if m.state.broker != nil {
+			m.state.broker.Close()
+			m.state.broker = nil
+		}
 		m.state.Unsubscribe(m.subscriberID)
 		return m, tea.Quit
 	}
@@ -722,6 +728,12 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			ls.Slots = make(map[string]*loop.Slot)
 			m.state.NotifyAll()
 			m.state.Unlock()
+			// Close broker if running.
+			if m.state.broker != nil {
+				m.state.logger.Printf("loop: closing broker for project=%s", p.ID)
+				m.state.broker.Close()
+				m.state.broker = nil
+			}
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil
 		}
@@ -1945,6 +1957,19 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	case PendingLoop:
 		m.pendingOp = nil
 		project := m.state.projects[op.ProjectIndex]
+
+		// Start broker if channel_enabled for this project.
+		if project.ChannelEnabled && m.state.broker == nil {
+			b, err := broker.New(m.state.logger)
+			if err != nil {
+				m.state.logger.Printf("loop: broker start failed for %s: %v", project.ID, err)
+				m.setStatus(fmt.Sprintf("Broker start failed: %v", err))
+			} else {
+				m.state.broker = b
+				m.state.logger.Printf("loop: broker started on %s for project=%s", b.Addr(), project.ID)
+			}
+		}
+
 		m.state.Lock()
 		ls := &loop.LoopState{
 			Active: true,

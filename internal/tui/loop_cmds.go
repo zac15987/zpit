@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -172,6 +173,7 @@ func detectCycles(graph map[string][]string) map[string]bool {
 
 // loopCreateWorktreeCmd creates a worktree for the given issue.
 // Acquires RLock to read loops map, then releases before returning the Cmd closure.
+// If ChannelEnabled, writes .mcp.json to the worktree root pointing to the broker.
 func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
@@ -197,6 +199,12 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	mgr := m.state.wtManager
 	hookMode := project.HookMode
 	hookScripts := m.state.hookScripts
+	channelEnabled := project.ChannelEnabled
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		wtPath, err := mgr.Create(worktree.CreateParams{
@@ -213,6 +221,16 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 		if err := worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts); err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
+
+		// Write .mcp.json for channel communication if enabled.
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID); err != nil {
+				logger.Printf("loop: failed to write .mcp.json for issue #%s: %v", issueID, err)
+			} else {
+				logger.Printf("loop: wrote .mcp.json to %s for issue #%s", wtPath, issueID)
+			}
+		}
+
 		return LoopWorktreeCreatedMsg{
 			ProjectID:    projectID,
 			IssueID:      issueID,
@@ -220,6 +238,37 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 			BranchName:   branchName,
 		}
 	}
+}
+
+// writeMCPConfig writes a .mcp.json file to the worktree root, configuring
+// the zpit-channel MCP server to connect to the broker.
+func writeMCPConfig(wtPath, brokerAddr, projectID, issueID string) error {
+	zpitBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("get executable path: %w", err)
+	}
+
+	// Build the .mcp.json structure.
+	mcpConfig := map[string]any{
+		"mcpServers": map[string]any{
+			"zpit-channel": map[string]any{
+				"command": zpitBin,
+				"args":    []string{"serve-channel"},
+				"env": map[string]string{
+					"ZPIT_BROKER_URL": "http://" + brokerAddr,
+					"ZPIT_PROJECT_ID": projectID,
+					"ZPIT_ISSUE_ID":   issueID,
+				},
+			},
+		},
+	}
+
+	data, err := json.MarshalIndent(mcpConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal .mcp.json: %w", err)
+	}
+
+	return os.WriteFile(filepath.Join(wtPath, ".mcp.json"), data, 0o644)
 }
 
 // loopWriteAgentCmd fetches the issue, parses spec, builds prompt, writes temp agent file.
