@@ -48,6 +48,25 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		return m, m.loopSchedulePoll(msg.ProjectID)
 	}
 
+	// Deduplicate circular dependency logging: only log on first detection or change.
+	cycleKey := strings.Join(msg.CycleIssueIDs, ",")
+	if cycleKey != ls.ReportedCycleKey {
+		if cycleKey != "" {
+			ids := make([]string, len(msg.CycleIssueIDs))
+			for i, id := range msg.CycleIssueIDs {
+				ids[i] = "#" + id
+			}
+			m.state.logger.Printf("loop: circular dependency detected among issues: %s", strings.Join(ids, ", "))
+		} else if ls.ReportedCycleKey != "" {
+			prev := strings.Split(ls.ReportedCycleKey, ",")
+			for i, id := range prev {
+				prev[i] = "#" + id
+			}
+			m.state.logger.Printf("loop: circular dependency resolved (previously: %s)", strings.Join(prev, ", "))
+		}
+		ls.ReportedCycleKey = cycleKey
+	}
+
 	// Check existing worktrees to detect resumed issues.
 	project := m.findProject(msg.ProjectID)
 	var existingWorktrees []worktree.WorktreeInfo
