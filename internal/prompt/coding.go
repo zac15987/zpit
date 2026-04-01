@@ -10,11 +10,12 @@ import (
 
 // CodingParams holds all data needed to assemble a coding agent prompt.
 type CodingParams struct {
-	IssueID    string
-	IssueTitle string
-	Spec       *tracker.IssueSpec
-	LogPolicy  string // "strict" | "standard" | "minimal"
-	BaseBranch string // e.g. "dev"
+	IssueID        string
+	IssueTitle     string
+	Spec           *tracker.IssueSpec
+	LogPolicy      string // "strict" | "standard" | "minimal"
+	BaseBranch     string // e.g. "dev"
+	ChannelEnabled bool   // true when cross-agent channel communication is active
 }
 
 // BuildCodingPrompt assembles the full coding agent prompt from Issue Spec data.
@@ -48,6 +49,10 @@ func BuildCodingPrompt(p CodingParams) string {
 	}
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
+
+	if p.ChannelEnabled {
+		b.WriteString(channelToolsSection())
+	}
 
 	if len(p.Spec.Tasks) > 0 {
 		buildTaskWorkflow(&b, p)
@@ -177,4 +182,35 @@ func logPolicyText(policy string) string {
 	default:
 		return ""
 	}
+}
+
+// channelToolsSection returns the cross-agent communication section for the coding prompt.
+// Only injected when ChannelEnabled is true.
+func channelToolsSection() string {
+	return `
+
+## Cross-Agent Communication
+
+This project has cross-agent channel communication enabled. You have access to three MCP tools
+for coordinating with other agents working on parallel issues:
+
+- **publish_artifact**: After completing a key interface definition, type spec, schema, or config
+  that other agents may depend on, call this tool to publish it to the shared broker.
+  Other agents will receive a channel notification with your artifact content.
+  Parameters: issue_id (your issue ID), type (e.g. "interface", "type", "schema"), content (the definition).
+
+- **list_artifacts**: Call this tool to see all artifacts published by other agents in this project.
+  Use this at the start of implementation to check if relevant interfaces or types have already been defined,
+  and periodically during implementation to stay in sync.
+
+- **send_message**: Send a direct message to another agent by their issue ID.
+  Use this to request specific information, flag potential conflicts, or coordinate timing.
+  Parameters: to_issue_id (target agent's issue ID), content (message text).
+
+**When to use these tools:**
+- After defining or modifying a shared interface/type, call publish_artifact so other agents can align.
+- When you receive a channel notification about an artifact from another agent, review it and adapt your implementation if needed.
+- If you discover a potential conflict with another agent's work, use send_message to coordinate.
+- At the start of implementation, call list_artifacts to see what's already been published.
+`
 }
