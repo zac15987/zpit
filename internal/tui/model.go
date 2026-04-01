@@ -380,8 +380,26 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case existingSessionsMsg:
 		m.state.Lock()
 		m.state.logger.Printf("session scan [%s]: found %d session(s)", msg.Source, len(msg.Entries))
+
+		// Dedup: build filters from current state (not stale scan-time snapshot).
+		currentPIDs := m.trackedPIDs()
+		pendingWorkDirs := make(map[string]bool)
+		for _, at := range m.state.activeTerminals {
+			if at.SessionPID == 0 && at.WorkDir != "" {
+				pendingWorkDirs[at.WorkDir] = true
+			}
+		}
+
 		var cmds []tea.Cmd
 		for _, entry := range msg.Entries {
+			if currentPIDs[entry.PID] {
+				m.state.logger.Printf("  skip: PID=%d already tracked", entry.PID)
+				continue
+			}
+			if pendingWorkDirs[entry.WorkDir] {
+				m.state.logger.Printf("  skip: PID=%d workDir has pending discovery", entry.PID)
+				continue
+			}
 			key := m.nextTrackingKey(entry.ProjectID)
 			m.state.logger.Printf("  attach: key=%s PID=%d sessionID=%s", key, entry.PID, entry.SessionID)
 			m.state.activeTerminals[key] = &ActiveTerminal{
@@ -391,6 +409,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				WorkDir:        entry.WorkDir,
 				StateChangedAt: time.Now(),
 			}
+			currentPIDs[entry.PID] = true
 			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.state.logger))
 		}
 		m.state.NotifyAll()
