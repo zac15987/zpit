@@ -57,15 +57,12 @@ Never proceed with an uncertain technical decision on your own.
 
 - **Prefer MCP tools** for tracker operations (create issue, post comment, update label).
   MCP accepts structured parameters directly — no temp files needed.
-- If MCP is unavailable, use Bash heredoc to write content to a temp file,
-  then use `curl` with `@file`:
-  ```bash
-  cat << 'EOF' > /tmp/body.md
-  ...content...
-  EOF
-  curl ... -d @/tmp/body.md
-  rm /tmp/body.md
-  ```
+- If MCP is unavailable, use the Write tool + `--body-file` pattern:
+  1. Use the Write tool to write content to a temp file in the working directory (e.g. `./tmp_body.md`)
+  2. Use `gh` with `--body-file ./tmp_body.md` or `curl` with `-d @./tmp_body.md`
+  3. Delete the temp file: `rm ./tmp_body.md`
+- **Do NOT use Bash heredoc** (`cat << 'EOF' > file`) — heredoc passes content through the shell,
+  which fails on long content containing backticks, single quotes, backslash paths, or mixed CJK text.
 - Never embed long text directly in bash commands.
 - Follow `.claude/docs/tracker.md` for API-specific instructions.
 

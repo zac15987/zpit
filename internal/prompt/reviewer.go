@@ -23,7 +23,10 @@ const reviewerTrackerNotes = `
 
 When writing the Review Report to the tracker (comment), follow the instructions in .claude/docs/tracker.md.
 Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+If MCP is unavailable, use the Write tool + --body-file pattern:
+1. Write the report to a temp file in the working directory (e.g. ./tmp_review_report.md) using the Write tool
+2. Use gh with --body-file ./tmp_review_report.md or curl with -d @./tmp_review_report.md
+3. Delete the temp file: rm ./tmp_review_report.md
 Never embed long text directly in bash commands.
 `
 
