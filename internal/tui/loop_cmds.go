@@ -511,13 +511,14 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	logger := m.state.logger
 
 	return func() tea.Msg {
-		err := mgr.Remove(projectPath, wtPath, true)
-		if err != nil {
-			return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		// Try worktree removal — failure is logged but does not block issue closing.
+		// On Windows, Remove() often fails because the agent process still holds the CWD lock.
+		removeErr := mgr.Remove(projectPath, wtPath, true)
+		if removeErr != nil {
+			logger.Printf("loop: worktree remove failed #%s: %v (will still close issue)", issueID, removeErr)
 		}
 
-		// Close the issue after successful worktree removal.
-		// Failure is logged but does not block cleanup (worktree is already gone).
+		// Always close the issue regardless of worktree removal result.
 		if ok && client != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -526,11 +527,12 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 			}
 		}
 
-		return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: nil}
+		return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: removeErr}
 	}
 }
 
 // loopCleanupMergedCmd cleans up worktrees whose PR has been merged (leftover from previous sessions).
+// Also closes the associated issue if still open.
 // Only reads read-only fields (clients, wtManager) — no lock needed.
 func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
@@ -544,6 +546,7 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 	}
 	repo := project.Repo
 	mgr := m.state.wtManager
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		worktrees, err := mgr.List(projectPath)
@@ -551,7 +554,7 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 			return nil
 		}
 
-		cleaned := 0
+		cleaned, closed := 0, 0
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -563,12 +566,24 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 			if pr.State == "merged" {
 				if err := mgr.Remove(projectPath, wt.Path, true); err == nil {
 					cleaned++
+				} else {
+					logger.Printf("loop: merged worktree remove failed branch=%s: %v", wt.Branch, err)
+				}
+
+				// Close the associated issue (best-effort, independent of worktree removal).
+				issueID := extractIssueID(wt.Branch)
+				if issueID != "" {
+					if err := client.CloseIssue(ctx, repo, issueID); err != nil {
+						logger.Printf("loop: failed to close issue #%s for merged branch %s: %v", issueID, wt.Branch, err)
+					} else {
+						closed++
+					}
 				}
 			}
 		}
 
-		if cleaned > 0 {
-			return StatusMsg{Text: fmt.Sprintf("Cleaned %d merged worktree(s)", cleaned)}
+		if cleaned > 0 || closed > 0 {
+			return StatusMsg{Text: fmt.Sprintf("Cleaned %d merged worktree(s), closed %d issue(s)", cleaned, closed)}
 		}
 		return nil
 	}

@@ -324,8 +324,8 @@ func (m Model) handleLoopCleanup(msg LoopCleanupMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Err != nil {
-		m.state.logger.Printf("loop: cleanup error #%s: %s", msg.IssueID, msg.Err)
-		m.setStatus(fmt.Sprintf("Cleanup error #%s: %s", msg.IssueID, msg.Err))
+		m.state.logger.Printf("loop: cleanup done #%s (worktree removal failed: %s)", msg.IssueID, msg.Err)
+		m.setStatus(fmt.Sprintf("Issue #%s done (worktree removal failed: %s)", msg.IssueID, msg.Err))
 	} else {
 		m.state.logger.Printf("loop: cleanup done #%s", msg.IssueID)
 		m.setStatus(fmt.Sprintf("Issue #%s done, worktree cleaned", msg.IssueID))
