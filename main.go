@@ -16,6 +16,7 @@ import (
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
+	"github.com/zac15987/zpit/internal/mcp"
 	zssh "github.com/zac15987/zpit/internal/ssh"
 	"github.com/zac15987/zpit/internal/tui"
 	"github.com/zac15987/zpit/internal/worktree"
@@ -62,9 +63,11 @@ func main() {
 		runServe()
 	case "connect":
 		runConnect()
+	case "serve-channel":
+		runServeChannel()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcmd)
-		fmt.Fprintln(os.Stderr, "Usage: zpit [serve|connect]")
+		fmt.Fprintln(os.Stderr, "Usage: zpit [serve|connect|serve-channel]")
 		os.Exit(1)
 	}
 }
@@ -134,6 +137,15 @@ func runConnect() {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "ssh exited: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runServeChannel starts the Channel MCP stdio server for cross-worktree agent communication.
+// Reads ZPIT_BROKER_URL, ZPIT_PROJECT_ID, ZPIT_ISSUE_ID from environment.
+func runServeChannel() {
+	if err := mcp.RunFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
