@@ -47,8 +47,30 @@ func LaunchClaudeInDir(workDir, tabTitle string, cfg config.TerminalConfig, extr
 }
 
 // buildClaudeArgs returns "claude" followed by any extra arguments as separate elements.
+// If --channel-enabled is present, it is removed from the args and
+// --dangerously-load-development-channels server:zpit-channel is injected instead.
 func buildClaudeArgs(extraArgs []string) []string {
-	return append([]string{"claude"}, extraArgs...)
+	filtered, channelEnabled := filterChannelFlag(extraArgs)
+	args := append([]string{"claude"}, filtered...)
+	if channelEnabled {
+		args = append(args, "--dangerously-load-development-channels", "server:zpit-channel")
+	}
+	return args
+}
+
+// filterChannelFlag removes --channel-enabled from the args slice.
+// Returns the filtered args and whether the flag was found.
+func filterChannelFlag(args []string) ([]string, bool) {
+	found := false
+	var filtered []string
+	for _, arg := range args {
+		if arg == "--channel-enabled" {
+			found = true
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	return filtered, found
 }
 
 // hasAgentFlag returns true if extraArgs contains "--agent".
