@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -173,6 +174,10 @@ func writeSettingsLocal(worktreePath, content string) error {
 		return fmt.Errorf("creating .claude dir: %w", err)
 	}
 	path := filepath.Join(claudeDir, "settings.local.json")
+	existing, _ := os.ReadFile(path)
+	if bytes.Equal(existing, []byte(content)) {
+		return nil
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing settings.local.json: %w", err)
 	}
@@ -233,5 +238,9 @@ func mergeSettingsHooks(targetPath, hookMode string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling settings: %w", err)
 	}
-	return os.WriteFile(settingsPath, append(out, '\n'), 0o644)
+	newData := append(out, '\n')
+	if bytes.Equal(data, newData) {
+		return nil
+	}
+	return os.WriteFile(settingsPath, newData, 0o644)
 }

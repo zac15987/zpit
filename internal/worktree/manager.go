@@ -63,8 +63,16 @@ func (m *Manager) Create(p CreateParams) (string, error) {
 
 	wtPath := m.ResolvePath(p.ProjectID, p.IssueID, p.Slug)
 
-	// Create branch from baseBranch.
-	if _, err := runGit(p.RepoPath, "branch", p.BranchName, p.BaseBranch); err != nil {
+	// Fetch latest remote state for baseBranch to ensure worktree includes
+	// any recently merged code (e.g. from dependency issues).
+	if _, err := runGit(p.RepoPath, "fetch", "origin", p.BaseBranch); err != nil {
+		return "", fmt.Errorf("fetching origin/%s: %w", p.BaseBranch, err)
+	}
+
+	// Create branch from remote tracking branch (origin/baseBranch) to ensure
+	// the worktree is based on the latest remote state, not the local branch.
+	remoteBranch := "origin/" + p.BaseBranch
+	if _, err := runGit(p.RepoPath, "branch", p.BranchName, remoteBranch); err != nil {
 		return "", fmt.Errorf("creating branch %s: %w", p.BranchName, err)
 	}
 
@@ -105,7 +113,7 @@ func (m *Manager) Remove(repoPath, worktreePath string, deleteBranch bool) error
 	}
 
 	if deleteBranch && branchName != "" {
-		if _, err := runGit(repoPath, "branch", "-d", branchName); err != nil {
+		if _, err := runGit(repoPath, "branch", "-D", branchName); err != nil {
 			return fmt.Errorf("deleting branch %s: %w", branchName, err)
 		}
 	}

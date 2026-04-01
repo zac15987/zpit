@@ -53,7 +53,8 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 		"When to Stop and Ask the User",                        // stop conditions
 		"must",                                                 // PR target branch
 		"--base dev",                                           // PR target branch flag
-		"WebSearch",                                            // tool-first: verify external APIs
+		"WebFetch",                                             // research: fetch reference URLs
+		"WebSearch",                                            // research: verify external APIs
 		"re-read each modified file",                           // stale context: verify before commit
 	}
 
@@ -242,7 +243,8 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 		"Constraints",
 		"Re-read the reviewer",                                    // stale context: understand root concern
 		"re-read each modified file",                              // stale context: verify after fix
-		"WebSearch",                                               // tool underuse: verify external APIs
+		"WebFetch",                                                // research: fetch reference URLs
+		"WebSearch",                                               // research: verify external APIs
 		"vague or lacks a clear direction",                        // sycophancy: ask for clarification
 		"compliance without agreement is not acceptable",          // sycophancy: challenge incorrect feedback
 		"degrade code quality",                                    // sycophancy: flag conflicts
@@ -254,6 +256,112 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 		if !strings.Contains(result, c) {
 			t.Errorf("revision prompt missing %q", c)
 		}
+	}
+}
+
+func testSpecWithTasks() *tracker.IssueSpec {
+	spec := testSpec()
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "Add retry logic", Paths: []string{"src/EtherCatService.cs"}, DependsOn: nil},
+		{ID: "T2", Description: "Add retry policy", Parallel: true, Paths: []string{"src/RetryPolicy.cs"}, DependsOn: []string{"T1"}},
+	}
+	return spec
+}
+
+func TestBuildCodingPrompt_WithTasks(t *testing.T) {
+	p := CodingParams{
+		IssueID:    "ASE-47",
+		IssueTitle: "EtherCAT reconnect backoff",
+		Spec:       testSpecWithTasks(),
+		LogPolicy:  "strict",
+		BaseBranch: "dev",
+	}
+
+	result := BuildCodingPrompt(p)
+
+	mustContain := []string{
+		"Execute tasks in order",
+		"Commit after each task",
+		"[ASE-47] T{N}:",
+		"T1:",
+		"T2:",
+		"WebFetch",
+		"re-read modified files",
+		"Verify relevant ACs",
+		"retry once",
+		"stop and post issue comment",
+		"do NOT open PR",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("task prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_WithoutTasks_NoTaskWorkflow(t *testing.T) {
+	p := CodingParams{
+		IssueID:    "ASE-48",
+		IssueTitle: "simple change",
+		Spec:       testSpec(), // no Tasks
+		LogPolicy:  "minimal",
+		BaseBranch: "dev",
+	}
+
+	result := BuildCodingPrompt(p)
+
+	if strings.Contains(result, "Execute tasks in order") {
+		t.Error("prompt without tasks should NOT contain 'Execute tasks in order'")
+	}
+	if strings.Contains(result, "Task Decomposition") {
+		t.Error("prompt without tasks should NOT contain 'Task Decomposition'")
+	}
+}
+
+func TestBuildCodingPrompt_ChannelEnabled(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpec(),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	checks := []string{
+		"Cross-Agent Communication",
+		"publish_artifact",
+		"list_artifacts",
+		"send_message",
+		"channel notification",
+		"shared broker",
+	}
+	for _, c := range checks {
+		if !strings.Contains(result, c) {
+			t.Errorf("channel-enabled prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_ChannelDisabled(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpec(),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: false,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	if strings.Contains(result, "Cross-Agent Communication") {
+		t.Error("channel-disabled prompt should NOT contain cross-agent communication section")
+	}
+	if strings.Contains(result, "publish_artifact") {
+		t.Error("channel-disabled prompt should NOT contain publish_artifact")
 	}
 }
 

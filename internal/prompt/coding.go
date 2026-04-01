@@ -10,11 +10,12 @@ import (
 
 // CodingParams holds all data needed to assemble a coding agent prompt.
 type CodingParams struct {
-	IssueID    string
-	IssueTitle string
-	Spec       *tracker.IssueSpec
-	LogPolicy  string // "strict" | "standard" | "minimal"
-	BaseBranch string // e.g. "dev"
+	IssueID        string
+	IssueTitle     string
+	Spec           *tracker.IssueSpec
+	LogPolicy      string // "strict" | "standard" | "minimal"
+	BaseBranch     string // e.g. "dev"
+	ChannelEnabled bool   // true when cross-agent channel communication is active
 }
 
 // BuildCodingPrompt assembles the full coding agent prompt from Issue Spec data.
@@ -49,7 +50,22 @@ func BuildCodingPrompt(p CodingParams) string {
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
-	fmt.Fprintf(&b, `
+	if p.ChannelEnabled {
+		b.WriteString(channelToolsSection())
+	}
+
+	if len(p.Spec.Tasks) > 0 {
+		buildTaskWorkflow(&b, p)
+	} else {
+		buildStandardWorkflow(&b, p)
+	}
+
+	return b.String()
+}
+
+// buildStandardWorkflow writes the default coding workflow (no TASKS decomposition).
+func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
+	fmt.Fprintf(b, `
 
 ## Your Workflow
 
@@ -59,7 +75,10 @@ func BuildCodingPrompt(p CodingParams) string {
    Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read all files listed in SCOPE to understand the existing code structure
 3. If references list any reference files, read those too
-4. If implementation depends on external libraries or APIs not fully documented in REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding — do not code against training-data assumptions
+4. **Research before coding (mandatory):**
+   a. If REFERENCES contain any URLs, use WebFetch to retrieve and read each URL
+   b. Use WebSearch to research the problem domain described in CONTEXT and the implementation approach — gather up-to-date information, common pitfalls, and best practices relevant to this task
+   c. If implementation depends on external libraries or APIs, use WebSearch to verify current API signatures and version compatibility — do not code against training-data assumptions
 5. Implement according to the approach described in APPROACH
 6. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
 7. After completion, self-check against each ACCEPTANCE_CRITERIA item
@@ -82,13 +101,80 @@ func BuildCodingPrompt(p CodingParams) string {
 
 ## Tracker Operation Notes
 
-When opening a PR or updating status, follow the instructions in .claude/docs/tracker.md.
-Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
-Never embed long text directly in bash commands.
+Before performing any tracker operation (PR, label, comment), you MUST first read .claude/docs/tracker.md.
+Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
+Never embed long text directly in bash commands or MCP parameters.
+Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
+Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
+}
 
-	return b.String()
+// buildTaskWorkflow writes the task-ordered coding workflow when TASKS is present.
+func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
+	b.WriteString("\n\n## Task Decomposition\n\n")
+	b.WriteString("This issue has been decomposed into ordered tasks. Execute tasks in order.\n")
+	b.WriteString("Commit after each task with format: [" + p.IssueID + "] T{N}: {short description}\n\n")
+	for _, task := range p.Spec.Tasks {
+		fmt.Fprintf(b, "- %s: ", task.ID)
+		if task.Parallel {
+			b.WriteString("[P] ")
+		}
+		b.WriteString(task.Description)
+		if len(task.Paths) > 0 {
+			b.WriteString(" — files: " + strings.Join(task.Paths, ", "))
+		}
+		if len(task.DependsOn) > 0 {
+			b.WriteString(" (depends: " + strings.Join(task.DependsOn, ", ") + ")")
+		}
+		b.WriteByte('\n')
+	}
+
+	fmt.Fprintf(b, `
+## Your Workflow
+
+Execute tasks in order. Commit after each task.
+
+1. Read CLAUDE.md to understand the project's architecture principles and logging policy
+   Read .claude/docs/tracker.md to understand how to operate the tracker (open PR, update status)
+   Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
+   Read .claude/docs/code-construction-principles.md to understand the code quality baseline
+2. Read all files listed in SCOPE to understand the existing code structure
+3. If references list any reference files, read those too
+4. **Research before coding (mandatory):**
+   a. If REFERENCES contain any URLs, use WebFetch to retrieve and read each URL
+   b. Use WebSearch to research the problem domain described in CONTEXT and the implementation approach — gather up-to-date information, common pitfalls, and best practices relevant to this task
+   c. If implementation depends on external libraries or APIs, use WebSearch to verify current API signatures and version compatibility — do not code against training-data assumptions
+5. Before starting implementation, update issue label: remove "todo", add "wip"
+6. For each task (T1, T2, ...):
+   a. Implement the task according to APPROACH
+   b. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
+   c. After completing the task, re-read modified files to verify consistency
+   d. Verify relevant ACs that relate to this task
+   e. Commit with format: [%s] T{N}: {short description}
+   f. If the task fails (tests break, build error), retry once. If still failing, stop and post issue comment explaining what failed — do NOT open PR
+7. After all tasks complete, self-check against each ACCEPTANCE_CRITERIA item
+8. Use git add + git commit for any final adjustments
+9. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
+   Targeting any other branch is strictly forbidden. If unsure, stop and confirm before opening the PR.
+10. After opening the PR, update issue label: remove "wip", add "review"
+
+## When to Stop and Ask the User
+
+- The APPROACH description is unclear and you are unsure how to proceed
+- You find that you need to modify files outside the SCOPE
+- You find that a CONSTRAINT conflicts with the APPROACH
+- You encounter an uncertain technical decision (multiple valid approaches)
+- Any hardware-related logic you are unsure about (timeout values, safe-state behavior, etc.)
+- You discover during implementation that the APPROACH has a flaw or gap not covered by the Issue Spec
+
+## Tracker Operation Notes
+
+Before performing any tracker operation (PR, label, comment), you MUST first read .claude/docs/tracker.md.
+Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
+Never embed long text directly in bash commands or MCP parameters.
+Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
+Delete the temp file after use.
+`, p.IssueID, p.BaseBranch, p.BaseBranch)
 }
 
 func logPolicyText(policy string) string {
@@ -102,4 +188,35 @@ func logPolicyText(policy string) string {
 	default:
 		return ""
 	}
+}
+
+// channelToolsSection returns the cross-agent communication section for the coding prompt.
+// Only injected when ChannelEnabled is true.
+func channelToolsSection() string {
+	return `
+
+## Cross-Agent Communication
+
+This project has cross-agent channel communication enabled. You have access to three MCP tools
+for coordinating with other agents working on parallel issues:
+
+- **publish_artifact**: After completing a key interface definition, type spec, schema, or config
+  that other agents may depend on, call this tool to publish it to the shared broker.
+  Other agents will receive a channel notification with your artifact content.
+  Parameters: issue_id (your issue ID), type (e.g. "interface", "type", "schema"), content (the definition).
+
+- **list_artifacts**: Call this tool to see all artifacts published by other agents in this project.
+  Use this at the start of implementation to check if relevant interfaces or types have already been defined,
+  and periodically during implementation to stay in sync.
+
+- **send_message**: Send a direct message to another agent by their issue ID.
+  Use this to request specific information, flag potential conflicts, or coordinate timing.
+  Parameters: to_issue_id (target agent's issue ID), content (message text).
+
+**When to use these tools:**
+- After defining or modifying a shared interface/type, call publish_artifact so other agents can align.
+- When you receive a channel notification about an artifact from another agent, review it and adapt your implementation if needed.
+- If you discover a potential conflict with another agent's work, use send_message to coordinate.
+- At the start of implementation, call list_artifacts to see what's already been published.
+`
 }

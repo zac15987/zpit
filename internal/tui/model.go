@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -21,10 +20,10 @@ import (
 	"github.com/charmbracelet/huh"
 	overlay "github.com/rmhubbert/bubbletea-overlay"
 
+	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
-	"github.com/zac15987/zpit/internal/notify"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
@@ -38,6 +37,7 @@ const (
 	livenessCheckInterval      = 5 * time.Second
 	permissionCheckInterval    = 2 * time.Second
 	endedDisplayDuration       = 3 * time.Second
+	sessionScanInterval        = 10 * time.Second
 )
 
 // View represents the current screen.
@@ -88,32 +88,29 @@ type ActiveTerminal struct {
 	Watcher           *watcher.Watcher
 }
 
-// Model is the root Bubble Tea model.
+// Model is the root Bubble Tea model for a single connected client session.
+// Shared application state is accessed via the state *AppState pointer, enabling
+// multiple tea.Program instances (local TUI + SSH remote) to share the same state.
 type Model struct {
-	cfg      *config.Config
-	env      platform.Environment
-	keys     KeyMap
-	notifier *notify.Notifier
-	logger   *log.Logger
+	// Shared application state (common across all connected clients)
+	state *AppState
+
+	// isRemote is true for SSH sessions. When true, pressing q only closes this
+	// session (tea.Quit) without stopping watchers or deactivating loops.
+	isRemote bool
+
+	// Per-connection UI state
+	keys KeyMap
 
 	width  int
 	height int
 
 	currentView View
 
-	// Project list state
-	projects      []config.ProjectConfig
+	// Project list state (cursor position is per-connection)
 	cursor        int
 	statusMessage string
 	statusExpiry  time.Time
-
-	// Active terminals
-	activeTerminals      map[string]*ActiveTerminal
-	lastLivenessCheck    time.Time
-	lastPermissionCheck  time.Time
-
-	// TrackerClients for [s] status and [y] confirm (keyed by provider name)
-	clients map[string]tracker.TrackerClient
 
 	// Status view state
 	statusProjectID string
@@ -133,21 +130,6 @@ type Model struct {
 	// Label check state
 	pendingOp *PendingOp
 
-	// Embedded agent templates
-	clarifierMD []byte
-	reviewerMD  []byte
-
-	// Embedded static docs (deployed to .claude/docs/)
-	agentGuidelinesMD            []byte
-	codeConstructionPrinciplesMD []byte
-
-	// Embedded hook scripts (deployed to .claude/hooks/)
-	hookScripts worktree.HookScripts
-
-	// Loop engine state
-	loops     map[string]*loop.LoopState
-	wtManager *worktree.Manager
-
 	// Focus panel state (loop slot selection)
 	focusedPanel   FocusedPanel
 	loopCursor     int
@@ -155,71 +137,113 @@ type Model struct {
 
 	// Viewport for scrollable content
 	viewport viewport.Model
+
+	// Subscriber for cross-client state refresh broadcast
+	subscriberID int
+	subscriberCh <-chan struct{}
 }
 
-// NewModel creates the root TUI model. logWriter may be nil (uses io.Discard).
-func NewModel(cfg *config.Config, clarifierMD, reviewerMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte, hookScripts worktree.HookScripts, logWriter io.Writer) Model {
-	if logWriter == nil {
-		logWriter = io.Discard
-	}
-	logger := log.New(logWriter, "", log.LstdFlags)
-	logger.Println("zpit started")
-
-	clients := make(map[string]tracker.TrackerClient)
-	for name, provider := range cfg.Providers.Tracker {
-		client, err := tracker.NewClient(provider.Type, provider.URL, provider.TokenEnv)
-		if err != nil {
-			logger.Printf("tracker client %q init failed: %v", name, err)
-			continue
-		}
-		clients[name] = client
-	}
+// NewModelWithState creates a per-connection Model backed by the given shared AppState.
+// Each connected client (local terminal, SSH session) gets its own Model instance
+// with independent UI state while sharing the same AppState.
+// When isRemote is true, pressing q only closes this session without stopping
+// shared watchers or deactivating loops.
+func NewModelWithState(appState *AppState, isRemote bool) Model {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 3
 	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
 
+	id, ch := appState.Subscribe()
+
 	return Model{
-		cfg:             cfg,
-		env:             platform.Detect(),
-		keys:            DefaultKeyMap(),
-		notifier:        notify.NewNotifier(cfg.Notification),
-		logger:          logger,
-		currentView:     ViewProjects,
-		projects:        cfg.Projects,
-		activeTerminals: make(map[string]*ActiveTerminal),
-		clients:         clients,
-		clarifierMD:                  clarifierMD,
-		reviewerMD:                   reviewerMD,
-		agentGuidelinesMD:            agentGuidelinesMD,
-		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
-		hookScripts:                 hookScripts,
-		loops:           make(map[string]*loop.LoopState),
-		wtManager:       worktree.NewManager(cfg.Worktree),
-		viewport:        vp,
+		state:        appState,
+		isRemote:     isRemote,
+		keys:         DefaultKeyMap(),
+		currentView:  ViewProjects,
+		viewport:     vp,
+		subscriberID: id,
+		subscriberCh: ch,
 	}
 }
 
-func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tickCmd()}
+// NewModel creates a local (non-remote) Model backed by the given AppState.
+// Equivalent to NewModelWithState(appState, false).
+func NewModel(appState *AppState) Model {
+	return NewModelWithState(appState, false)
+}
 
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{tickCmd(), m.waitForStateRefresh()}
+
+	// SSH remote sessions skip server-init (session scan, .gitignore, provider check).
+	// These are run once at zpit serve startup via RunServerInit.
+	if m.isRemote {
+		return tea.Batch(cmds...)
+	}
+
+	cmds = append(cmds, m.serverInitCmds()...)
+	return tea.Batch(cmds...)
+}
+
+// waitForStateRefresh returns a tea.Cmd that blocks on the subscriber channel.
+// When a signal arrives (from NotifyAll), it sends a StateRefreshMsg to trigger re-render.
+func (m Model) waitForStateRefresh() tea.Cmd {
+	ch := m.subscriberCh
+	return func() tea.Msg {
+		if _, ok := <-ch; !ok {
+			return nil // channel closed, subscriber removed
+		}
+		return StateRefreshMsg{}
+	}
+}
+
+// RunServerInit performs server-init logic synchronously (for zpit serve startup).
+// Runs session scan, .gitignore check, and provider validation on the AppState.
+func RunServerInit(state *AppState) {
 	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
 
-	for _, project := range m.projects {
-		// Ensure .gitignore has Zpit-deployed paths (sync, fast).
+	for _, project := range state.projects {
 		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 		if projectPath != "" && !seenPath[projectPath] {
 			seenPath[projectPath] = true
 			ensureGitignore(projectPath)
 		}
-
-		// Log missing tracker providers for awareness.
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
-		if _, ok := m.clients[project.Tracker]; !ok {
+		if _, ok := state.clients[project.Tracker]; !ok {
+			if !seenMissing[project.Tracker] {
+				seenMissing[project.Tracker] = true
+				missingProviders = append(missingProviders, project.Tracker)
+			}
+		}
+	}
+	if len(missingProviders) > 0 {
+		state.logger.Printf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
+	}
+}
+
+// serverInitCmds returns tea.Cmd slices for server-init tasks (used by local TUI Init).
+func (m Model) serverInitCmds() []tea.Cmd {
+	var cmds []tea.Cmd
+
+	seenPath := make(map[string]bool)
+	seenMissing := make(map[string]bool)
+	var missingProviders []string
+
+	for _, project := range m.state.projects {
+		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		if projectPath != "" && !seenPath[projectPath] {
+			seenPath[projectPath] = true
+			ensureGitignore(projectPath)
+		}
+		if project.Tracker == "" || project.Repo == "" {
+			continue
+		}
+		if _, ok := m.state.clients[project.Tracker]; !ok {
 			if !seenMissing[project.Tracker] {
 				seenMissing[project.Tracker] = true
 				missingProviders = append(missingProviders, project.Tracker)
@@ -229,7 +253,7 @@ func (m Model) Init() tea.Cmd {
 
 	if len(missingProviders) > 0 {
 		msg := fmt.Sprintf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
-		m.logger.Println(msg)
+		m.state.logger.Println(msg)
 		cmds = append(cmds, func() tea.Msg {
 			return StatusMsg{Text: msg}
 		})
@@ -238,7 +262,7 @@ func (m Model) Init() tea.Cmd {
 	// Scan for already-running Claude Code sessions.
 	cmds = append(cmds, m.scanExistingSessionsCmd())
 
-	return tea.Batch(cmds...)
+	return cmds
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -251,7 +275,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // syncViewportContent re-renders the scrollable area into the viewport.
+// Acquires RLock to safely read mutable shared fields (activeTerminals, loops)
+// used by render methods. Called after handlers release their write locks.
 func (m *Model) syncViewportContent() {
+	m.state.RLock()
+	defer m.state.RUnlock()
+
 	var header, footer string
 	switch m.currentView {
 	case ViewProjects:
@@ -338,6 +367,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
+	case StateRefreshMsg:
+		// Another client changed shared state — re-render by returning model,
+		// and re-subscribe for the next notification.
+		return m, m.waitForStateRefresh()
+
 	case LaunchResultMsg:
 		return m.handleLaunchResult(msg)
 
@@ -345,38 +379,67 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentEvent(msg)
 
 	case existingSessionsMsg:
-		m.logger.Printf("startup scan: found %d session(s)", len(msg.Entries))
+		m.state.Lock()
+		m.state.logger.Printf("session scan [%s]: found %d session(s)", msg.Source, len(msg.Entries))
+
+		// Dedup: build filters from current state (not stale scan-time snapshot).
+		currentPIDs := m.trackedPIDs()
+		pendingWorkDirs := make(map[string]bool)
+		for _, at := range m.state.activeTerminals {
+			if at.SessionPID == 0 && at.WorkDir != "" {
+				pendingWorkDirs[at.WorkDir] = true
+			}
+		}
+
 		var cmds []tea.Cmd
 		for _, entry := range msg.Entries {
+			if currentPIDs[entry.PID] {
+				m.state.logger.Printf("  skip: PID=%d already tracked", entry.PID)
+				continue
+			}
+			if pendingWorkDirs[entry.WorkDir] {
+				m.state.logger.Printf("  skip: PID=%d workDir has pending discovery", entry.PID)
+				continue
+			}
 			key := m.nextTrackingKey(entry.ProjectID)
-			m.logger.Printf("  attach: key=%s PID=%d sessionID=%s", key, entry.PID, entry.SessionID)
-			m.activeTerminals[key] = &ActiveTerminal{
+			m.state.logger.Printf("  attach: key=%s PID=%d sessionID=%s", key, entry.PID, entry.SessionID)
+			m.state.activeTerminals[key] = &ActiveTerminal{
 				State:          watcher.StateUnknown,
 				SessionPID:     entry.PID,
 				SessionID:      entry.SessionID,
 				WorkDir:        entry.WorkDir,
 				StateChangedAt: time.Now(),
 			}
-			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.logger))
+			currentPIDs[entry.PID] = true
+			cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.state.logger))
 		}
+		m.state.NotifyAll()
+		m.state.Unlock()
 		return m, tea.Batch(cmds...)
 
 	case sessionFoundMsg:
-		m.logger.Printf("session found: key=%s PID=%d sessionID=%s", msg.ProjectID, msg.PID, msg.SessionID)
-		at, ok := m.activeTerminals[msg.ProjectID]
+		m.state.Lock()
+		m.state.logger.Printf("session found: key=%s PID=%d sessionID=%s", msg.ProjectID, msg.PID, msg.SessionID)
+		at, ok := m.state.activeTerminals[msg.ProjectID]
 		if !ok {
+			m.state.Unlock()
 			return m, nil
 		}
 		at.SessionPID = msg.PID
 		at.SessionID = msg.SessionID
-		return m, waitForLogCmd(msg.ProjectID, msg.PID, msg.SessionID, msg.LogPath, at.WorkDir, m.logger)
+		workDir := at.WorkDir
+		m.state.NotifyAll()
+		m.state.Unlock()
+		return m, waitForLogCmd(msg.ProjectID, msg.PID, msg.SessionID, msg.LogPath, workDir, m.state.logger)
 
 	case watcherReadyMsg:
-		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
+		m.state.Lock()
+		if at, ok := m.state.activeTerminals[msg.ProjectID]; ok {
 			// Stale guard: if session has already switched past this msg, discard.
 			if at.SessionID != "" && msg.SessionID != "" && at.SessionID != msg.SessionID {
-				m.logger.Printf("watcher ready: key=%s STALE (at=%s, msg=%s), discarding",
+				m.state.logger.Printf("watcher ready: key=%s STALE (at=%s, msg=%s), discarding",
 					msg.ProjectID, at.SessionID, msg.SessionID)
+				m.state.Unlock()
 				msg.Watcher.Stop()
 				return m, nil
 			}
@@ -390,32 +453,41 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					at.StateChangedAt = time.Now()
 				}
 			}
-			m.logger.Printf("watcher ready: key=%s state=%s", msg.ProjectID, at.State)
+			m.state.logger.Printf("watcher ready: key=%s state=%s", msg.ProjectID, at.State)
+			m.state.NotifyAll()
+			m.state.Unlock()
 			return m, watchNextCmd(msg.ProjectID, msg.Watcher)
 		}
+		m.state.Unlock()
 		msg.Watcher.Stop()
 		return m, nil
 
 	case TickMsg:
 		cmds := m.checkSessionLiveness()
 		m.checkPermissionSignals()
+		if scanCmd := m.checkNewSessions(); scanCmd != nil {
+			cmds = append(cmds, scanCmd)
+		}
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
 
 	case WatcherErrorMsg:
-		m.logger.Printf("watcher error: key=%s err=%v", msg.ProjectID, msg.Err)
+		m.state.logger.Printf("watcher error: key=%s err=%v", msg.ProjectID, msg.Err)
 		m.setStatus(fmt.Sprintf("Watcher error (%s): %s", msg.ProjectID, msg.Err))
 		return m, nil
 
 	case sessionLostMsg:
-		m.logger.Printf("session lost: %s — %s", msg.ProjectID, msg.Text)
-		if at, ok := m.activeTerminals[msg.ProjectID]; ok {
+		m.state.Lock()
+		m.state.logger.Printf("session lost: %s — %s", msg.ProjectID, msg.Text)
+		if at, ok := m.state.activeTerminals[msg.ProjectID]; ok {
 			at.State = watcher.StateEnded
 			at.StateChangedAt = time.Now()
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
+			m.state.NotifyAll()
 		}
+		m.state.Unlock()
 		return m, nil
 
 	case StatusMsg:
@@ -489,11 +561,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LoopOpenPRsMsg:
 		return m.handleLoopOpenPRs(msg)
 	case loopPollTickMsg:
-		if ls, ok := m.loops[msg.ProjectID]; ok && ls.Active {
+		m.state.RLock()
+		ls, ok := m.state.loops[msg.ProjectID]
+		active := ok && ls.Active
+		m.state.RUnlock()
+		if active {
 			return m, m.loopPollCmd(msg.ProjectID)
 		}
 		return m, nil
 	case loopPRPollTickMsg:
+		// loopPollPRCmd acquires its own RLock internally.
 		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
 	case LoopLabelPollMsg:
 		return m.handleLoopLabelPoll(msg)
@@ -506,6 +583,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	m.state.RLock()
+	defer m.state.RUnlock()
+
 	var bg string
 	switch m.currentView {
 	case ViewProjects:
@@ -529,7 +609,7 @@ func (m Model) View() string {
 func (m *Model) setStatus(text string) {
 	m.statusMessage = text
 	m.statusExpiry = time.Now().Add(statusDisplayDuration)
-	m.logger.Println(text)
+	m.state.logger.Println(text)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -540,14 +620,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.currentView = ViewProjects
 			return m, nil
 		}
-		for _, at := range m.activeTerminals {
+		// Remote sessions: only close this session, don't stop shared state.
+		if m.isRemote {
+			m.state.logger.Println("SSH session quit (remote)")
+			m.state.Unsubscribe(m.subscriberID)
+			return m, tea.Quit
+		}
+		// Local TUI: stop all watchers and loops before exiting.
+		m.state.Lock()
+		for _, at := range m.state.activeTerminals {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
 		}
-		for _, ls := range m.loops {
+		for _, ls := range m.state.loops {
 			ls.Active = false
 		}
+		// Capture and nil-out broker reference under lock to prevent data race.
+		brokerToClose := m.state.broker
+		m.state.broker = nil
+		m.state.Unlock()
+		// Close broker outside lock (Close is thread-safe).
+		if brokerToClose != nil {
+			brokerToClose.Close()
+		}
+		m.state.Unsubscribe(m.subscriberID)
 		return m, tea.Quit
 	}
 
@@ -580,7 +677,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible(m.cursor * 3) // each project = 3 lines (name + detail + blank)
 
 	case key.Matches(msg, m.keys.Down):
-		if m.cursor < len(m.projects)-1 {
+		if m.cursor < len(m.state.projects)-1 {
 			m.cursor++
 		}
 		m.ensureCursorVisible(m.cursor * 3)
@@ -627,11 +724,24 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Toggle loop off — no config check needed.
-		if ls, ok := m.loops[p.ID]; ok && ls.Active {
+		m.state.Lock()
+		if ls, ok := m.state.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
+			ls.Slots = make(map[string]*loop.Slot)
+			// Capture and nil-out broker reference under lock.
+			brokerToClose := m.state.broker
+			m.state.broker = nil
+			m.state.NotifyAll()
+			m.state.Unlock()
+			// Close broker outside lock (Close is thread-safe).
+			if brokerToClose != nil {
+				m.state.logger.Printf("loop: closing broker for project=%s", p.ID)
+				brokerToClose.Close()
+			}
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil
 		}
+		m.state.Unlock()
 		if !m.checkConfig("[l]", *p, valPath, valTracker, valWorktree) {
 			return m, nil
 		}
@@ -756,8 +866,10 @@ func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
 		m.focusedPanel = FocusProjects
 		return m, nil
 	}
-	project := m.projects[m.cursor]
+	project := m.state.projects[m.cursor]
+	m.state.RLock()
 	keys := m.sortedSlotKeys(project.ID)
+	m.state.RUnlock()
 	if len(keys) == 0 {
 		return m, nil
 	}
@@ -768,7 +880,9 @@ func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.state.RLock()
 	keys := m.sortedSlotKeys(m.focusProjectID)
+	m.state.RUnlock()
 	if len(keys) == 0 {
 		m.focusedPanel = FocusProjects
 		return m, nil
@@ -794,6 +908,12 @@ func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.launchFocusClaudeCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Open):
+		return m.openSlotFolderCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Tracker):
+		return m.openSlotIssueCmd(keys[m.loopCursor])
 	}
 
 	return m, nil
@@ -809,34 +929,42 @@ var launchableSlotStates = map[loop.SlotState]bool{
 }
 
 func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
-	ls, ok := m.loops[m.focusProjectID]
+	m.state.RLock()
+	ls, ok := m.state.loops[m.focusProjectID]
 	if !ok {
+		m.state.RUnlock()
 		return m, nil
 	}
 	slot, ok := ls.Slots[slotKey]
 	if !ok || slot.WorktreePath == "" {
+		m.state.RUnlock()
 		m.setStatus(locale.T(locale.KeyNoWorktreePath))
 		return m, nil
 	}
 	if !launchableSlotStates[slot.State] {
+		m.state.RUnlock()
 		m.setStatus(locale.T(locale.KeyCannotLaunch))
 		return m, nil
 	}
-	if _, err := os.Stat(slot.WorktreePath); err != nil {
-		m.logger.Printf("launch check failed [focus] worktree path missing: %s", slot.WorktreePath)
+	wtPath := slot.WorktreePath
+	issueID := slot.IssueID
+	m.state.RUnlock()
+
+	if _, err := os.Stat(wtPath); err != nil {
+		m.state.logger.Printf("launch check failed [focus] worktree path missing: %s", wtPath)
 		m.showErrorOverlay([]string{locale.T(locale.KeyErrWorktreeMissing)})
 		return m, nil
 	}
 
-	cfg := m.cfg.Terminal
-	tabTitle := fmt.Sprintf("Focus #%s", slot.IssueID)
-	wtPath := slot.WorktreePath
-	trackingKey := "focus:" + m.focusProjectID + ":" + slot.IssueID
+	cfg := m.state.cfg.Terminal
+	tabTitle := fmt.Sprintf("Focus #%s", issueID)
+	trackingKey := "focus:" + m.focusProjectID + ":" + issueID
+	focusProjectID := m.focusProjectID
 
 	return m, func() tea.Msg {
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg)
 		return LaunchResultMsg{
-			ProjectID:   m.focusProjectID,
+			ProjectID:   focusProjectID,
 			TrackingKey: trackingKey,
 			WorkDir:     wtPath,
 			Result:      result,
@@ -845,8 +973,79 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	}
 }
 
+// openSlotFolderCmd opens the selected slot's worktree folder in the file manager.
+func (m Model) openSlotFolderCmd(slotKey string) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	ls, ok := m.state.loops[m.focusProjectID]
+	if !ok {
+		m.state.RUnlock()
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok || slot.WorktreePath == "" {
+		m.state.RUnlock()
+		m.setStatus(locale.T(locale.KeyNoWorktreePath))
+		return m, nil
+	}
+	path := slot.WorktreePath
+	m.state.RUnlock()
+
+	if _, err := os.Stat(path); err != nil {
+		m.showErrorOverlay([]string{locale.T(locale.KeyErrWorktreeMissing)})
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		var cmd *exec.Cmd
+		if platform.IsWindows() {
+			cmd = exec.Command("explorer", strings.ReplaceAll(path, "/", `\`))
+		} else {
+			cmd = exec.Command("xdg-open", path)
+		}
+		if err := cmd.Start(); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Failed to open: %s", err)}
+		}
+		return StatusMsg{Text: fmt.Sprintf("Opened %s", path)}
+	}
+}
+
+// openSlotIssueCmd opens the selected slot's issue page in the browser.
+func (m Model) openSlotIssueCmd(slotKey string) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	ls, ok := m.state.loops[m.focusProjectID]
+	if !ok {
+		m.state.RUnlock()
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok {
+		m.state.RUnlock()
+		return m, nil
+	}
+	issueID := slot.IssueID
+	m.state.RUnlock()
+
+	project := m.findProject(m.focusProjectID)
+	if project == nil {
+		return m, nil
+	}
+	provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		return m, nil
+	}
+	url := tracker.BuildIssueURL(provider, project.Repo, issueID)
+	if url == "" {
+		m.setStatus(fmt.Sprintf("Cannot build URL for tracker type: %s", provider.Type))
+		return m, nil
+	}
+	return m, openInBrowser(url)
+}
+
+// sortedSlotKeys returns sorted slot keys for the given project.
+// Caller must hold at least a read lock on state, or call from a context
+// where mutable state is not concurrently modified.
 func (m Model) sortedSlotKeys(projectID string) []string {
-	ls, ok := m.loops[projectID]
+	ls, ok := m.state.loops[projectID]
 	if !ok || len(ls.Slots) == 0 {
 		return nil
 	}
@@ -866,13 +1065,6 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 
 	m.setStatus(fmt.Sprintf("Launched! %s", msg.Result.SwitchHint))
 
-	trackKey := msg.ProjectID
-	if msg.TrackingKey != "" {
-		trackKey = msg.TrackingKey
-	}
-	trackKey = m.nextTrackingKey(trackKey)
-	m.logger.Printf("launch: key=%s (PID pending)", trackKey)
-
 	// Resolve WorkDir before creating ActiveTerminal so it's always stored.
 	workDir := msg.WorkDir
 	if workDir == "" {
@@ -883,20 +1075,34 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 		workDir = platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	}
 
+	m.state.Lock()
+	trackKey := msg.ProjectID
+	if msg.TrackingKey != "" {
+		trackKey = msg.TrackingKey
+	}
+	trackKey = m.nextTrackingKey(trackKey)
+	m.state.logger.Printf("launch: key=%s (PID pending)", trackKey)
+
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
 		WorkDir:        workDir,
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}
-	m.activeTerminals[trackKey] = at
+	m.state.activeTerminals[trackKey] = at
+	// Snapshot tracked PIDs while still holding the lock.
+	excludePIDs := m.trackedPIDs()
+	m.state.NotifyAll()
+	m.state.Unlock()
 
-	return m, m.startWatcherDirCmd(trackKey, workDir)
+	return m, m.startWatcherDirCmdWithExcludes(trackKey, workDir, excludePIDs)
 }
 
 func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
-	at, ok := m.activeTerminals[msg.ProjectID]
+	m.state.Lock()
+	at, ok := m.state.activeTerminals[msg.ProjectID]
 	if !ok {
+		m.state.Unlock()
 		return m, nil
 	}
 
@@ -921,25 +1127,33 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			// Notify on transition to waiting.
 			if oldState != watcher.StateWaiting {
 				projectName := m.projectName(msg.ProjectID)
-				m.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText)
+				m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText)
 			}
 		} else if ev.State == watcher.StateWorking {
 			// User responded — reset notification cooldown.
-			m.notifier.Reset(msg.ProjectID)
+			m.state.notifier.Reset(msg.ProjectID)
 			at.LastQuestion = ""
 		}
 	}
 
-	// Continue watching.
+	// Capture watcher ref before releasing lock.
+	var w *watcher.Watcher
 	if at.Watcher != nil {
-		return m, watchNextCmd(msg.ProjectID, at.Watcher)
+		w = at.Watcher
+	}
+	m.state.NotifyAll()
+	m.state.Unlock()
+
+	// Continue watching.
+	if w != nil {
+		return m, watchNextCmd(msg.ProjectID, w)
 	}
 	return m, nil
 }
 
 func (m Model) launchClaudeCmd() tea.Cmd {
-	project := m.projects[m.cursor]
-	cfg := m.cfg.Terminal
+	project := m.state.projects[m.cursor]
+	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
 		result, err := terminal.LaunchClaude(project, cfg)
 		return LaunchResultMsg{
@@ -951,7 +1165,7 @@ func (m Model) launchClaudeCmd() tea.Cmd {
 }
 
 func (m Model) openFolderCmd() tea.Cmd {
-	project := m.projects[m.cursor]
+	project := m.state.projects[m.cursor]
 	path := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	return func() tea.Msg {
 		var cmd *exec.Cmd
@@ -970,7 +1184,7 @@ func (m Model) openFolderCmd() tea.Cmd {
 const (
 	sessionRetryInterval = 2 * time.Second
 	sessionRetryMax      = 8  // 8 * 2s = 16s max wait
-	logWaitRetryMax      = 15 // 15 * 2s = 30s max wait for JSONL file
+	logWaitWarnAfter     = 15 // log a warning after 15 * 2s = 30s, but keep waiting
 )
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
@@ -981,10 +1195,10 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 	}
 	seen := make(map[string]bool)
 	var projects []projectInfo
-	for _, p := range m.projects {
+	for _, p := range m.state.projects {
 		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
 		if path == "" {
-			m.logger.Printf("session scan: skipping project %q (empty path)", p.ID)
+			m.state.logger.Printf("session scan: skipping project %q (empty path)", p.ID)
 			continue
 		}
 		if seen[path] {
@@ -997,7 +1211,7 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
-			return existingSessionsMsg{}
+			return existingSessionsMsg{Source: "startup"}
 		}
 		var entries []existingSessionEntry
 		for _, p := range projects {
@@ -1017,14 +1231,23 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 				})
 			}
 		}
-		return existingSessionsMsg{Entries: entries}
+		return existingSessionsMsg{Source: "startup", Entries: entries}
 	}
 }
 
 // startWatcherDirCmd starts session discovery for a given tracking key and work directory.
+// Acquires RLock to snapshot tracked PIDs. Must NOT be called while holding a write lock.
 func (m Model) startWatcherDirCmd(trackingKey, workDir string) tea.Cmd {
 	// Snapshot already-tracked PIDs so we can exclude them when picking a session.
+	m.state.RLock()
 	excludePIDs := m.trackedPIDs()
+	m.state.RUnlock()
+	return m.startWatcherDirCmdWithExcludes(trackingKey, workDir, excludePIDs)
+}
+
+// startWatcherDirCmdWithExcludes starts session discovery with pre-computed exclude PIDs.
+// Used when the caller already holds a lock and has snapshotted the PIDs.
+func (m Model) startWatcherDirCmdWithExcludes(trackingKey, workDir string, excludePIDs map[int]bool) tea.Cmd {
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
@@ -1089,12 +1312,12 @@ type existingSessionEntry struct {
 // nextTrackingKey returns a unique key for activeTerminals.
 // First session uses baseKey as-is; subsequent ones get "#2", "#3", etc.
 func (m Model) nextTrackingKey(baseKey string) string {
-	if _, exists := m.activeTerminals[baseKey]; !exists {
+	if _, exists := m.state.activeTerminals[baseKey]; !exists {
 		return baseKey
 	}
 	for i := 2; ; i++ {
 		candidate := fmt.Sprintf("%s#%d", baseKey, i)
-		if _, exists := m.activeTerminals[candidate]; !exists {
+		if _, exists := m.state.activeTerminals[candidate]; !exists {
 			return candidate
 		}
 	}
@@ -1102,8 +1325,8 @@ func (m Model) nextTrackingKey(baseKey string) string {
 
 // trackedPIDs returns all PIDs currently tracked in activeTerminals.
 func (m Model) trackedPIDs() map[int]bool {
-	pids := make(map[int]bool, len(m.activeTerminals))
-	for _, at := range m.activeTerminals {
+	pids := make(map[int]bool, len(m.state.activeTerminals))
+	for _, at := range m.state.activeTerminals {
 		if at.SessionPID != 0 {
 			pids[at.SessionPID] = true
 		}
@@ -1111,8 +1334,10 @@ func (m Model) trackedPIDs() map[int]bool {
 	return pids
 }
 
-// existingSessionsMsg carries results of scanning for already-running sessions at startup.
+// existingSessionsMsg carries results of scanning for already-running sessions.
+// Source distinguishes "startup" (initial scan) from "periodic" (tick-driven scan).
 type existingSessionsMsg struct {
+	Source  string // "startup" or "periodic"
 	Entries []existingSessionEntry
 }
 
@@ -1123,9 +1348,10 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 		logger.Printf("waitForLog: key=%s pid=%d sessionID=%s path=%s", projectID, pid, sessionID, logPath)
 
 		claudeHome, _ := watcher.ClaudeHome() // best-effort; empty means skip re-check
+		warned := false
 
-		for attempt := range logWaitRetryMax {
-			if !watcher.IsProcessAlive(pid) {
+		for attempt := 0; ; attempt++ {
+			if !watcher.IsClaudeProcess(pid) {
 				logger.Printf("waitForLog: key=%s pid=%d died at attempt %d", projectID, pid, attempt)
 				return sessionLostMsg{ProjectID: projectID, Text: "session ended before log created"}
 			}
@@ -1161,13 +1387,13 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 				}
 				return watcherReadyMsg{ProjectID: projectID, SessionID: sessionID, Watcher: w, LogPath: logPath}
 			}
+
+			if !warned && attempt >= logWaitWarnAfter {
+				logger.Printf("waitForLog: key=%s still waiting after %d attempts, PID %d alive — continuing",
+					projectID, attempt, pid)
+				warned = true
+			}
 			time.Sleep(sessionRetryInterval)
-		}
-		logger.Printf("waitForLog: key=%s timed out after %d attempts, file not found: %s",
-			projectID, logWaitRetryMax, logPath)
-		return sessionLostMsg{
-			ProjectID: projectID,
-			Text:      fmt.Sprintf("log file not found after %ds: %s", logWaitRetryMax*int(sessionRetryInterval/time.Second), logPath),
 		}
 	}
 }
@@ -1181,22 +1407,26 @@ type watcherReadyMsg struct {
 }
 
 func (m *Model) checkSessionLiveness() []tea.Cmd {
+	m.state.Lock()
 	now := time.Now()
-	if now.Sub(m.lastLivenessCheck) < livenessCheckInterval {
+	if now.Sub(m.state.lastLivenessCheck) < livenessCheckInterval {
+		m.state.Unlock()
 		return nil
 	}
-	m.lastLivenessCheck = now
+	m.state.lastLivenessCheck = now
 
 	claudeHome, _ := watcher.ClaudeHome() // best-effort; empty means skip /resume detection
 
 	var cmds []tea.Cmd
+	changed := false
 
-	for projectID, at := range m.activeTerminals {
+	for projectID, at := range m.state.activeTerminals {
 		// Clean up ended sessions after display duration.
 		if at.State == watcher.StateEnded {
 			if now.Sub(at.StateChangedAt) >= endedDisplayDuration {
-				m.logger.Printf("session removed: key=%s", projectID)
-				delete(m.activeTerminals, projectID)
+				m.state.logger.Printf("session removed: key=%s", projectID)
+				delete(m.state.activeTerminals, projectID)
+				changed = true
 			}
 			continue
 		}
@@ -1204,8 +1434,8 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 		if at.SessionPID <= 0 {
 			continue
 		}
-		if !watcher.IsProcessAlive(at.SessionPID) {
-			m.logger.Printf("session PID %d ended: %s", at.SessionPID, projectID)
+		if !watcher.IsClaudeProcess(at.SessionPID) {
+			m.state.logger.Printf("session PID %d ended: %s", at.SessionPID, projectID)
 			at.State = watcher.StateEnded
 			at.StateChangedAt = now
 			at.LastQuestion = ""
@@ -1214,6 +1444,7 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 			if at.Watcher != nil {
 				at.Watcher.Stop()
 			}
+			changed = true
 			continue
 		}
 
@@ -1222,7 +1453,7 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 			if info, err := watcher.ReadSessionByPID(claudeHome, at.SessionPID); err == nil {
 				if info.SessionID != at.SessionID {
 					newLogPath := watcher.LogFilePath(claudeHome, at.WorkDir, info.SessionID)
-					m.logger.Printf("session switch detected: key=%s old=%s new=%s",
+					m.state.logger.Printf("session switch detected: key=%s old=%s new=%s",
 						projectID, at.SessionID, info.SessionID)
 
 					// Stop old watcher and restart for new session.
@@ -1234,25 +1465,100 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 					at.State = watcher.StateUnknown
 					at.StateChangedAt = now
 					at.LastQuestion = ""
+					changed = true
 
 					cmds = append(cmds, waitForLogCmd(
-						projectID, at.SessionPID, info.SessionID, newLogPath, at.WorkDir, m.logger))
+						projectID, at.SessionPID, info.SessionID, newLogPath, at.WorkDir, m.state.logger))
 				}
 			} else {
-				m.logger.Printf("liveness: key=%s ReadSessionByPID(%d) failed: %v", projectID, at.SessionPID, err)
+				m.state.logger.Printf("liveness: key=%s ReadSessionByPID(%d) failed: %v", projectID, at.SessionPID, err)
 			}
 		} else if claudeHome != "" {
-			m.logger.Printf("liveness: key=%s skip resume check (sessionID=%q workDir=%q)", projectID, at.SessionID, at.WorkDir)
+			m.state.logger.Printf("liveness: key=%s skip resume check (sessionID=%q workDir=%q)", projectID, at.SessionID, at.WorkDir)
 		}
 	}
 
+	if changed {
+		m.state.NotifyAll()
+	}
+	m.state.Unlock()
 	return cmds
 }
 
+// checkNewSessions checks if sessionScanInterval has elapsed and, if so, returns a tea.Cmd
+// that scans for externally-launched Claude Code sessions not yet tracked in activeTerminals.
+// Follows the same tick + interval + lock pattern as checkSessionLiveness.
+func (m *Model) checkNewSessions() tea.Cmd {
+	m.state.Lock()
+	now := time.Now()
+	if now.Sub(m.state.lastSessionScan) < sessionScanInterval {
+		m.state.Unlock()
+		return nil
+	}
+	m.state.lastSessionScan = now
+	trackedPIDs := m.trackedPIDs()
+	m.state.Unlock()
+
+	// Build project list (same logic as scanExistingSessionsCmd).
+	type projectInfo struct {
+		id   string
+		path string
+	}
+	seen := make(map[string]bool)
+	var projects []projectInfo
+	m.state.RLock()
+	for _, p := range m.state.projects {
+		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
+		if path == "" {
+			continue
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		projects = append(projects, projectInfo{id: p.ID, path: path})
+	}
+	logger := m.state.logger
+	m.state.RUnlock()
+
+	return func() tea.Msg {
+		claudeHome, err := watcher.ClaudeHome()
+		if err != nil {
+			logger.Printf("periodic session scan: ClaudeHome error: %v", err)
+			return nil
+		}
+		var entries []existingSessionEntry
+		for _, p := range projects {
+			sessions, err := watcher.FindActiveSessions(claudeHome, p.path)
+			if err != nil || len(sessions) == 0 {
+				continue
+			}
+			for _, s := range sessions {
+				if trackedPIDs[s.PID] {
+					continue
+				}
+				logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
+				entries = append(entries, existingSessionEntry{
+					ProjectID: p.id,
+					PID:       s.PID,
+					SessionID: s.SessionID,
+					WorkDir:   p.path,
+					LogPath:   logPath,
+				})
+			}
+		}
+		if len(entries) == 0 {
+			return nil
+		}
+		logger.Printf("periodic session scan: found %d new session(s)", len(entries))
+		return existingSessionsMsg{Source: "periodic", Entries: entries}
+	}
+}
+
 func (m Model) findProject(id string) *config.ProjectConfig {
-	for i := range m.projects {
-		if m.projects[i].ID == id {
-			return &m.projects[i]
+	for i := range m.state.projects {
+		if m.state.projects[i].ID == id {
+			return &m.state.projects[i]
 		}
 	}
 	return nil
@@ -1288,11 +1594,14 @@ type permissionSignal struct {
 // checkPermissionSignals scans ~/.zpit/signals/ for permission signal files
 // and updates matching ActiveTerminals to StatePermission.
 func (m *Model) checkPermissionSignals() {
+	m.state.Lock()
 	now := time.Now()
-	if now.Sub(m.lastPermissionCheck) < permissionCheckInterval {
+	if now.Sub(m.state.lastPermissionCheck) < permissionCheckInterval {
+		m.state.Unlock()
 		return
 	}
-	m.lastPermissionCheck = now
+	m.state.lastPermissionCheck = now
+	m.state.Unlock()
 
 	dir := signalDir()
 	if dir == "" {
@@ -1304,45 +1613,67 @@ func (m *Model) checkPermissionSignals() {
 		return // directory may not exist yet
 	}
 
+	// Collect parsed signals from filesystem (no lock needed for I/O).
+	type parsedSignal struct {
+		sig  permissionSignal
+		name string
+	}
+	var signals []parsedSignal
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasPrefix(name, "permission-") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
-
 		var sig permissionSignal
 		if err := json.Unmarshal(data, &sig); err != nil || sig.SessionID == "" {
 			continue
 		}
+		signals = append(signals, parsedSignal{sig: sig, name: name})
+	}
 
-		// Find matching ActiveTerminal by SessionID.
+	if len(signals) == 0 {
+		return
+	}
+
+	// Match signals to active terminals under lock.
+	m.state.Lock()
+	changed := false
+	var staleFiles []string
+	for _, ps := range signals {
 		matched := false
-		for projectID, at := range m.activeTerminals {
-			if at.SessionID != sig.SessionID {
+		for projectID, at := range m.state.activeTerminals {
+			if at.SessionID != ps.sig.SessionID {
 				continue
 			}
 			matched = true
 			if at.State == watcher.StatePermission {
 				break // already in permission state
 			}
-			m.logger.Printf("permission detected: key=%s session=%s msg=%q", projectID, sig.SessionID, sig.Message)
+			m.state.logger.Printf("permission detected: key=%s session=%s msg=%q", projectID, ps.sig.SessionID, ps.sig.Message)
 			at.State = watcher.StatePermission
-			at.PermissionMessage = sig.Message
+			at.PermissionMessage = ps.sig.Message
 			at.StateChangedAt = now
+			changed = true
 			projectName := m.projectName(projectID)
-			m.notifier.NotifyWaiting(projectID, projectName, sig.Message)
+			m.state.notifier.NotifyWaiting(projectID, projectName, ps.sig.Message)
 			break
 		}
-
-		// Stale signal — no matching tracked session.
 		if !matched {
-			os.Remove(filepath.Join(dir, name))
+			staleFiles = append(staleFiles, ps.name)
 		}
+	}
+	if changed {
+		m.state.NotifyAll()
+	}
+	m.state.Unlock()
+
+	// Clean up stale signal files outside lock.
+	for _, name := range staleFiles {
+		os.Remove(filepath.Join(dir, name))
 	}
 }
 
@@ -1367,8 +1698,8 @@ func watchNextCmd(projectID string, w *watcher.Watcher) tea.Cmd {
 
 // launchClarifierCmd opens a new terminal with claude --agent clarifier.
 func (m Model) launchClarifierCmd() tea.Cmd {
-	project := m.projects[m.cursor]
-	cfg := m.cfg.Terminal
+	project := m.state.projects[m.cursor]
+	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
 		return LaunchResultMsg{
@@ -1399,17 +1730,17 @@ func (m *Model) showDeployConfirm() {
 
 // deployAndLaunchClarifier deploys clarifier.md to the project and launches it.
 func (m Model) deployAndLaunchClarifier() tea.Cmd {
-	project := m.projects[m.cursor]
+	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	clarifierMD := injectLangInstruction(m.clarifierMD)
-	cfg := m.cfg.Terminal
+	clarifierMD := injectLangInstruction(m.state.clarifierMD)
+	cfg := m.state.cfg.Terminal
 
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
-	hookScripts := m.hookScripts
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	var trackerDocContent string
-	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	}
 
@@ -1441,8 +1772,8 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 
 // openTrackerCmd opens the project's issue tracker in the browser.
 func (m Model) openTrackerCmd() tea.Cmd {
-	project := m.projects[m.cursor]
-	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	project := m.state.projects[m.cursor]
+	provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]
 	if !ok {
 		return func() tea.Msg {
 			return StatusMsg{Text: locale.T(locale.KeyNoTrackerConfigured)}
@@ -1459,8 +1790,8 @@ func (m Model) openTrackerCmd() tea.Cmd {
 
 // loadIssuesCmd fetches issues from the tracker via TrackerClient.
 func (m Model) loadIssuesCmd() tea.Cmd {
-	project := m.projects[m.cursor]
-	client, ok := m.clients[project.Tracker]
+	project := m.state.projects[m.cursor]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return func() tea.Msg {
 			return IssuesLoadedMsg{ProjectID: project.ID, Err: fmt.Errorf("tracker %q not configured or token missing", project.Tracker)}
@@ -1529,7 +1860,7 @@ func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea
 			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("project not found: %s", projectID)}
 		}
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return func() tea.Msg {
 			return LabelCheckResultMsg{ProjectID: projectID, Err: fmt.Errorf("%s", locale.T(locale.KeyTrackerTokenNotSet))}
@@ -1602,7 +1933,7 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	case PendingClarify:
 		m.pendingOp = nil
 		m.cursor = op.ProjectIndex // restore cursor for deploy confirm / launch
-		project := m.projects[op.ProjectIndex]
+		project := m.state.projects[op.ProjectIndex]
 		agentPath := filepath.Join(
 			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
 			".claude", "agents", "clarifier.md",
@@ -1616,7 +1947,7 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	case PendingReview:
 		m.pendingOp = nil
 		m.cursor = op.ProjectIndex // restore cursor for deploy confirm / launch
-		project := m.projects[op.ProjectIndex]
+		project := m.state.projects[op.ProjectIndex]
 		agentPath := filepath.Join(
 			platform.ResolvePath(project.Path.Windows, project.Path.WSL),
 			".claude", "agents", "reviewer.md",
@@ -1629,12 +1960,28 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 
 	case PendingLoop:
 		m.pendingOp = nil
-		project := m.projects[op.ProjectIndex]
+		project := m.state.projects[op.ProjectIndex]
+
+		// Start broker if channel_enabled for this project.
+		if project.ChannelEnabled && m.state.broker == nil {
+			b, err := broker.New(m.state.logger)
+			if err != nil {
+				m.state.logger.Printf("loop: broker start failed for %s: %v", project.ID, err)
+				m.setStatus(fmt.Sprintf("Broker start failed: %v", err))
+			} else {
+				m.state.broker = b
+				m.state.logger.Printf("loop: broker started on %s for project=%s", b.Addr(), project.ID)
+			}
+		}
+
+		m.state.Lock()
 		ls := &loop.LoopState{
 			Active: true,
 			Slots:  make(map[string]*loop.Slot),
 		}
-		m.loops[project.ID] = ls
+		m.state.loops[project.ID] = ls
+		m.state.NotifyAll()
+		m.state.Unlock()
 		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
 		return m, tea.Batch(
 			m.loopCleanupMergedCmd(project.ID),
@@ -1644,7 +1991,12 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 
 	case PendingConfirmIssue:
 		m.pendingOp = nil
-		return m, m.confirmIssueCmd()
+		if m.statusCursor < len(m.statusIssues) {
+			issue := m.statusIssues[m.statusCursor]
+			m.showIssueConfirm(issue.ID, issue.Title)
+			return m, m.confirmForm.Init()
+		}
+		return m, nil
 	}
 
 	m.pendingOp = nil
@@ -1657,7 +2009,7 @@ func (m Model) ensureLabelsCmd(projectID string, required []tracker.LabelDef) te
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -1689,7 +2041,7 @@ func (m Model) confirmIssueCmd() tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -1713,7 +2065,7 @@ func (m Model) openIssueURLCmd() tea.Cmd {
 	if project == nil {
 		return nil
 	}
-	provider, ok := m.cfg.Providers.Tracker[project.Tracker]
+	provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -1728,8 +2080,8 @@ func (m Model) openIssueURLCmd() tea.Cmd {
 
 // launchReviewerCmd opens a new terminal with claude --agent reviewer.
 func (m Model) launchReviewerCmd() tea.Cmd {
-	project := m.projects[m.cursor]
-	cfg := m.cfg.Terminal
+	project := m.state.projects[m.cursor]
+	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
 		return LaunchResultMsg{
@@ -1773,7 +2125,7 @@ func (m *Model) showUndeployConfirm(project config.ProjectConfig) {
 	).WithWidth(60)
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	projectName := project.Name
-	logger := m.logger
+	logger := m.state.logger
 	m.confirmAction = func() tea.Cmd {
 		return func() tea.Msg {
 			count := undeployFiles(projectPath)
@@ -1783,6 +2135,25 @@ func (m *Model) showUndeployConfirm(project config.ProjectConfig) {
 			}
 			return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyUndeployDone), count, projectName)}
 		}
+	}
+}
+
+// showIssueConfirm displays an overlay confirm dialog before changing an issue from pending to todo.
+func (m *Model) showIssueConfirm(issueID, issueTitle string) {
+	title := fmt.Sprintf(locale.T(locale.KeyIssueConfirmTitle), issueID, issueTitle)
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative(locale.T(locale.KeyIssueConfirmButton)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(50)
+	m.confirmAction = func() tea.Cmd {
+		return m.confirmIssueCmd()
 	}
 }
 
@@ -1804,16 +2175,16 @@ func undeployFiles(projectPath string) int {
 
 // deployAndLaunchReviewer deploys reviewer.md to the project and launches it.
 func (m Model) deployAndLaunchReviewer() tea.Cmd {
-	project := m.projects[m.cursor]
+	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	reviewerMD := injectLangInstruction(m.reviewerMD)
-	cfg := m.cfg.Terminal
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
-	hookScripts := m.hookScripts
+	reviewerMD := injectLangInstruction(m.state.reviewerMD)
+	cfg := m.state.cfg.Terminal
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	var trackerDocContent string
-	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	}
 

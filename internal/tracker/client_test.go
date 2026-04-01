@@ -416,6 +416,110 @@ func TestGitHubFindPRByBranch_Merged(t *testing.T) {
 	}
 }
 
+func TestGitHubFindPRByBranch_MergedViaTimestamp(t *testing.T) {
+	// GitHub list endpoint returns "merged":null but includes "merged_at".
+	mergedAt := "2026-01-01T00:00:00Z"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]githubPR{
+			{Number: 9, State: "closed", Merged: false, MergedAt: &mergedAt, HTMLURL: "https://github.com/o/r/pull/9",
+				Head: githubPRRef{Ref: "feat/6-test"}},
+		})
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "owner/repo", "feat/6-test")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+}
+
+// --- CloseIssue tests ---
+
+func TestGitHubCloseIssue(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotBody struct {
+		State string `json:"state"`
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &gotBody)
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	err := client.CloseIssue(context.Background(), "owner/repo", "42")
+	if err != nil {
+		t.Fatalf("CloseIssue: %v", err)
+	}
+	if gotMethod != "PATCH" {
+		t.Errorf("method = %q, want PATCH", gotMethod)
+	}
+	if gotPath != "/repos/owner/repo/issues/42" {
+		t.Errorf("path = %q, want /repos/owner/repo/issues/42", gotPath)
+	}
+	if gotBody.State != "closed" {
+		t.Errorf("body.state = %q, want closed", gotBody.State)
+	}
+}
+
+func TestForgejoCloseIssue(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotBody struct {
+		State string `json:"state"`
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &gotBody)
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	err := client.CloseIssue(context.Background(), "org/repo", "15")
+	if err != nil {
+		t.Fatalf("CloseIssue: %v", err)
+	}
+	if gotMethod != "PATCH" {
+		t.Errorf("method = %q, want PATCH", gotMethod)
+	}
+	if gotPath != "/api/v1/repos/org/repo/issues/15" {
+		t.Errorf("path = %q, want /api/v1/repos/org/repo/issues/15", gotPath)
+	}
+	if gotBody.State != "closed" {
+		t.Errorf("body.state = %q, want closed", gotBody.State)
+	}
+}
+
+func TestGitHubCloseIssue_Error(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	err := client.CloseIssue(context.Background(), "owner/repo", "999")
+	if err == nil {
+		t.Fatal("expected error for 404")
+	}
+}
+
 func TestForgejoAuthError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)

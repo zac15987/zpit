@@ -12,41 +12,12 @@ import (
 	"github.com/zac15987/zpit/internal/config"
 )
 
-// initTestRepo creates a temporary git repo with an initial commit.
+// initTestRepo creates a temporary git repo with an initial commit and a bare remote (origin).
+// The local repo has a "dev" branch pushed to origin, so Create() can fetch from it.
 func initTestRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-
-	cmds := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
-		{"git", "checkout", "-b", "dev"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %s: %v", args[1:], out, err)
-		}
-	}
-
-	// Create a file and commit so branches can be created.
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"git", "add", "README.md"},
-		{"git", "commit", "-m", "initial"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %s: %v", args[1:], out, err)
-		}
-	}
-
-	return dir
+	localDir, _ := initTestRepoWithRemote(t)
+	return localDir
 }
 
 func skipIfNoGit(t *testing.T) {
@@ -146,6 +117,80 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+// TestRemoveAfterSquashMerge verifies that Remove() can delete a feature branch
+// even after a squash merge, where the original commits are not ancestors of the
+// base branch. This scenario causes `git branch -d` (safe delete) to fail because
+// git cannot detect the branch as "merged". Using `-D` (force delete) solves this.
+func TestRemoveAfterSquashMerge(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t)
+	mgr := testManager(t)
+
+	// 1. Create a feature branch worktree.
+	wtPath, err := mgr.Create(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/36-squash-test",
+		ProjectID: "proj", IssueID: "36", Slug: "squash-test",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// 2. Add a commit on the feature branch (inside the worktree).
+	featureFile := filepath.Join(wtPath, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "feature.txt"},
+		{"git", "commit", "-m", "add feature work"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = wtPath
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("feature git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// 3. Simulate squash merge on dev: create a NEW commit on dev with the same
+	//    file content but a completely different SHA (as GitHub squash merge does).
+	//    Switch to dev in the main repo and commit the same change independently.
+	devFile := filepath.Join(repo, "feature.txt")
+	if err := os.WriteFile(devFile, []byte("feature work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "feature.txt"},
+		{"git", "commit", "-m", "squash merge: add feature work"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("dev git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// 4. Remove worktree + branch. With `-d` this would fail because the feature
+	//    branch's commit is not an ancestor of dev. With `-D` it succeeds.
+	if err := mgr.Remove(repo, wtPath, true); err != nil {
+		t.Fatalf("Remove after squash merge: %v", err)
+	}
+
+	// 5. Verify worktree is gone.
+	worktrees, err := mgr.List(repo)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(worktrees) != 0 {
+		t.Errorf("List = %d worktrees after remove, want 0", len(worktrees))
+	}
+
+	// 6. Verify branch is deleted.
+	out, _ := runGit(repo, "branch", "--list", "feat/36-squash-test")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("branch still exists after remove: %s", out)
+	}
+}
+
 func TestMaxPerProject(t *testing.T) {
 	skipIfNoGit(t)
 	repo := initTestRepo(t)
@@ -173,6 +218,188 @@ func TestMaxPerProject(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "max worktrees") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// initTestRepoWithRemote creates a local repo backed by a bare remote.
+// Returns (localRepoPath, bareRemotePath). The local repo has "origin" pointing
+// to the bare remote with a "dev" branch and one initial commit.
+func initTestRepoWithRemote(t *testing.T) (string, string) {
+	t.Helper()
+
+	// Create bare repo as origin.
+	bareDir := t.TempDir()
+	for _, args := range [][]string{
+		{"git", "init", "--bare"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = bareDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bare repo git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// Clone bare repo to create local.
+	localDir := filepath.Join(t.TempDir(), "local")
+	{
+		cmd := exec.Command("git", "clone", bareDir, localDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("clone: %s: %v", out, err)
+		}
+	}
+
+	// Configure user in local.
+	for _, args := range [][]string{
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = localDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// Create dev branch with initial commit and push.
+	if err := os.WriteFile(filepath.Join(localDir, "README.md"), []byte("# test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "checkout", "-b", "dev"},
+		{"git", "add", "README.md"},
+		{"git", "commit", "-m", "initial"},
+		{"git", "push", "-u", "origin", "dev"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = localDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	return localDir, bareDir
+}
+
+func TestCreateFetchesRemote(t *testing.T) {
+	skipIfNoGit(t)
+	localDir, bareDir := initTestRepoWithRemote(t)
+	mgr := testManager(t)
+
+	// Simulate a dependency issue's code being merged into remote dev:
+	// clone the bare repo into a second working copy, commit, and push.
+	otherDir := filepath.Join(t.TempDir(), "other")
+	{
+		cmd := exec.Command("git", "clone", bareDir, otherDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("clone other: %s: %v", out, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"git", "config", "user.email", "other@test.com"},
+		{"git", "config", "user.name", "Other"},
+		{"git", "checkout", "dev"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = otherDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("other git %v: %s: %v", args[1:], out, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(otherDir, "dep.txt"), []byte("dependency code"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "dep.txt"},
+		{"git", "commit", "-m", "add dependency code"},
+		{"git", "push", "origin", "dev"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = otherDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("other git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// Local repo hasn't fetched yet — dep.txt should not be in local dev.
+	// Now Create should fetch and base the new branch on origin/dev.
+	wtPath, err := mgr.Create(CreateParams{
+		RepoPath:   localDir,
+		BaseBranch: "dev",
+		BranchName: "feat/99-test-fetch",
+		ProjectID:  "proj",
+		IssueID:    "99",
+		Slug:       "test-fetch",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Verify dep.txt exists in the worktree (proves fetch + origin/dev base worked).
+	depFile := filepath.Join(wtPath, "dep.txt")
+	if _, err := os.Stat(depFile); os.IsNotExist(err) {
+		t.Fatalf("dep.txt not found in worktree — fetch or origin/dev base failed")
+	}
+	content, err := os.ReadFile(depFile)
+	if err != nil {
+		t.Fatalf("reading dep.txt: %v", err)
+	}
+	if string(content) != "dependency code" {
+		t.Errorf("dep.txt content = %q, want %q", string(content), "dependency code")
+	}
+}
+
+// initTestRepoNoRemote creates a temporary git repo with an initial commit but no remote.
+func initTestRepoNoRemote(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	for _, args := range [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+		{"git", "checkout", "-b", "dev"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "README.md"},
+		{"git", "commit", "-m", "initial"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+	return dir
+}
+
+func TestCreateFetchFailure(t *testing.T) {
+	skipIfNoGit(t)
+	// Use a repo with no remote — fetch should fail and Create should return error.
+	repo := initTestRepoNoRemote(t)
+	mgr := testManager(t)
+
+	_, err := mgr.Create(CreateParams{
+		RepoPath:   repo,
+		BaseBranch: "dev",
+		BranchName: "feat/100-no-remote",
+		ProjectID:  "proj",
+		IssueID:    "100",
+		Slug:       "no-remote",
+	})
+	if err == nil {
+		t.Fatal("expected error when fetch fails (no remote)")
+	}
+	if !strings.Contains(err.Error(), "fetching origin/dev") {
+		t.Errorf("error = %v, want error about fetching origin/dev", err)
 	}
 }
 

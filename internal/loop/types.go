@@ -69,8 +69,9 @@ type Slot struct {
 
 // LoopState tracks per-project loop status.
 type LoopState struct {
-	Active bool
-	Slots  map[string]*Slot
+	Active           bool
+	Slots            map[string]*Slot
+	ReportedCycleKey string // comma-joined sorted issue IDs of last-reported cycle (e.g. "3,4")
 }
 
 // SlotKey returns the map key for a slot.

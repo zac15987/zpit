@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,16 +22,21 @@ import (
 )
 
 // loopPollCmd polls the tracker for todo issues.
+// After filtering for "todo" status, it parses each issue's DEPENDS_ON section,
+// queries dependency issue states via GetIssue, and excludes issues with unclosed
+// dependencies. Circular dependencies are detected and excluded with a log warning.
+// Only reads read-only fields (clients, projects) — no lock needed.
 func (m Model) loopPollCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
+	logger := m.state.logger
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -43,31 +50,161 @@ func (m Model) loopPollCmd(projectID string) tea.Cmd {
 				todoIssues = append(todoIssues, issue)
 			}
 		}
-		return LoopPollMsg{ProjectID: projectID, Issues: todoIssues}
+
+		// Build dependency graph: issueID → list of dependency issue IDs.
+		depGraph := make(map[string][]string)
+		for _, issue := range todoIssues {
+			spec, err := tracker.ParseIssueSpec(issue.Body)
+			if err != nil || len(spec.DependsOn) == 0 {
+				continue
+			}
+			depGraph[issue.ID] = spec.DependsOn
+		}
+
+		// Detect circular dependencies via topological sort.
+		cycleIssues := detectCycles(depGraph)
+		var cycleIDs []string
+		if len(cycleIssues) > 0 {
+			cycleIDs = make([]string, 0, len(cycleIssues))
+			for id := range cycleIssues {
+				cycleIDs = append(cycleIDs, id)
+			}
+			sort.Strings(cycleIDs)
+		}
+
+		// Filter: only include issues whose dependencies are all closed.
+		var eligible []tracker.Issue
+		for _, issue := range todoIssues {
+			if cycleIssues[issue.ID] {
+				continue // part of a cycle
+			}
+			deps := depGraph[issue.ID]
+			if len(deps) == 0 {
+				eligible = append(eligible, issue)
+				continue
+			}
+			allClosed := true
+			for _, depID := range deps {
+				depIssue, err := client.GetIssue(ctx, repo, depID)
+				if err != nil {
+					logger.Printf("loop: failed to check dependency #%s for issue #%s: %v", depID, issue.ID, err)
+					allClosed = false
+					break
+				}
+				if depIssue.Status != tracker.StatusDone {
+					allClosed = false
+					break
+				}
+			}
+			if allClosed {
+				eligible = append(eligible, issue)
+			}
+		}
+
+		return LoopPollMsg{ProjectID: projectID, Issues: eligible, CycleIssueIDs: cycleIDs}
 	}
 }
 
+// detectCycles finds all issue IDs involved in circular dependencies.
+// Uses iterative DFS with three-color marking (white/gray/black).
+func detectCycles(graph map[string][]string) map[string]bool {
+	const (
+		white = 0 // unvisited
+		gray  = 1 // in current DFS path
+		black = 2 // fully processed
+	)
+
+	color := make(map[string]int)
+	parent := make(map[string]string) // tracks DFS parent for cycle extraction
+	cycleNodes := make(map[string]bool)
+
+	// Collect all nodes (both sources and targets).
+	allNodes := make(map[string]bool)
+	for id, deps := range graph {
+		allNodes[id] = true
+		for _, d := range deps {
+			allNodes[d] = true
+		}
+	}
+
+	for node := range allNodes {
+		if color[node] != white {
+			continue
+		}
+		// Iterative DFS using an explicit stack.
+		type frame struct {
+			node string
+			idx  int // index into graph[node] adjacency list
+		}
+		stack := []frame{{node: node, idx: 0}}
+		color[node] = gray
+
+		for len(stack) > 0 {
+			top := &stack[len(stack)-1]
+			deps := graph[top.node]
+			if top.idx >= len(deps) {
+				// Done processing this node.
+				color[top.node] = black
+				stack = stack[:len(stack)-1]
+				continue
+			}
+			next := deps[top.idx]
+			top.idx++
+
+			switch color[next] {
+			case white:
+				color[next] = gray
+				parent[next] = top.node
+				stack = append(stack, frame{node: next, idx: 0})
+			case gray:
+				// Back edge found — mark all nodes in the cycle.
+				cycleNodes[next] = true
+				cur := top.node
+				for cur != next {
+					cycleNodes[cur] = true
+					cur = parent[cur]
+				}
+			}
+		}
+	}
+
+	return cycleNodes
+}
+
 // loopCreateWorktreeCmd creates a worktree for the given issue.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
+// If ChannelEnabled, writes .mcp.json to the worktree root pointing to the broker.
 func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
+	baseBranch := slot.BaseBranch
+	m.state.RUnlock()
+
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	slug := worktree.Slugify(issueTitle, 40)
 	branchName := fmt.Sprintf("feat/%s-%s", issueID, slug)
-	mgr := m.wtManager
+	mgr := m.state.wtManager
 	hookMode := project.HookMode
-	hookScripts := m.hookScripts
-	baseBranch := slot.BaseBranch
+	hookScripts := m.state.hookScripts
+	channelEnabled := project.ChannelEnabled
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		wtPath, err := mgr.Create(worktree.CreateParams{
@@ -84,6 +221,16 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 		if err := worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts); err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
+
+		// Write .mcp.json for channel communication if enabled.
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID); err != nil {
+				logger.Printf("loop: failed to write .mcp.json for issue #%s: %v", issueID, err)
+			} else {
+				logger.Printf("loop: wrote .mcp.json to %s for issue #%s", wtPath, issueID)
+			}
+		}
+
 		return LoopWorktreeCreatedMsg{
 			ProjectID:    projectID,
 			IssueID:      issueID,
@@ -93,41 +240,79 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	}
 }
 
+// writeMCPConfig writes a .mcp.json file to the worktree root, configuring
+// the zpit-channel MCP server to connect to the broker.
+func writeMCPConfig(wtPath, brokerAddr, projectID, issueID string) error {
+	zpitBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("get executable path: %w", err)
+	}
+
+	// Build the .mcp.json structure.
+	mcpConfig := map[string]any{
+		"mcpServers": map[string]any{
+			"zpit-channel": map[string]any{
+				"command": zpitBin,
+				"args":    []string{"serve-channel"},
+				"env": map[string]string{
+					"ZPIT_BROKER_URL": "http://" + brokerAddr,
+					"ZPIT_PROJECT_ID": projectID,
+					"ZPIT_ISSUE_ID":   issueID,
+				},
+			},
+		},
+	}
+
+	data, err := json.MarshalIndent(mcpConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal .mcp.json: %w", err)
+	}
+
+	return os.WriteFile(filepath.Join(wtPath, ".mcp.json"), data, 0o644)
+}
+
 // loopWriteAgentCmd fetches the issue, parses spec, builds prompt, writes temp agent file.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	wtPath := slot.WorktreePath
+	baseBranch := slot.BaseBranch
+	m.state.RUnlock()
+
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
-	wtPath := slot.WorktreePath
 	logPolicy := ""
-	if p, ok := m.cfg.Profiles[project.Profile]; ok {
+	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
-	baseBranch := slot.BaseBranch
 
-	// Build tracker doc content outside closure (avoid accessing m.cfg inside goroutine)
+	// Build tracker doc content outside closure (avoid accessing m.state.cfg inside goroutine)
 	var trackerDocContent string
-	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
-	hookScripts := m.hookScripts
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
+	channelEnabled := project.ChannelEnabled
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks exist (handles resume from previous session)
@@ -141,10 +326,10 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
 
-		missing := tracker.ValidateIssueSpec(issue.Body)
-		if len(missing) > 0 {
+		validation := tracker.ValidateIssueSpec(issue.Body)
+		if len(validation.Errors) > 0 {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID,
-				Err: fmt.Errorf("issue #%s missing sections: %v", issueID, missing)}
+				Err: fmt.Errorf("issue #%s validation errors: %v", issueID, validation.Errors)}
 		}
 
 		spec, err := tracker.ParseIssueSpec(issue.Body)
@@ -153,11 +338,12 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		}
 
 		promptText := prompt.BuildCodingPrompt(prompt.CodingParams{
-			IssueID:    issueID,
-			IssueTitle: issue.Title,
-			Spec:       spec,
-			LogPolicy:  logPolicy,
-			BaseBranch: baseBranch,
+			IssueID:        issueID,
+			IssueTitle:     issue.Title,
+			Spec:           spec,
+			LogPolicy:      logPolicy,
+			BaseBranch:     baseBranch,
+			ChannelEnabled: channelEnabled,
 		})
 
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
@@ -179,32 +365,44 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 }
 
 // loopLaunchCoderCmd launches the coding agent in a new terminal.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	wtPath := slot.WorktreePath
-	cfg := m.cfg.Terminal
+	reviewRound := slot.ReviewRound
+	m.state.RUnlock()
+
+	cfg := m.state.cfg.Terminal
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
+	channelEnabled := project.ChannelEnabled
 
 	initMsg := locale.T(locale.KeyInitCoding)
-	if slot.ReviewRound > 0 {
+	if reviewRound > 0 {
 		initMsg = locale.T(locale.KeyInitRevisionCoding)
 	}
 
 	return func() tea.Msg {
 		launchedAt := time.Now().Unix()
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
+		args := []string{"--agent", agentName, initMsg}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "coder", LaunchedAt: launchedAt,
@@ -214,39 +412,47 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 }
 
 // loopWriteAndLaunchReviewerCmd writes the reviewer agent file and launches it.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	wtPath := slot.WorktreePath
+	baseBranch := slot.BaseBranch
+	reviewRound := slot.ReviewRound
+	m.state.RUnlock()
+
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
-	wtPath := slot.WorktreePath
-	cfg := m.cfg.Terminal
+	cfg := m.state.cfg.Terminal
 	logPolicy := ""
-	if p, ok := m.cfg.Profiles[project.Profile]; ok {
+	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
 		logPolicy = p.LogPolicy
 	}
-	baseBranch := slot.BaseBranch
-	reviewRound := slot.ReviewRound
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
-	hookScripts := m.hookScripts
+	channelEnabled := project.ChannelEnabled
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	reviewerDisallowed := prompt.FrontmatterField(m.state.reviewerMD, "disallowedTools")
 	var trackerDocContent string
-	if provider, ok := m.cfg.Providers.Tracker[project.Tracker]; ok {
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
 
@@ -280,8 +486,12 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		_ = os.MkdirAll(agentDir, 0o755)
 		agentFile := fmt.Sprintf("reviewer-%s.md", issueID)
-		content := fmt.Sprintf("---\nname: reviewer-%s\ndescription: Reviewer agent for issue %s\ndisallowedTools: Write, Edit\n---\n\n%s",
-			issueID, issueID, promptText)
+		var disallowedLine string
+		if reviewerDisallowed != "" {
+			disallowedLine = fmt.Sprintf("disallowedTools: %s\n", reviewerDisallowed)
+		}
+		content := fmt.Sprintf("---\nname: reviewer-%s\ndescription: Reviewer agent for issue %s\n%s---\n\n%s",
+			issueID, issueID, disallowedLine, promptText)
 		if err := os.WriteFile(filepath.Join(agentDir, agentFile), []byte(content), 0o644); err != nil {
 			return LoopAgentLaunchedMsg{ProjectID: projectID, IssueID: issueID, Role: "reviewer", Err: err}
 		}
@@ -292,7 +502,11 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		if reviewRound > 0 {
 			initMsg = locale.T(locale.KeyInitRevisionReview)
 		}
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
+		args := []string{"--agent", agentName, initMsg}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "reviewer", LaunchedAt: launchedAt,
@@ -302,25 +516,31 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 }
 
 // loopPollPRCmd polls tracker for PR by branch name.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	ls := m.loops[projectID]
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	branch := slot.BranchName
+	m.state.RUnlock()
+
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
-	branch := slot.BranchName
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -330,43 +550,71 @@ func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 	}
 }
 
-// loopCleanupCmd removes the worktree and branch.
+// loopCleanupCmd removes the worktree and branch, then closes the issue.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	ls := m.loops[projectID]
+
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	wtPath := slot.WorktreePath
-	mgr := m.wtManager
+	m.state.RUnlock()
+
+	mgr := m.state.wtManager
+	client, ok := m.state.clients[project.Tracker]
+	repo := project.Repo
+	logger := m.state.logger
 
 	return func() tea.Msg {
-		err := mgr.Remove(projectPath, wtPath, true)
-		return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		// Try worktree removal — failure is logged but does not block issue closing.
+		// On Windows, Remove() often fails because the agent process still holds the CWD lock.
+		removeErr := mgr.Remove(projectPath, wtPath, true)
+		if removeErr != nil {
+			logger.Printf("loop: worktree remove failed #%s: %v (will still close issue)", issueID, removeErr)
+		}
+
+		// Always close the issue regardless of worktree removal result.
+		if ok && client != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if closeErr := client.CloseIssue(ctx, repo, issueID); closeErr != nil {
+				logger.Printf("loop: failed to close issue #%s: %v", issueID, closeErr)
+			}
+		}
+
+		return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: removeErr}
 	}
 }
 
 // loopCleanupMergedCmd cleans up worktrees whose PR has been merged (leftover from previous sessions).
+// Also closes the associated issue if still open.
+// Only reads read-only fields (clients, wtManager) — no lock needed.
 func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
 	repo := project.Repo
-	mgr := m.wtManager
+	mgr := m.state.wtManager
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		worktrees, err := mgr.List(projectPath)
@@ -374,7 +622,7 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 			return nil
 		}
 
-		cleaned := 0
+		cleaned, closed := 0, 0
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -386,40 +634,55 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 			if pr.State == "merged" {
 				if err := mgr.Remove(projectPath, wt.Path, true); err == nil {
 					cleaned++
+				} else {
+					logger.Printf("loop: merged worktree remove failed branch=%s: %v", wt.Branch, err)
+				}
+
+				// Close the associated issue (best-effort, independent of worktree removal).
+				issueID := extractIssueID(wt.Branch)
+				if issueID != "" {
+					if err := client.CloseIssue(ctx, repo, issueID); err != nil {
+						logger.Printf("loop: failed to close issue #%s for merged branch %s: %v", issueID, wt.Branch, err)
+					} else {
+						closed++
+					}
 				}
 			}
 		}
 
-		if cleaned > 0 {
-			return StatusMsg{Text: fmt.Sprintf("Cleaned %d merged worktree(s)", cleaned)}
+		if cleaned > 0 || closed > 0 {
+			return StatusMsg{Text: fmt.Sprintf("Cleaned %d merged worktree(s), closed %d issue(s)", cleaned, closed)}
 		}
 		return nil
 	}
 }
 
 // loopSchedulePoll schedules the next tracker poll after configured interval.
+// Only reads read-only field (cfg) — no lock needed.
 func (m Model) loopSchedulePoll(projectID string) tea.Cmd {
-	interval := time.Duration(m.cfg.Worktree.PollSeconds) * time.Second
+	interval := time.Duration(m.state.cfg.Worktree.PollSeconds) * time.Second
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopPollTickMsg{ProjectID: projectID}
 	})
 }
 
 // loopSchedulePRPoll schedules the next PR status poll after configured interval.
+// Only reads read-only field (cfg) — no lock needed.
 func (m Model) loopSchedulePRPoll(projectID, issueID string) tea.Cmd {
-	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	interval := time.Duration(m.state.cfg.Worktree.PRPollSeconds) * time.Second
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopPRPollTickMsg{ProjectID: projectID, IssueID: issueID}
 	})
 }
 
 // loopPollLabelsCmd fetches issue labels from tracker for state transitions.
+// Only reads read-only fields (clients) — no lock needed.
 func (m Model) loopPollLabelsCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -437,20 +700,22 @@ func (m Model) loopPollLabelsCmd(projectID, issueID string) tea.Cmd {
 }
 
 // loopScheduleLabelPoll schedules the next label poll after configured interval.
+// Only reads read-only field (cfg) — no lock needed.
 func (m Model) loopScheduleLabelPoll(projectID, issueID string) tea.Cmd {
-	interval := time.Duration(m.cfg.Worktree.PRPollSeconds) * time.Second
+	interval := time.Duration(m.state.cfg.Worktree.PRPollSeconds) * time.Second
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return loopLabelPollTickMsg{ProjectID: projectID, IssueID: issueID}
 	})
 }
 
 // loopScanOpenPRsCmd queries open PRs to detect issues waiting for merge.
+// Only reads read-only fields (clients) — no lock needed.
 func (m Model) loopScanOpenPRsCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
@@ -495,37 +760,42 @@ func extractIssueID(branch string) string {
 	return after[:idx]
 }
 
-
 // loopWriteRevisionAgentCmd writes a revision coding agent prompt and returns LoopAgentWrittenMsg.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
 	if project == nil {
 		return nil
 	}
-	client, ok := m.clients[project.Tracker]
+	client, ok := m.state.clients[project.Tracker]
 	if !ok {
 		return nil
 	}
-	ls := m.loops[projectID]
+	m.state.RLock()
+	ls := m.state.loops[projectID]
 	if ls == nil {
+		m.state.RUnlock()
 		return nil
 	}
 	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
 	if slot == nil {
+		m.state.RUnlock()
 		return nil
 	}
-	repo := project.Repo
 	wtPath := slot.WorktreePath
-	logPolicy := ""
-	if p, ok := m.cfg.Profiles[project.Profile]; ok {
-		logPolicy = p.LogPolicy
-	}
 	baseBranch := slot.BaseBranch
 	reviewRound := slot.ReviewRound
-	hookScripts := m.hookScripts
+	m.state.RUnlock()
+
+	repo := project.Repo
+	logPolicy := ""
+	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
+		logPolicy = p.LogPolicy
+	}
+	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
-	agentGuidelines := m.agentGuidelinesMD
-	codeConstructionPrinciples := m.codeConstructionPrinciplesMD
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + docs exist

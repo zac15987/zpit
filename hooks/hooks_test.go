@@ -32,7 +32,16 @@ func runHook(t *testing.T, hook string, input string, env map[string]string) (in
 	cmd := exec.Command("bash", hookPath)
 	cmd.Stdin = strings.NewReader(input)
 
-	cmd.Env = os.Environ()
+	// Build env from os.Environ(), but strip ZPIT_AGENT if caller didn't
+	// explicitly provide it — prevents the parent process's ZPIT_AGENT=1
+	// (set by Zpit when launching agents) from leaking into bypass tests.
+	_, callerSetsAgent := env["ZPIT_AGENT"]
+	for _, e := range os.Environ() {
+		if !callerSetsAgent && strings.HasPrefix(e, "ZPIT_AGENT=") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, e)
+	}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

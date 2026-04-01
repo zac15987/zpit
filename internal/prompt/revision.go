@@ -56,7 +56,10 @@ func BuildRevisionPrompt(p RevisionParams) string {
 2. Read the latest Review Report comment on the PR (find the one with NEEDS CHANGES)
 3. Re-read the reviewer's original comment carefully — understand the root concern behind each item, not just the surface description
 4. List each issue raised by the reviewer (prioritize MUST FIX items)
-5. If fixes depend on external libraries or APIs not fully documented in the issue's REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding
+5. **Research before fixing (mandatory):**
+   a. If the issue's REFERENCES contain any URLs, use WebFetch to retrieve and read each URL
+   b. Use WebSearch to research any unfamiliar concepts or APIs mentioned in the reviewer's feedback
+   c. If fixes depend on external libraries or APIs not fully documented in REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding
 6. Fix the code for each issue
 7. During fixes, ensure all changes comply with CLAUDE.md conventions and the code quality baseline
 8. After fixing, re-read each modified file to verify your changes are consistent and no unintended edits remain
@@ -86,7 +89,10 @@ stop immediately and notify the user; do not continue working.
 
 When updating labels or reading comments, follow the instructions in .claude/docs/tracker.md.
 Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+If MCP is unavailable, use the Write tool + --body-file pattern:
+1. Write content to a temp file in the working directory (e.g. ./tmp_body.md) using the Write tool
+2. Use gh with --body-file ./tmp_body.md or curl with -d @./tmp_body.md
+3. Delete the temp file: rm ./tmp_body.md
 Never embed long text directly in bash commands.
 `, p.IssueID, p.BaseBranch)
 

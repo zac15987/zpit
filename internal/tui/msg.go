@@ -75,9 +75,10 @@ type LabelsEnsuredMsg struct {
 
 // LoopPollMsg carries results of polling tracker for todo issues.
 type LoopPollMsg struct {
-	ProjectID string
-	Issues    []tracker.Issue
-	Err       error
+	ProjectID     string
+	Issues        []tracker.Issue
+	CycleIssueIDs []string // sorted issue IDs involved in circular dependencies (without # prefix)
+	Err           error
 }
 
 // LoopWorktreeCreatedMsg indicates a worktree was created for an issue.
@@ -151,3 +152,7 @@ type loopLabelPollTickMsg struct {
 	ProjectID string
 	IssueID   string
 }
+
+// StateRefreshMsg is sent when shared state changes and the UI needs to re-render.
+// Triggered by the broadcast mechanism when another client mutates shared state.
+type StateRefreshMsg struct{}

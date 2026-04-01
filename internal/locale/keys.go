@@ -66,6 +66,10 @@ const (
 	KeyUndeployDone    Key = "undeploy_done"
 	KeyUndeployNoop    Key = "undeploy_noop"
 
+	// Issue confirm dialog (model.go)
+	KeyIssueConfirmTitle  Key = "issue_confirm_title"
+	KeyIssueConfirmButton Key = "issue_confirm_button"
+
 	// Label confirm dialogs (model.go)
 	KeyLabelsMissing  Key = "labels_missing"
 	KeyCreateLabels   Key = "create_labels"

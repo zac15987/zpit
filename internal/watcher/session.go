@@ -16,8 +16,8 @@ type SessionInfo struct {
 	StartedAt int64  `json:"startedAt"`
 }
 
-// processAliveFunc is overridable for testing.
-var processAliveFunc = isProcessAlive
+// isClaudeProcessFunc is overridable for testing.
+var isClaudeProcessFunc = isClaudeProcess
 
 // FindActiveSessions scans ~/.claude/sessions/*.json for sessions
 // whose cwd matches projectPath and whose PID is still alive.
@@ -50,7 +50,7 @@ func FindActiveSessions(claudeHome, projectPath string) ([]SessionInfo, error) {
 			continue
 		}
 
-		if !processAliveFunc(info.PID) {
+		if !isClaudeProcessFunc(info.PID) {
 			continue
 		}
 
@@ -81,9 +81,9 @@ func ReadSessionByPID(claudeHome string, pid int) (*SessionInfo, error) {
 	return &info, nil
 }
 
-// IsProcessAlive checks if the given PID is still running.
-func IsProcessAlive(pid int) bool {
-	return processAliveFunc(pid)
+// IsClaudeProcess checks if the given PID belongs to a running Claude Code process.
+func IsClaudeProcess(pid int) bool {
+	return isClaudeProcessFunc(pid)
 }
 
 // normalizePath normalizes path separators for comparison.

@@ -5,6 +5,13 @@ language = "zh-TW"
 windows_mode = "new_tab"
 tmux_mode = "new_window"
 
+[ssh]
+port = 2200
+host = "0.0.0.0"
+host_key_path = "~/.zpit/ssh/host_ed25519"
+authorized_keys_path = "~/.ssh/authorized_keys"
+# password_env = "ZPIT_SSH_PASSWORD"   # env var name; leave commented to disable password auth
+
 [notification]
 tui_alert = true
 windows_toast = true
@@ -70,6 +77,7 @@ repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
 shared_core = true
 log_level = "strict"
 base_branch = "dev"
+channel_enabled = false
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
@@ -88,6 +96,7 @@ repo = "Leyu-LGBT/ENR_DUC"
 shared_core = true
 log_level = "strict"
 base_branch = "dev"
+channel_enabled = false
 tags = ["wpf", "secsgem"]
 
 [projects.path]
@@ -106,6 +115,7 @@ repo = "zac15987/DisplayProfileManager"
 shared_core = false
 log_level = "standard"
 base_branch = "dev"
+channel_enabled = false
 tags = ["wpf", "nlog"]
 
 [projects.path]
@@ -124,6 +134,7 @@ repo = "zac15987/zpit"
 shared_core = false
 log_level = "minimal"
 base_branch = "dev"
+channel_enabled = true
 tags = ["go", "bubbletea"]
 
 [projects.path]

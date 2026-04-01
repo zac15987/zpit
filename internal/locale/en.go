@@ -65,6 +65,10 @@ var en = map[Key]string{
 	KeyUndeployDone:    "Undeployed %d item(s) from %s",
 	KeyUndeployNoop:    "No deployed files found (%s)",
 
+	// Issue confirm dialog
+	KeyIssueConfirmTitle:  "Set #%s to todo?\n「%s」",
+	KeyIssueConfirmButton: "Confirm",
+
 	// Label confirm dialogs
 	KeyLabelsMissing:  "Zpit and its agents depend on the following labels to track issue status.\nThese labels are missing in %s:\n\n%s\n\nCreate them to continue?",
 	KeyCreateLabels:   "Create Labels",
@@ -75,7 +79,7 @@ var en = map[Key]string{
 	KeyFocusSlot:      "Switch to slots",
 	KeyCannotLaunch:   "Cannot launch in this state",
 	KeyNoWorktreePath: "Slot has no worktree",
-	KeyLoopSlotHelp:   "Enter: open Claude  \u2191\u2193: navigate  Tab/Esc: back",
+	KeyLoopSlotHelp:   "Enter: open Claude  o: open folder  p: open issue  \u2191\u2193: navigate  Tab/Esc: back",
 
 	// Config validation errors
 	// Agent init messages

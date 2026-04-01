@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -18,6 +19,11 @@ const (
 	defaultReRemindMinutes = 15
 	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
 	defaultBaseBranch      = "dev"
+
+	defaultSSHPort               = 2200
+	defaultSSHHost               = "0.0.0.0"
+	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
+	defaultSSHAuthorizedKeysPath = "~/.ssh/authorized_keys"
 )
 
 // Config is the top-level configuration loaded from config.toml.
@@ -31,9 +37,19 @@ type Config struct {
 	Terminal     TerminalConfig            `toml:"terminal"`
 	Notification NotificationConfig        `toml:"notification"`
 	Worktree     WorktreeConfig            `toml:"worktree"`
+	SSH          SSHConfig                 `toml:"ssh"`
 	Providers    ProvidersConfig           `toml:"providers"`
 	Profiles     map[string]ProfileConfig  `toml:"profiles"`
 	Projects     []ProjectConfig           `toml:"projects"`
+}
+
+// SSHConfig holds settings for the Wish SSH server (zpit serve).
+type SSHConfig struct {
+	Port               int    `toml:"port"`
+	Host               string `toml:"host"`
+	HostKeyPath        string `toml:"host_key_path"`
+	PasswordEnv        string `toml:"password_env"`
+	AuthorizedKeysPath string `toml:"authorized_keys_path"`
 }
 
 type TerminalConfig struct {
@@ -82,6 +98,7 @@ type ProjectConfig struct {
 	SharedCore     bool              `toml:"shared_core"`
 	LogLevel       string            `toml:"log_level"`
 	BaseBranch     string            `toml:"base_branch"`
+	ChannelEnabled bool              `toml:"channel_enabled"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
 }
@@ -128,6 +145,14 @@ max_per_project = 5
 # poll_seconds = 15         # todo issue polling interval (seconds)
 # pr_poll_seconds = 30      # PR merge polling interval (seconds)
 
+# --- SSH Server (zpit serve) ---
+# [ssh]
+# port = 2200
+# host = "0.0.0.0"
+# host_key_path = "~/.zpit/ssh/host_ed25519"
+# authorized_keys_path = "~/.ssh/authorized_keys"
+# password_env = ""               # env var name for password auth (e.g. "ZPIT_SSH_PASSWORD")
+
 # --- Providers ---
 # Uncomment and fill in your tracker provider(s).
 
@@ -156,6 +181,7 @@ max_per_project = 5
 # tracker = "my-github"
 # repo = "owner/repo"
 # base_branch = "dev"
+# channel_enabled = false  # enable cross-agent channel communication
 # tags = ["go"]
 #
 # [projects.path]
@@ -178,6 +204,23 @@ func Load(path string) (*Config, error) {
 	}
 	applyDefaults(&cfg)
 	return &cfg, nil
+}
+
+// ResolveSSHPaths expands ~ in SSH config paths to the user's home directory.
+func (s *SSHConfig) ResolveSSHPaths() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
+	}
+	expand := func(p string) string {
+		if strings.HasPrefix(p, "~/") {
+			return filepath.Join(home, p[2:])
+		}
+		return p
+	}
+	s.HostKeyPath = expand(s.HostKeyPath)
+	s.AuthorizedKeysPath = expand(s.AuthorizedKeysPath)
+	return nil
 }
 
 func applyDefaults(cfg *Config) {
@@ -208,6 +251,19 @@ func applyDefaults(cfg *Config) {
 	if cfg.Worktree.PRPollSeconds == 0 {
 		cfg.Worktree.PRPollSeconds = loop.DefaultPRPollSeconds
 	}
+	if cfg.SSH.Port == 0 {
+		cfg.SSH.Port = defaultSSHPort
+	}
+	if cfg.SSH.Host == "" {
+		cfg.SSH.Host = defaultSSHHost
+	}
+	if cfg.SSH.HostKeyPath == "" {
+		cfg.SSH.HostKeyPath = defaultSSHHostKeyPath
+	}
+	if cfg.SSH.AuthorizedKeysPath == "" {
+		cfg.SSH.AuthorizedKeysPath = defaultSSHAuthorizedKeysPath
+	}
+
 	for i := range cfg.Projects {
 		if cfg.Projects[i].BaseBranch == "" {
 			cfg.Projects[i].BaseBranch = defaultBaseBranch

@@ -66,7 +66,7 @@ func (m Model) renderProjectsScrollable() string {
 	b.WriteString(columns)
 
 	// Active terminals (if any)
-	if len(m.activeTerminals) > 0 {
+	if len(m.state.activeTerminals) > 0 {
 		b.WriteString("\n\n")
 		b.WriteString(m.renderActiveTerminals())
 	}
@@ -98,7 +98,7 @@ func (m Model) renderProjectsFooter() string {
 
 func (m Model) renderHeader() string {
 	now := time.Now().Format("01/02 15:04")
-	env := m.env.String()
+	env := m.state.env.String()
 	left := "Zpit v0.1"
 	right := fmt.Sprintf("%s  %s", now, env)
 	// headerBoxStyle has Padding(0,1) — inner width is m.width - 2
@@ -121,7 +121,7 @@ func (m Model) renderProjectList() string {
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 32) + "\n\n")
 
-	for i, p := range m.projects {
+	for i, p := range m.state.projects {
 		icon := profileIcons[p.Profile]
 		if icon == "" {
 			icon = "  "
@@ -200,7 +200,7 @@ func (m Model) projectName(id string) string {
 	if idx := strings.Index(id, "#"); idx != -1 {
 		lookupID = id[:idx]
 	}
-	for _, p := range m.projects {
+	for _, p := range m.state.projects {
 		if p.ID == lookupID {
 			return p.Name
 		}
@@ -215,15 +215,15 @@ func (m Model) renderActiveTerminals() string {
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
 	// Sort keys for stable render order.
-	termKeys := make([]string, 0, len(m.activeTerminals))
-	for k := range m.activeTerminals {
+	termKeys := make([]string, 0, len(m.state.activeTerminals))
+	for k := range m.state.activeTerminals {
 		termKeys = append(termKeys, k)
 	}
 	sort.Strings(termKeys)
 
 	i := 1
 	for _, projectID := range termKeys {
-		at := m.activeTerminals[projectID]
+		at := m.state.activeTerminals[projectID]
 		// Status icon and text.
 		statusIcon, statusText := renderAgentStatus(at)
 
@@ -286,14 +286,14 @@ func (m Model) renderLoopStatus() string {
 	hasContent := false
 
 	// Sort project IDs for stable render order.
-	projectIDs := make([]string, 0, len(m.loops))
-	for pid := range m.loops {
+	projectIDs := make([]string, 0, len(m.state.loops))
+	for pid := range m.state.loops {
 		projectIDs = append(projectIDs, pid)
 	}
 	sort.Strings(projectIDs)
 
 	for _, projectID := range projectIDs {
-		ls := m.loops[projectID]
+		ls := m.state.loops[projectID]
 		if !ls.Active && len(ls.Slots) == 0 {
 			continue
 		}
@@ -342,7 +342,7 @@ func (m Model) renderLoopStatus() string {
 			}
 			stateText := slot.State.String()
 			if slot.ReviewRound > 0 {
-				stateText += fmt.Sprintf(" (round %d/%d)", slot.ReviewRound, m.cfg.Worktree.MaxReviewRounds)
+				stateText += fmt.Sprintf(" (round %d/%d)", slot.ReviewRound, m.state.cfg.Worktree.MaxReviewRounds)
 			}
 
 			cursor := "    "
