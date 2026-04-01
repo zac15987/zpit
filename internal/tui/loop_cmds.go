@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -61,12 +62,13 @@ func (m Model) loopPollCmd(projectID string) tea.Cmd {
 
 		// Detect circular dependencies via topological sort.
 		cycleIssues := detectCycles(depGraph)
+		var cycleIDs []string
 		if len(cycleIssues) > 0 {
-			ids := make([]string, 0, len(cycleIssues))
+			cycleIDs = make([]string, 0, len(cycleIssues))
 			for id := range cycleIssues {
-				ids = append(ids, "#"+id)
+				cycleIDs = append(cycleIDs, id)
 			}
-			logger.Printf("loop: circular dependency detected among issues: %s", strings.Join(ids, ", "))
+			sort.Strings(cycleIDs)
 		}
 
 		// Filter: only include issues whose dependencies are all closed.
@@ -98,7 +100,7 @@ func (m Model) loopPollCmd(projectID string) tea.Cmd {
 			}
 		}
 
-		return LoopPollMsg{ProjectID: projectID, Issues: eligible}
+		return LoopPollMsg{ProjectID: projectID, Issues: eligible, CycleIssueIDs: cycleIDs}
 	}
 }
 
