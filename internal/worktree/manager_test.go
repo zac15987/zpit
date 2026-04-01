@@ -117,6 +117,80 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+// TestRemoveAfterSquashMerge verifies that Remove() can delete a feature branch
+// even after a squash merge, where the original commits are not ancestors of the
+// base branch. This scenario causes `git branch -d` (safe delete) to fail because
+// git cannot detect the branch as "merged". Using `-D` (force delete) solves this.
+func TestRemoveAfterSquashMerge(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t)
+	mgr := testManager(t)
+
+	// 1. Create a feature branch worktree.
+	wtPath, err := mgr.Create(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/36-squash-test",
+		ProjectID: "proj", IssueID: "36", Slug: "squash-test",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// 2. Add a commit on the feature branch (inside the worktree).
+	featureFile := filepath.Join(wtPath, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "feature.txt"},
+		{"git", "commit", "-m", "add feature work"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = wtPath
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("feature git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// 3. Simulate squash merge on dev: create a NEW commit on dev with the same
+	//    file content but a completely different SHA (as GitHub squash merge does).
+	//    Switch to dev in the main repo and commit the same change independently.
+	devFile := filepath.Join(repo, "feature.txt")
+	if err := os.WriteFile(devFile, []byte("feature work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "feature.txt"},
+		{"git", "commit", "-m", "squash merge: add feature work"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("dev git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// 4. Remove worktree + branch. With `-d` this would fail because the feature
+	//    branch's commit is not an ancestor of dev. With `-D` it succeeds.
+	if err := mgr.Remove(repo, wtPath, true); err != nil {
+		t.Fatalf("Remove after squash merge: %v", err)
+	}
+
+	// 5. Verify worktree is gone.
+	worktrees, err := mgr.List(repo)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(worktrees) != 0 {
+		t.Errorf("List = %d worktrees after remove, want 0", len(worktrees))
+	}
+
+	// 6. Verify branch is deleted.
+	out, _ := runGit(repo, "branch", "--list", "feat/36-squash-test")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("branch still exists after remove: %s", out)
+	}
+}
+
 func TestMaxPerProject(t *testing.T) {
 	skipIfNoGit(t)
 	repo := initTestRepo(t)

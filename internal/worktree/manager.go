@@ -113,7 +113,7 @@ func (m *Manager) Remove(repoPath, worktreePath string, deleteBranch bool) error
 	}
 
 	if deleteBranch && branchName != "" {
-		if _, err := runGit(repoPath, "branch", "-d", branchName); err != nil {
+		if _, err := runGit(repoPath, "branch", "-D", branchName); err != nil {
 			return fmt.Errorf("deleting branch %s: %w", branchName, err)
 		}
 	}
