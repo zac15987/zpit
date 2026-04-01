@@ -188,10 +188,10 @@ func TestFindActiveSessions(t *testing.T) {
 		StartedAt: 3000,
 	})
 
-	// Override processAliveFunc for testing.
-	origFunc := processAliveFunc
-	processAliveFunc = func(pid int) bool { return pid == alivePID }
-	defer func() { processAliveFunc = origFunc }()
+	// Override isClaudeProcessFunc for testing.
+	origFunc := isClaudeProcessFunc
+	isClaudeProcessFunc = func(pid int) bool { return pid == alivePID }
+	defer func() { isClaudeProcessFunc = origFunc }()
 
 	sessions, err := FindActiveSessions(tmpDir, projectPath)
 	if err != nil {
@@ -341,21 +341,24 @@ func TestAgentState_String(t *testing.T) {
 	}
 }
 
-// --- IsProcessAlive ---
+// --- IsClaudeProcess ---
 
-func TestIsProcessAlive_CurrentProcess(t *testing.T) {
-	// Current PID is always alive.
-	if !IsProcessAlive(os.Getpid()) {
+func TestIsClaudeProcess_CurrentProcess(t *testing.T) {
+	origFunc := isClaudeProcessFunc
+	isClaudeProcessFunc = func(pid int) bool { return true }
+	defer func() { isClaudeProcessFunc = origFunc }()
+
+	if !IsClaudeProcess(os.Getpid()) {
 		t.Error("current process should be alive")
 	}
 }
 
-func TestIsProcessAlive_DeadProcess(t *testing.T) {
-	origFunc := processAliveFunc
-	processAliveFunc = func(pid int) bool { return false }
-	defer func() { processAliveFunc = origFunc }()
+func TestIsClaudeProcess_DeadProcess(t *testing.T) {
+	origFunc := isClaudeProcessFunc
+	isClaudeProcessFunc = func(pid int) bool { return false }
+	defer func() { isClaudeProcessFunc = origFunc }()
 
-	if IsProcessAlive(99999999) {
+	if IsClaudeProcess(99999999) {
 		t.Error("dead PID should not be alive")
 	}
 }

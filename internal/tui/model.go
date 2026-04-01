@@ -1315,7 +1315,7 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 		warned := false
 
 		for attempt := 0; ; attempt++ {
-			if !watcher.IsProcessAlive(pid) {
+			if !watcher.IsClaudeProcess(pid) {
 				logger.Printf("waitForLog: key=%s pid=%d died at attempt %d", projectID, pid, attempt)
 				return sessionLostMsg{ProjectID: projectID, Text: "session ended before log created"}
 			}
@@ -1398,7 +1398,7 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 		if at.SessionPID <= 0 {
 			continue
 		}
-		if !watcher.IsProcessAlive(at.SessionPID) {
+		if !watcher.IsClaudeProcess(at.SessionPID) {
 			m.state.logger.Printf("session PID %d ended: %s", at.SessionPID, projectID)
 			at.State = watcher.StateEnded
 			at.StateChangedAt = now
