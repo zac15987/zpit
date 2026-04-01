@@ -6,7 +6,7 @@ windows_mode = "new_tab"
 tmux_mode = "new_window"
 
 [ssh]
-port = 2222
+port = 2200
 host = "0.0.0.0"
 host_key_path = "~/.zpit/ssh/host_ed25519"
 authorized_keys_path = "~/.ssh/authorized_keys"

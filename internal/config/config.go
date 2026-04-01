@@ -20,7 +20,7 @@ const (
 	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
 	defaultBaseBranch      = "dev"
 
-	defaultSSHPort               = 2222
+	defaultSSHPort               = 2200
 	defaultSSHHost               = "0.0.0.0"
 	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
 	defaultSSHAuthorizedKeysPath = "~/.ssh/authorized_keys"
@@ -146,7 +146,7 @@ max_per_project = 5
 
 # --- SSH Server (zpit serve) ---
 # [ssh]
-# port = 2222
+# port = 2200
 # host = "0.0.0.0"
 # host_key_path = "~/.zpit/ssh/host_ed25519"
 # authorized_keys_path = "~/.ssh/authorized_keys"

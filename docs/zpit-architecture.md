@@ -1995,7 +1995,7 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 
 ```toml
 [ssh]
-port = 2222                                    # 預設
+port = 2200                                    # 預設
 host = "0.0.0.0"                               # 預設
 host_key_path = "~/.zpit/ssh/host_ed25519"     # 預設，支援 ~/ 展開
 password_env = "ZPIT_SSH_PASSWORD"              # env var 名稱，選配

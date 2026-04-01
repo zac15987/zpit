@@ -131,7 +131,7 @@ go build -o zpit .
 ./zpit
 
 # SSH server mode (remote access)
-./zpit serve      # Start headless SSH daemon (default port 2222)
+./zpit serve      # Start headless SSH daemon (default port 2200)
 ./zpit connect    # SSH connect to local server
 ```
 
@@ -184,7 +184,7 @@ wsl = "/mnt/d/Projects/my-project"
 
 # SSH server (optional — for remote TUI access)
 # [ssh]
-# port = 2222
+# port = 2200
 # host = "0.0.0.0"
 # host_key_path = "~/.zpit/ssh/host_ed25519"
 # password_env = "ZPIT_SSH_PASSWORD"
