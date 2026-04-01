@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -88,6 +89,7 @@ type Server struct {
 	logger    *log.Logger
 	stdin     io.Reader
 	stdout    io.Writer
+	stdoutMu  sync.Mutex // protects concurrent writes to stdout
 	client    *http.Client
 	sseCancel context.CancelFunc // cancels the SSE listener goroutine
 }
@@ -429,23 +431,30 @@ func (s *Server) consumeSSE(ctx context.Context, url string) error {
 // --- I/O helpers ---
 
 // writeResponse writes a JSON-RPC response to stdout (newline-delimited).
+// Thread-safe: acquires stdoutMu to prevent interleaved writes from
+// the stdin handler goroutine and the SSE listener goroutine.
 func (s *Server) writeResponse(resp Response) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		s.logger.Printf("mcp: marshal response error: %v", err)
 		return
 	}
+	s.stdoutMu.Lock()
 	fmt.Fprintf(s.stdout, "%s\n", data)
+	s.stdoutMu.Unlock()
 }
 
 // writeNotification writes a JSON-RPC notification to stdout (newline-delimited).
+// Thread-safe: acquires stdoutMu to prevent interleaved writes.
 func (s *Server) writeNotification(n Notification) {
 	data, err := json.Marshal(n)
 	if err != nil {
 		s.logger.Printf("mcp: marshal notification error: %v", err)
 		return
 	}
+	s.stdoutMu.Lock()
 	fmt.Fprintf(s.stdout, "%s\n", data)
+	s.stdoutMu.Unlock()
 }
 
 // writeToolError writes a tool error response.

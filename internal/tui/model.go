@@ -636,11 +636,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, ls := range m.state.loops {
 			ls.Active = false
 		}
+		// Capture and nil-out broker reference under lock to prevent data race.
+		brokerToClose := m.state.broker
+		m.state.broker = nil
 		m.state.Unlock()
-		// Close broker if running.
-		if m.state.broker != nil {
-			m.state.broker.Close()
-			m.state.broker = nil
+		// Close broker outside lock (Close is thread-safe).
+		if brokerToClose != nil {
+			brokerToClose.Close()
 		}
 		m.state.Unsubscribe(m.subscriberID)
 		return m, tea.Quit
@@ -726,13 +728,15 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if ls, ok := m.state.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
 			ls.Slots = make(map[string]*loop.Slot)
+			// Capture and nil-out broker reference under lock.
+			brokerToClose := m.state.broker
+			m.state.broker = nil
 			m.state.NotifyAll()
 			m.state.Unlock()
-			// Close broker if running.
-			if m.state.broker != nil {
+			// Close broker outside lock (Close is thread-safe).
+			if brokerToClose != nil {
 				m.state.logger.Printf("loop: closing broker for project=%s", p.ID)
-				m.state.broker.Close()
-				m.state.broker = nil
+				brokerToClose.Close()
 			}
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil

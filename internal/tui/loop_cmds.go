@@ -312,6 +312,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
+	channelEnabled := project.ChannelEnabled
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks exist (handles resume from previous session)
@@ -337,11 +338,12 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		}
 
 		promptText := prompt.BuildCodingPrompt(prompt.CodingParams{
-			IssueID:    issueID,
-			IssueTitle: issue.Title,
-			Spec:       spec,
-			LogPolicy:  logPolicy,
-			BaseBranch: baseBranch,
+			IssueID:        issueID,
+			IssueTitle:     issue.Title,
+			Spec:           spec,
+			LogPolicy:      logPolicy,
+			BaseBranch:     baseBranch,
+			ChannelEnabled: channelEnabled,
 		})
 
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
@@ -387,6 +389,7 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	cfg := m.state.cfg.Terminal
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
+	channelEnabled := project.ChannelEnabled
 
 	initMsg := locale.T(locale.KeyInitCoding)
 	if reviewRound > 0 {
@@ -395,7 +398,11 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 
 	return func() tea.Msg {
 		launchedAt := time.Now().Unix()
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
+		args := []string{"--agent", agentName, initMsg}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "coder", LaunchedAt: launchedAt,
@@ -438,6 +445,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		logPolicy = p.LogPolicy
 	}
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
+	channelEnabled := project.ChannelEnabled
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	agentGuidelines := m.state.agentGuidelinesMD
@@ -494,7 +502,11 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		if reviewRound > 0 {
 			initMsg = locale.T(locale.KeyInitRevisionReview)
 		}
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, "--agent", agentName, initMsg)
+		args := []string{"--agent", agentName, initMsg}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "reviewer", LaunchedAt: launchedAt,
