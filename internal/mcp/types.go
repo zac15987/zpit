@@ -71,8 +71,8 @@ type InitializeResult struct {
 
 // Capabilities declares the server's MCP capabilities.
 type Capabilities struct {
-	Experimental map[string]any `json:"experimental,omitempty"`
-	Tools        map[string]any `json:"tools,omitempty"`
+	Experimental map[string]any `json:"experimental"`
+	Tools        map[string]any `json:"tools"`
 }
 
 // ServerInfo describes the MCP server.
