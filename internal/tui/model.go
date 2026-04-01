@@ -700,6 +700,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state.Lock()
 		if ls, ok := m.state.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
+			ls.Slots = make(map[string]*loop.Slot)
 			m.state.NotifyAll()
 			m.state.Unlock()
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
