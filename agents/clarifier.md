@@ -119,6 +119,10 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 ## BRANCH
 [PR target branch (optional — omit to use the project default)]
 
+## DEPENDS_ON
+#N
+(Optional section — list issue numbers this issue depends on; omit if no dependencies)
+
 ## TASKS
 T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 (Optional section — see TASKS generation rules below)
@@ -139,6 +143,14 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 - Each line format: `[modify|create|delete] relative-path (reason)`
 - Only list files that definitely need changes — don't list files that "might" need changes
 - If the Coding Agent discovers during implementation that files outside SCOPE need changes, it will stop and ask the user
+
+**Rules for writing DEPENDS_ON (## DEPENDS_ON section):**
+- When splitting a large requirement into multiple issues, add `## DEPENDS_ON` to issues that depend on other issues
+- Each line: `#N` where N is the issue number of the dependency (one per line)
+- The Loop engine will not start an issue until all its DEPENDS_ON issues are closed
+- Only list direct dependencies — do not list transitive dependencies
+- Omit the entire section if the issue has no dependencies
+- Do not create circular dependencies (A depends on B, B depends on A)
 
 **Rules for writing TASKS (## TASKS section):**
 - When SCOPE contains 3 or more entries, generate a `## TASKS` section to decompose the implementation into ordered tasks

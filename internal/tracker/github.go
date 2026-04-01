@@ -75,6 +75,18 @@ func (c *GitHubClient) GetIssue(ctx context.Context, repo string, id string) (*I
 	return &issue, nil
 }
 
+func (c *GitHubClient) CloseIssue(ctx context.Context, repo string, id string) error {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/issues/%s", owner, name, id)
+	body := struct {
+		State string `json:"state"`
+	}{State: "closed"}
+	if err := c.doJSON(ctx, http.MethodPatch, path, body, nil); err != nil {
+		return fmt.Errorf("close issue: %w", err)
+	}
+	return nil
+}
+
 func (c *GitHubClient) UpdateLabels(ctx context.Context, repo string, id string, add, remove []string) error {
 	owner, name := splitRepo(repo)
 

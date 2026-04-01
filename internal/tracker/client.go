@@ -19,6 +19,7 @@ type TrackerClient interface {
 	ListIssues(ctx context.Context, repo string) ([]Issue, error)
 	GetIssue(ctx context.Context, repo string, id string) (*Issue, error)
 	UpdateLabels(ctx context.Context, repo string, id string, add, remove []string) error
+	CloseIssue(ctx context.Context, repo string, id string) error
 	GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error)
 	FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error)
 	ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error)

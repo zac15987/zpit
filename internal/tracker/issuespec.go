@@ -36,9 +36,10 @@ type IssueSpec struct {
 	AcceptanceCriteria []string // individual "AC-N: ..." lines
 	Scope              []ScopeEntry
 	Constraints        string
-	References         string // optional section
-	Branch             string // optional: PR target branch (from ## BRANCH section)
+	References         string      // optional section
+	Branch             string      // optional: PR target branch (from ## BRANCH section)
 	Tasks              []TaskEntry // optional: task decomposition from ## TASKS section
+	DependsOn          []string    // optional: issue numbers this issue depends on (e.g. "42", "15")
 }
 
 // ScopeEntry represents a single file scope line.
@@ -89,6 +90,9 @@ func ValidateIssueSpec(body string) ValidationResult {
 
 	// Check TASKS-SCOPE cross-validation
 	checkTasksScopeCoverage(body, &result)
+
+	// Check DEPENDS_ON format (warnings only — optional section)
+	checkDependsOnFormat(body, &result)
 
 	return result
 }
@@ -332,6 +336,20 @@ func ParseIssueSpec(body string) (*IssueSpec, error) {
 		}
 	}
 
+	// Parse DEPENDS_ON entries (optional section)
+	if depContent, ok := sections["DEPENDS_ON"]; ok && depContent != "" {
+		for _, line := range strings.Split(depContent, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			numStr := strings.TrimPrefix(trimmed, "#")
+			if _, err := strconv.Atoi(numStr); err == nil {
+				spec.DependsOn = append(spec.DependsOn, numStr)
+			}
+		}
+	}
+
 	return spec, nil
 }
 
@@ -526,6 +544,32 @@ func parseTaskEntry(line string) (TaskEntry, bool) {
 	entry.Description = strings.Join(descParts, " ")
 
 	return entry, true
+}
+
+// checkDependsOnFormat warns when DEPENDS_ON lines don't match the expected #N format.
+func checkDependsOnFormat(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	depContent, ok := sections["DEPENDS_ON"]
+	if !ok || depContent == "" {
+		return
+	}
+
+	for _, line := range strings.Split(depContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "#") {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("DEPENDS_ON format warning: line does not match #N format: %s", trimmed))
+			continue
+		}
+		numStr := strings.TrimPrefix(trimmed, "#")
+		if _, err := strconv.Atoi(numStr); err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("DEPENDS_ON format warning: line does not match #N format: %s", trimmed))
+		}
+	}
 }
 
 // parseScopeEntry parses a line like "[modify] path/to/file (reason)".

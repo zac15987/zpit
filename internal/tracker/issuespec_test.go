@@ -591,3 +591,182 @@ T2: Update unknown file [modify] unknown/file.go (depends: T1)
 		}
 	}
 }
+
+// --- DEPENDS_ON parsing tests ---
+
+func TestParseIssueSpec_DependsOn_Basic(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## DEPENDS_ON
+#10
+#42
+`
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.DependsOn) != 2 {
+		t.Fatalf("DependsOn length = %d, want 2", len(spec.DependsOn))
+	}
+	if spec.DependsOn[0] != "10" {
+		t.Errorf("DependsOn[0] = %q, want %q", spec.DependsOn[0], "10")
+	}
+	if spec.DependsOn[1] != "42" {
+		t.Errorf("DependsOn[1] = %q, want %q", spec.DependsOn[1], "42")
+	}
+}
+
+func TestParseIssueSpec_DependsOn_EmptyLines(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## DEPENDS_ON
+
+#5
+
+#8
+
+`
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.DependsOn) != 2 {
+		t.Fatalf("DependsOn length = %d, want 2", len(spec.DependsOn))
+	}
+	if spec.DependsOn[0] != "5" || spec.DependsOn[1] != "8" {
+		t.Errorf("DependsOn = %v, want [5 8]", spec.DependsOn)
+	}
+}
+
+func TestParseIssueSpec_DependsOn_IgnoresNonHashLines(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## DEPENDS_ON
+#10
+some text without hash
+#20
+`
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.DependsOn) != 2 {
+		t.Fatalf("DependsOn length = %d, want 2", len(spec.DependsOn))
+	}
+	if spec.DependsOn[0] != "10" || spec.DependsOn[1] != "20" {
+		t.Errorf("DependsOn = %v, want [10 20]", spec.DependsOn)
+	}
+}
+
+func TestParseIssueSpec_DependsOn_Absent(t *testing.T) {
+	spec, err := ParseIssueSpec(fullIssueBody)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.DependsOn != nil {
+		t.Errorf("expected nil DependsOn when ## DEPENDS_ON absent, got %v", spec.DependsOn)
+	}
+}
+
+func TestValidateIssueSpec_DependsOn_MalformedLines(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## DEPENDS_ON
+#10
+#abc
+not-a-hash
+#20
+`
+	result := ValidateIssueSpec(body)
+
+	// Should have 2 warnings: "#abc" and "not-a-hash"
+	warnCount := 0
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "DEPENDS_ON format warning") {
+			warnCount++
+		}
+	}
+	if warnCount != 2 {
+		t.Errorf("expected 2 DEPENDS_ON format warnings, got %d: %v", warnCount, result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_DependsOn_AllValid_NoWarnings(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test main.go changes
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## DEPENDS_ON
+#10
+#20
+`
+	result := ValidateIssueSpec(body)
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "DEPENDS_ON") {
+			t.Errorf("unexpected DEPENDS_ON warning: %q", w)
+		}
+	}
+}

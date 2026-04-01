@@ -20,6 +20,9 @@ import (
 )
 
 // loopPollCmd polls the tracker for todo issues.
+// After filtering for "todo" status, it parses each issue's DEPENDS_ON section,
+// queries dependency issue states via GetIssue, and excludes issues with unclosed
+// dependencies. Circular dependencies are detected and excluded with a log warning.
 // Only reads read-only fields (clients, projects) — no lock needed.
 func (m Model) loopPollCmd(projectID string) tea.Cmd {
 	project := m.findProject(projectID)
@@ -31,6 +34,7 @@ func (m Model) loopPollCmd(projectID string) tea.Cmd {
 		return nil
 	}
 	repo := project.Repo
+	logger := m.state.logger
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -44,8 +48,124 @@ func (m Model) loopPollCmd(projectID string) tea.Cmd {
 				todoIssues = append(todoIssues, issue)
 			}
 		}
-		return LoopPollMsg{ProjectID: projectID, Issues: todoIssues}
+
+		// Build dependency graph: issueID → list of dependency issue IDs.
+		depGraph := make(map[string][]string)
+		for _, issue := range todoIssues {
+			spec, err := tracker.ParseIssueSpec(issue.Body)
+			if err != nil || len(spec.DependsOn) == 0 {
+				continue
+			}
+			depGraph[issue.ID] = spec.DependsOn
+		}
+
+		// Detect circular dependencies via topological sort.
+		cycleIssues := detectCycles(depGraph)
+		if len(cycleIssues) > 0 {
+			ids := make([]string, 0, len(cycleIssues))
+			for id := range cycleIssues {
+				ids = append(ids, "#"+id)
+			}
+			logger.Printf("loop: circular dependency detected among issues: %s", strings.Join(ids, ", "))
+		}
+
+		// Filter: only include issues whose dependencies are all closed.
+		var eligible []tracker.Issue
+		for _, issue := range todoIssues {
+			if cycleIssues[issue.ID] {
+				continue // part of a cycle
+			}
+			deps := depGraph[issue.ID]
+			if len(deps) == 0 {
+				eligible = append(eligible, issue)
+				continue
+			}
+			allClosed := true
+			for _, depID := range deps {
+				depIssue, err := client.GetIssue(ctx, repo, depID)
+				if err != nil {
+					logger.Printf("loop: failed to check dependency #%s for issue #%s: %v", depID, issue.ID, err)
+					allClosed = false
+					break
+				}
+				if depIssue.Status != tracker.StatusDone {
+					allClosed = false
+					break
+				}
+			}
+			if allClosed {
+				eligible = append(eligible, issue)
+			}
+		}
+
+		return LoopPollMsg{ProjectID: projectID, Issues: eligible}
 	}
+}
+
+// detectCycles finds all issue IDs involved in circular dependencies.
+// Uses iterative DFS with three-color marking (white/gray/black).
+func detectCycles(graph map[string][]string) map[string]bool {
+	const (
+		white = 0 // unvisited
+		gray  = 1 // in current DFS path
+		black = 2 // fully processed
+	)
+
+	color := make(map[string]int)
+	parent := make(map[string]string) // tracks DFS parent for cycle extraction
+	cycleNodes := make(map[string]bool)
+
+	// Collect all nodes (both sources and targets).
+	allNodes := make(map[string]bool)
+	for id, deps := range graph {
+		allNodes[id] = true
+		for _, d := range deps {
+			allNodes[d] = true
+		}
+	}
+
+	for node := range allNodes {
+		if color[node] != white {
+			continue
+		}
+		// Iterative DFS using an explicit stack.
+		type frame struct {
+			node string
+			idx  int // index into graph[node] adjacency list
+		}
+		stack := []frame{{node: node, idx: 0}}
+		color[node] = gray
+
+		for len(stack) > 0 {
+			top := &stack[len(stack)-1]
+			deps := graph[top.node]
+			if top.idx >= len(deps) {
+				// Done processing this node.
+				color[top.node] = black
+				stack = stack[:len(stack)-1]
+				continue
+			}
+			next := deps[top.idx]
+			top.idx++
+
+			switch color[next] {
+			case white:
+				color[next] = gray
+				parent[next] = top.node
+				stack = append(stack, frame{node: next, idx: 0})
+			case gray:
+				// Back edge found — mark all nodes in the cycle.
+				cycleNodes[next] = true
+				cur := top.node
+				for cur != next {
+					cycleNodes[cur] = true
+					cur = parent[cur]
+				}
+			}
+		}
+	}
+
+	return cycleNodes
 }
 
 // loopCreateWorktreeCmd creates a worktree for the given issue.
@@ -362,7 +482,7 @@ func (m Model) loopPollPRCmd(projectID, issueID string) tea.Cmd {
 	}
 }
 
-// loopCleanupCmd removes the worktree and branch.
+// loopCleanupCmd removes the worktree and branch, then closes the issue.
 // Acquires RLock to read loops map, then releases before returning the Cmd closure.
 func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	project := m.findProject(projectID)
@@ -386,10 +506,27 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	m.state.RUnlock()
 
 	mgr := m.state.wtManager
+	client, ok := m.state.clients[project.Tracker]
+	repo := project.Repo
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		err := mgr.Remove(projectPath, wtPath, true)
-		return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		if err != nil {
+			return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		// Close the issue after successful worktree removal.
+		// Failure is logged but does not block cleanup (worktree is already gone).
+		if ok && client != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if closeErr := client.CloseIssue(ctx, repo, issueID); closeErr != nil {
+				logger.Printf("loop: failed to close issue #%s: %v", issueID, closeErr)
+			}
+		}
+
+		return LoopCleanupMsg{ProjectID: projectID, IssueID: issueID, Err: nil}
 	}
 }
 

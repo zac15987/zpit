@@ -70,6 +70,18 @@ func (c *ForgejoClient) GetIssue(ctx context.Context, repo string, id string) (*
 	return &issue, nil
 }
 
+func (c *ForgejoClient) CloseIssue(ctx context.Context, repo string, id string) error {
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/issues/%s", owner, name, id)
+	body := struct {
+		State string `json:"state"`
+	}{State: "closed"}
+	if err := c.doJSON(ctx, http.MethodPatch, path, body, nil); err != nil {
+		return fmt.Errorf("close issue: %w", err)
+	}
+	return nil
+}
+
 func (c *ForgejoClient) UpdateLabels(ctx context.Context, repo string, id string, add, remove []string) error {
 	owner, name := splitRepo(repo)
 	labelsPath := fmt.Sprintf("/api/v1/repos/%s/%s/issues/%s/labels", owner, name, id)
