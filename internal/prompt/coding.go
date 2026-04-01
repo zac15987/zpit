@@ -93,13 +93,11 @@ func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
 
 ## Tracker Operation Notes
 
-When opening a PR or updating status, follow the instructions in .claude/docs/tracker.md.
-Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use the Write tool + --body-file pattern:
-1. Write content to a temp file in the working directory (e.g. ./tmp_body.md) using the Write tool
-2. Use gh with --body-file ./tmp_body.md or curl with -d @./tmp_body.md
-3. Delete the temp file: rm ./tmp_body.md
-Never embed long text directly in bash commands.
+Before performing any tracker operation (PR, label, comment), you MUST first read .claude/docs/tracker.md.
+Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
+Never embed long text directly in bash commands or MCP parameters.
+Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
+Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
 }
 
@@ -160,13 +158,11 @@ Execute tasks in order. Commit after each task.
 
 ## Tracker Operation Notes
 
-When opening a PR or updating status, follow the instructions in .claude/docs/tracker.md.
-Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use the Write tool + --body-file pattern:
-1. Write content to a temp file in the working directory (e.g. ./tmp_body.md) using the Write tool
-2. Use gh with --body-file ./tmp_body.md or curl with -d @./tmp_body.md
-3. Delete the temp file: rm ./tmp_body.md
-Never embed long text directly in bash commands.
+Before performing any tracker operation (PR, label, comment), you MUST first read .claude/docs/tracker.md.
+Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
+Never embed long text directly in bash commands or MCP parameters.
+Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
+Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
 }
 
