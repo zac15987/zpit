@@ -318,6 +318,53 @@ func TestBuildCodingPrompt_WithoutTasks_NoTaskWorkflow(t *testing.T) {
 	}
 }
 
+func TestBuildCodingPrompt_ChannelEnabled(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpec(),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	checks := []string{
+		"Cross-Agent Communication",
+		"publish_artifact",
+		"list_artifacts",
+		"send_message",
+		"channel notification",
+		"shared broker",
+	}
+	for _, c := range checks {
+		if !strings.Contains(result, c) {
+			t.Errorf("channel-enabled prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_ChannelDisabled(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpec(),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: false,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	if strings.Contains(result, "Cross-Agent Communication") {
+		t.Error("channel-disabled prompt should NOT contain cross-agent communication section")
+	}
+	if strings.Contains(result, "publish_artifact") {
+		t.Error("channel-disabled prompt should NOT contain publish_artifact")
+	}
+}
+
 func TestBuildReviewerPrompt_BaseBranch(t *testing.T) {
 	result := BuildReviewerPrompt(ReviewerParams{
 		IssueID:    "TEST-1",

@@ -98,6 +98,7 @@ type ProjectConfig struct {
 	SharedCore     bool              `toml:"shared_core"`
 	LogLevel       string            `toml:"log_level"`
 	BaseBranch     string            `toml:"base_branch"`
+	ChannelEnabled bool              `toml:"channel_enabled"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
 }

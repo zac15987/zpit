@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/notify"
@@ -47,6 +48,7 @@ type AppState struct {
 
 	loops     map[string]*loop.LoopState
 	wtManager *worktree.Manager
+	broker    *broker.Broker // read-only after init per project; nil when channel disabled
 
 	clarifierMD                  []byte
 	reviewerMD                   []byte
