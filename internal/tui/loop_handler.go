@@ -58,7 +58,11 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			}
 			m.state.logger.Printf("loop: circular dependency detected among issues: %s", strings.Join(ids, ", "))
 		} else if ls.ReportedCycleKey != "" {
-			m.state.logger.Printf("loop: circular dependencies resolved")
+			prev := strings.Split(ls.ReportedCycleKey, ",")
+			for i, id := range prev {
+				prev[i] = "#" + id
+			}
+			m.state.logger.Printf("loop: circular dependency resolved (previously: %s)", strings.Join(prev, ", "))
 		}
 		ls.ReportedCycleKey = cycleKey
 	}
