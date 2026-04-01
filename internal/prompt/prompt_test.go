@@ -53,7 +53,8 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 		"When to Stop and Ask the User",                        // stop conditions
 		"must",                                                 // PR target branch
 		"--base dev",                                           // PR target branch flag
-		"WebSearch",                                            // tool-first: verify external APIs
+		"WebFetch",                                             // research: fetch reference URLs
+		"WebSearch",                                            // research: verify external APIs
 		"re-read each modified file",                           // stale context: verify before commit
 	}
 
@@ -242,7 +243,8 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 		"Constraints",
 		"Re-read the reviewer",                                    // stale context: understand root concern
 		"re-read each modified file",                              // stale context: verify after fix
-		"WebSearch",                                               // tool underuse: verify external APIs
+		"WebFetch",                                                // research: fetch reference URLs
+		"WebSearch",                                               // research: verify external APIs
 		"vague or lacks a clear direction",                        // sycophancy: ask for clarification
 		"compliance without agreement is not acceptable",          // sycophancy: challenge incorrect feedback
 		"degrade code quality",                                    // sycophancy: flag conflicts
@@ -283,6 +285,7 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 		"[ASE-47] T{N}:",
 		"T1:",
 		"T2:",
+		"WebFetch",
 		"re-read modified files",
 		"Verify relevant ACs",
 		"retry once",

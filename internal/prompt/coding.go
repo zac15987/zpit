@@ -70,7 +70,10 @@ func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
    Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read all files listed in SCOPE to understand the existing code structure
 3. If references list any reference files, read those too
-4. If implementation depends on external libraries or APIs not fully documented in REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding — do not code against training-data assumptions
+4. **Research before coding (mandatory):**
+   a. If REFERENCES contain any URLs, use WebFetch to retrieve and read each URL
+   b. Use WebSearch to research the problem domain described in CONTEXT and the implementation approach — gather up-to-date information, common pitfalls, and best practices relevant to this task
+   c. If implementation depends on external libraries or APIs, use WebSearch to verify current API signatures and version compatibility — do not code against training-data assumptions
 5. Implement according to the approach described in APPROACH
 6. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
 7. After completion, self-check against each ACCEPTANCE_CRITERIA item
@@ -132,7 +135,10 @@ Execute tasks in order. Commit after each task.
    Read .claude/docs/code-construction-principles.md to understand the code quality baseline
 2. Read all files listed in SCOPE to understand the existing code structure
 3. If references list any reference files, read those too
-4. If implementation depends on external libraries or APIs not fully documented in REFERENCES, use WebSearch to verify current API signatures and version compatibility before coding — do not code against training-data assumptions
+4. **Research before coding (mandatory):**
+   a. If REFERENCES contain any URLs, use WebFetch to retrieve and read each URL
+   b. Use WebSearch to research the problem domain described in CONTEXT and the implementation approach — gather up-to-date information, common pitfalls, and best practices relevant to this task
+   c. If implementation depends on external libraries or APIs, use WebSearch to verify current API signatures and version compatibility — do not code against training-data assumptions
 5. Before starting implementation, update issue label: remove "todo", add "wip"
 6. For each task (T1, T2, ...):
    a. Implement the task according to APPROACH
