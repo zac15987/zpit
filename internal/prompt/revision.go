@@ -86,7 +86,10 @@ stop immediately and notify the user; do not continue working.
 
 When updating labels or reading comments, follow the instructions in .claude/docs/tracker.md.
 Prefer MCP tools — pass content directly as a parameter.
-If MCP is unavailable, use Bash heredoc to write to a temp file, then curl with @file.
+If MCP is unavailable, use the Write tool + --body-file pattern:
+1. Write content to a temp file in the working directory (e.g. ./tmp_body.md) using the Write tool
+2. Use gh with --body-file ./tmp_body.md or curl with -d @./tmp_body.md
+3. Delete the temp file: rm ./tmp_body.md
 Never embed long text directly in bash commands.
 `, p.IssueID, p.BaseBranch)
 
