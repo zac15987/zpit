@@ -181,6 +181,7 @@ max_per_project = 5
 # tracker = "my-github"
 # repo = "owner/repo"
 # base_branch = "dev"
+# channel_enabled = false  # enable cross-agent channel communication
 # tags = ["go"]
 #
 # [projects.path]
