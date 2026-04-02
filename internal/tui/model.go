@@ -1964,6 +1964,7 @@ var zpitIgnoreRules = []string{
 	".claude/docs/",
 	".claude/hooks/",
 	".claude/settings.local.json",
+	".mcp.json",
 }
 
 // ensureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
