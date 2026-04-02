@@ -674,12 +674,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, ls := range m.state.loops {
 			ls.Active = false
 		}
+		// Capture channel subscriptions for cleanup outside lock.
+		capturedSubs := make(map[string]<-chan broker.Event, len(m.state.channelSubs))
+		for pid, ch := range m.state.channelSubs {
+			capturedSubs[pid] = ch
+			delete(m.state.channelSubs, pid)
+		}
 		// Capture and nil-out broker reference under lock to prevent data race.
 		brokerToClose := m.state.broker
 		m.state.broker = nil
 		m.state.Unlock()
-		// Close broker outside lock (Close is thread-safe).
+		// Unsubscribe all channel listeners so SSE handlers return immediately.
 		if brokerToClose != nil {
+			for pid, ch := range capturedSubs {
+				brokerToClose.Events().Unsubscribe(pid, ch)
+			}
 			brokerToClose.Close()
 		}
 		m.state.Unsubscribe(m.subscriberID)
