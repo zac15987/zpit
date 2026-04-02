@@ -1812,17 +1812,16 @@ func (m *Model) showDeployConfirm() {
 		),
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAndLaunchClarifier()
+		return m.deployAndLaunchAgent("clarifier", injectLangInstruction(m.state.clarifierMD))
 	}
 }
 
-// deployAndLaunchClarifier deploys clarifier.md to the project and launches it.
+// deployAndLaunchAgent deploys the named agent to the project and launches it.
 // If the broker is available (channel_enabled), writes .mcp.json to the project root
 // with ZPIT_ISSUE_ID = "0" (lobby) so the manual agent can use channel communication.
-func (m Model) deployAndLaunchClarifier() tea.Cmd {
+func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	clarifierMD := injectLangInstruction(m.state.clarifierMD)
 	cfg := m.state.cfg.Terminal
 	logger := m.state.logger
 
@@ -1853,7 +1852,7 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		if err := os.WriteFile(filepath.Join(agentDir, "clarifier.md"), clarifierMD, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(agentDir, agentName+".md"), agentMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
 		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
@@ -1861,14 +1860,14 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
 		if channelEnabled && brokerAddr != "" {
 			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin); err != nil {
-				logger.Printf("clarifier: failed to write .mcp.json for project=%s: %v", project.ID, err)
+				logger.Printf("%s: failed to write .mcp.json for project=%s: %v", agentName, project.ID, err)
 			} else {
-				logger.Printf("clarifier: wrote .mcp.json to %s for project=%s", projectPath, project.ID)
+				logger.Printf("%s: wrote .mcp.json to %s for project=%s", agentName, projectPath, project.ID)
 			}
 		}
 
 		// Launch
-		args := []string{"--agent", "clarifier"}
+		args := []string{"--agent", agentName}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -2213,7 +2212,7 @@ func (m *Model) showReviewerDeployConfirm() {
 		),
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAndLaunchReviewer()
+		return m.deployAndLaunchAgent("reviewer", injectLangInstruction(m.state.reviewerMD))
 	}
 }
 
@@ -2280,65 +2279,6 @@ func undeployFiles(projectPath string) int {
 	return removed
 }
 
-// deployAndLaunchReviewer deploys reviewer.md to the project and launches it.
-func (m Model) deployAndLaunchReviewer() tea.Cmd {
-	project := m.state.projects[m.cursor]
-	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	reviewerMD := injectLangInstruction(m.state.reviewerMD)
-	cfg := m.state.cfg.Terminal
-	agentGuidelines := m.state.agentGuidelinesMD
-	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
-	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
-	var trackerDocContent string
-	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
-		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
-	}
-	// Capture broker info for .mcp.json (read-only after init).
-	channelEnabled := project.ChannelEnabled
-	var brokerAddr string
-	if channelEnabled && m.state.broker != nil {
-		brokerAddr = m.state.broker.Addr()
-	}
-	zpitBin := m.state.cfg.ZpitBin
-	logger := m.state.logger
-
-	return func() tea.Msg {
-		// Deploy hooks
-		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
-		}
-
-		agentDir := filepath.Join(projectPath, ".claude", "agents")
-		if err := os.MkdirAll(agentDir, 0o755); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
-		}
-		if err := os.WriteFile(filepath.Join(agentDir, "reviewer.md"), reviewerMD, 0o644); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
-		}
-		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
-
-		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
-		if channelEnabled && brokerAddr != "" {
-			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin); err != nil {
-				logger.Printf("reviewer: failed to write .mcp.json for project=%s: %v", project.ID, err)
-			} else {
-				logger.Printf("reviewer: wrote .mcp.json to %s for project=%s", projectPath, project.ID)
-			}
-		}
-
-		args := []string{"--agent", "reviewer"}
-		if channelEnabled {
-			args = append(args, "--channel-enabled")
-		}
-		result, err := terminal.LaunchClaude(project, cfg, args...)
-		return LaunchResultMsg{
-			ProjectID: project.ID,
-			Result:    result,
-			Err:       err,
-		}
-	}
-}
 
 // injectLangInstruction prepends the locale response instruction after YAML frontmatter.
 func injectLangInstruction(md []byte) []byte {
