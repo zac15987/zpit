@@ -453,59 +453,62 @@ func TestServer_SSE_ChannelNotification(t *testing.T) {
 
 func TestServer_IsSelfEcho(t *testing.T) {
 	srv := &Server{
-		config: ServerConfig{IssueID: "42"},
+		config: ServerConfig{IssueID: "42", InstanceID: "inst-aaa"},
 		logger: log.New(io.Discard, "", 0),
 	}
 
 	tests := []struct {
-		name      string
-		eventType string
-		payload   string
-		want      bool
+		name    string
+		payload string
+		want    bool
 	}{
 		{
-			name:      "self artifact",
-			eventType: "artifact",
-			payload:   `{"issue_id":"42","type":"interface","content":"type Foo struct{}"}`,
-			want:      true,
+			name:    "self artifact",
+			payload: `{"issue_id":"42","type":"interface","content":"type Foo struct{}","sender_id":"inst-aaa"}`,
+			want:    true,
 		},
 		{
-			name:      "self message",
-			eventType: "message",
-			payload:   `{"from":"42","to":"99","content":"hello"}`,
-			want:      true,
+			name:    "self message",
+			payload: `{"from":"42","to":"99","content":"hello","sender_id":"inst-aaa"}`,
+			want:    true,
 		},
 		{
-			name:      "other artifact",
-			eventType: "artifact",
-			payload:   `{"issue_id":"99","type":"schema","content":"CREATE TABLE ..."}`,
-			want:      false,
+			name:    "other artifact",
+			payload: `{"issue_id":"99","type":"schema","content":"CREATE TABLE ...","sender_id":"inst-bbb"}`,
+			want:    false,
 		},
 		{
-			name:      "other message to self",
-			eventType: "message",
-			payload:   `{"from":"99","to":"42","content":"info for you"}`,
-			want:      false,
+			name:    "other message to self",
+			payload: `{"from":"99","to":"42","content":"info for you","sender_id":"inst-bbb"}`,
+			want:    false,
 		},
 		{
-			name:      "unknown event type",
-			eventType: "unknown",
-			payload:   `{"issue_id":"42"}`,
-			want:      false,
+			name:    "same issue different instance",
+			payload: `{"from":"42","to":"42","content":"cross-agent","sender_id":"inst-bbb"}`,
+			want:    false,
 		},
 		{
-			name:      "malformed payload",
-			eventType: "artifact",
-			payload:   `not json`,
-			want:      false,
+			name:    "matching sender_id only",
+			payload: `{"sender_id":"inst-aaa"}`,
+			want:    true,
+		},
+		{
+			name:    "no sender_id (legacy)",
+			payload: `{"issue_id":"42","type":"interface","content":"old"}`,
+			want:    false,
+		},
+		{
+			name:    "malformed payload",
+			payload: `not json`,
+			want:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := srv.isSelfEcho(tt.eventType, json.RawMessage(tt.payload))
+			got := srv.isSelfEcho(json.RawMessage(tt.payload))
 			if got != tt.want {
-				t.Errorf("isSelfEcho(%q, %s) = %v, want %v", tt.eventType, tt.payload, got, tt.want)
+				t.Errorf("isSelfEcho(%s) = %v, want %v", tt.payload, got, tt.want)
 			}
 		})
 	}
@@ -520,9 +523,10 @@ func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
 	defer b.Close()
 
 	cfg := ServerConfig{
-		BrokerURL: "http://" + b.Addr(),
-		ProjectID: "test-proj",
-		IssueID:   "42",
+		BrokerURL:  "http://" + b.Addr(),
+		ProjectID:  "test-proj",
+		IssueID:    "42",
+		InstanceID: "inst-self",
 	}
 
 	pr, pw := io.Pipe()
@@ -539,16 +543,16 @@ func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
 	// Give SSE time to connect.
 	time.Sleep(200 * time.Millisecond)
 
-	// (a) Post self artifact (issue_id=42) — should be skipped.
-	selfArtifact := strings.NewReader(`{"type":"interface","content":"type Foo struct{}"}`)
+	// (a) Post self artifact (sender_id matches) — should be skipped.
+	selfArtifact := strings.NewReader(`{"type":"interface","content":"type Foo struct{}","sender_id":"inst-self"}`)
 	resp, err := srv.client.Post(cfg.BrokerURL+"/api/artifacts/test-proj/42", "application/json", selfArtifact)
 	if err != nil {
 		t.Fatalf("POST self artifact: %v", err)
 	}
 	resp.Body.Close()
 
-	// (b) Post self message (from=42) — should be skipped.
-	selfMsg := strings.NewReader(`{"from":"42","content":"self talk"}`)
+	// (b) Post self message (sender_id matches) — should be skipped.
+	selfMsg := strings.NewReader(`{"from":"42","content":"self talk","sender_id":"inst-self"}`)
 	resp, err = srv.client.Post(cfg.BrokerURL+"/api/messages/test-proj/99", "application/json", selfMsg)
 	if err != nil {
 		t.Fatalf("POST self message: %v", err)
@@ -558,8 +562,8 @@ func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
 	// Brief pause to let SSE process the self-echo events.
 	time.Sleep(200 * time.Millisecond)
 
-	// (c) Post other agent's artifact (issue_id=99) — should produce notification.
-	otherArtifact := strings.NewReader(`{"type":"schema","content":"CREATE TABLE bar"}`)
+	// (c) Post other agent's artifact (different sender_id) — should produce notification.
+	otherArtifact := strings.NewReader(`{"type":"schema","content":"CREATE TABLE bar","sender_id":"inst-other"}`)
 	resp, err = srv.client.Post(cfg.BrokerURL+"/api/artifacts/test-proj/99", "application/json", otherArtifact)
 	if err != nil {
 		t.Fatalf("POST other artifact: %v", err)
@@ -589,15 +593,16 @@ func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
 
 	// Verify self-echo events were logged as skipped.
 	logOutput := logBuf.String()
-	if !strings.Contains(logOutput, "mcp: SSE skip self-echo type=artifact issue=42") {
+	if !strings.Contains(logOutput, "mcp: SSE skip self-echo type=artifact instance=inst-self") {
 		t.Errorf("expected self-echo artifact skip log, got: %s", logOutput)
 	}
-	if !strings.Contains(logOutput, "mcp: SSE skip self-echo type=message issue=42") {
+	if !strings.Contains(logOutput, "mcp: SSE skip self-echo type=message instance=inst-self") {
 		t.Errorf("expected self-echo message skip log, got: %s", logOutput)
 	}
 
 	pw.Close()
 	stdoutPw.Close()
+	_ = done
 }
 
 func TestServer_SSE_OtherMessageToSelf(t *testing.T) {
@@ -609,9 +614,10 @@ func TestServer_SSE_OtherMessageToSelf(t *testing.T) {
 	defer b.Close()
 
 	cfg := ServerConfig{
-		BrokerURL: "http://" + b.Addr(),
-		ProjectID: "test-proj",
-		IssueID:   "42",
+		BrokerURL:  "http://" + b.Addr(),
+		ProjectID:  "test-proj",
+		IssueID:    "42",
+		InstanceID: "inst-recv",
 	}
 
 	pr, pw := io.Pipe()
@@ -625,8 +631,8 @@ func TestServer_SSE_OtherMessageToSelf(t *testing.T) {
 	// Give SSE time to connect.
 	time.Sleep(200 * time.Millisecond)
 
-	// (d) Post message from other agent (from=99) TO self (to=42) — should produce notification.
-	otherMsg := strings.NewReader(`{"from":"99","content":"info for you"}`)
+	// Post message from other agent (from=99) TO self (to=42) — should produce notification.
+	otherMsg := strings.NewReader(`{"from":"99","content":"info for you","sender_id":"inst-sender"}`)
 	resp, err := srv.client.Post(cfg.BrokerURL+"/api/messages/test-proj/42", "application/json", otherMsg)
 	if err != nil {
 		t.Fatalf("POST other message to self: %v", err)
@@ -651,6 +657,66 @@ func TestServer_SSE_OtherMessageToSelf(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for other-to-self message notification")
+	}
+
+	pw.Close()
+	stdoutPw.Close()
+	_ = done
+}
+
+// TestServer_SSE_SameIssueDifferentInstance verifies that two agents sharing the same
+// IssueID but with different InstanceIDs can receive each other's messages.
+// This is the specific bug scenario: two manually launched clarifiers both get IssueID="0".
+func TestServer_SSE_SameIssueDifferentInstance(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	b, err := broker.New(logger, 0)
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	defer b.Close()
+
+	// Agent 2 listens — same IssueID as sender, different InstanceID.
+	cfg := ServerConfig{
+		BrokerURL:  "http://" + b.Addr(),
+		ProjectID:  "test-proj",
+		IssueID:    "0",
+		InstanceID: "inst-agent2",
+	}
+
+	pr, pw := io.Pipe()
+	stdoutPr, stdoutPw := io.Pipe()
+	srv := NewServer(cfg, log.New(io.Discard, "", 0), pr, stdoutPw)
+
+	done := make(chan error, 1)
+	go func() { done <- srv.Run() }()
+	time.Sleep(200 * time.Millisecond)
+
+	// Agent 1 sends a message (same IssueID="0", different sender_id).
+	msg := strings.NewReader(`{"from":"0","content":"hello from agent1","sender_id":"inst-agent1"}`)
+	resp, err := srv.client.Post(cfg.BrokerURL+"/api/messages/test-proj/0", "application/json", msg)
+	if err != nil {
+		t.Fatalf("POST cross-agent message: %v", err)
+	}
+	resp.Body.Close()
+
+	// Agent 2 should receive the notification (not filtered as self-echo).
+	readDone := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := stdoutPr.Read(buf)
+		readDone <- string(buf[:n])
+	}()
+
+	select {
+	case output := <-readDone:
+		if !strings.Contains(output, "notifications/claude/channel") {
+			t.Errorf("expected channel notification, got: %s", output)
+		}
+		if !strings.Contains(output, "hello from agent1") {
+			t.Errorf("expected cross-agent message content, got: %s", output)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout: agent2 did not receive message from agent1 with same IssueID")
 	}
 
 	pw.Close()

@@ -91,8 +91,9 @@ func (b *Broker) Close() error {
 
 // postArtifactRequest is the JSON body for POST /api/artifacts/{project}/{issue_id}.
 type postArtifactRequest struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
+	Type     string `json:"type"`
+	Content  string `json:"content"`
+	SenderID string `json:"sender_id"`
 }
 
 func (b *Broker) handlePostArtifact(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +112,7 @@ func (b *Broker) handlePostArtifact(w http.ResponseWriter, r *http.Request) {
 		IssueID:   issueID,
 		Type:      req.Type,
 		Content:   req.Content,
+		SenderID:  req.SenderID,
 		Timestamp: time.Now(),
 	}
 
@@ -148,8 +150,9 @@ func (b *Broker) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 
 // postMessageRequest is the JSON body for POST /api/messages/{project}/{to}.
 type postMessageRequest struct {
-	From    string `json:"from"`
-	Content string `json:"content"`
+	From     string `json:"from"`
+	Content  string `json:"content"`
+	SenderID string `json:"sender_id"`
 }
 
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +171,7 @@ func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		From:      req.From,
 		To:        to,
 		Content:   req.Content,
+		SenderID:  req.SenderID,
 		Timestamp: time.Now(),
 	}
 

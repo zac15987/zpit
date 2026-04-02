@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	crypto_rand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,9 +18,10 @@ import (
 
 // ServerConfig holds the configuration for a Channel MCP stdio server.
 type ServerConfig struct {
-	BrokerURL string // e.g. "http://127.0.0.1:54321"
-	ProjectID string // project identifier
-	IssueID   string // this agent's issue ID
+	BrokerURL  string // e.g. "http://127.0.0.1:54321"
+	ProjectID  string // project identifier
+	IssueID    string // this agent's issue ID
+	InstanceID string // unique per-process ID for self-echo filtering
 }
 
 // ReadConfigFromEnv reads server configuration from environment variables.
@@ -94,10 +96,19 @@ type Server struct {
 	sseCancel context.CancelFunc // cancels the SSE listener goroutine
 }
 
+// instanceIDLen is the number of random bytes used to generate a unique instance ID.
+const instanceIDLen = 8
+
 // NewServer creates a new MCP server with the given configuration and I/O streams.
+// If cfg.InstanceID is empty, a random one is generated for self-echo filtering.
 func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.Writer) *Server {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+	if cfg.InstanceID == "" {
+		b := make([]byte, instanceIDLen)
+		crypto_rand.Read(b)
+		cfg.InstanceID = fmt.Sprintf("%x", b)
 	}
 	return &Server{
 		config: cfg,
@@ -113,7 +124,7 @@ func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.
 // This method blocks until stdin is closed.
 func (s *Server) Run() error {
 	s.logger.Println("mcp: server starting")
-	s.logger.Printf("mcp: broker=%s project=%s issue=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID)
+	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID)
 
 	// Start SSE listener in background with cancellable context.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -267,7 +278,7 @@ func (s *Server) callPublishArtifact(id json.RawMessage, args json.RawMessage) {
 	}
 
 	url := fmt.Sprintf("%s/api/artifacts/%s/%s", s.config.BrokerURL, s.config.ProjectID, a.IssueID)
-	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content})
+	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content, "sender_id": s.config.InstanceID})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -327,7 +338,7 @@ func (s *Server) callSendMessage(id json.RawMessage, args json.RawMessage) {
 	}
 
 	url := fmt.Sprintf("%s/api/messages/%s/%s", s.config.BrokerURL, s.config.ProjectID, a.ToIssueID)
-	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content})
+	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content, "sender_id": s.config.InstanceID})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -417,8 +428,8 @@ func (s *Server) consumeSSE(ctx context.Context, url string) error {
 		}
 
 		// Skip events that originated from this agent to avoid self-echo.
-		if s.isSelfEcho(event.Type, event.Payload) {
-			s.logger.Printf("mcp: SSE skip self-echo type=%s issue=%s", event.Type, s.config.IssueID)
+		if s.isSelfEcho(event.Payload) {
+			s.logger.Printf("mcp: SSE skip self-echo type=%s instance=%s", event.Type, s.config.InstanceID)
 			continue
 		}
 
@@ -434,31 +445,17 @@ func (s *Server) consumeSSE(ctx context.Context, url string) error {
 	return scanner.Err()
 }
 
-// isSelfEcho checks whether an SSE event originated from this agent.
-// Returns true when:
-//   - eventType is "artifact" and the payload's issue_id matches this server's IssueID
-//   - eventType is "message" and the payload's from matches this server's IssueID
-func (s *Server) isSelfEcho(eventType string, payload json.RawMessage) bool {
-	switch eventType {
-	case "artifact":
-		var a struct {
-			IssueID string `json:"issue_id"`
-		}
-		if err := json.Unmarshal(payload, &a); err != nil {
-			return false
-		}
-		return a.IssueID == s.config.IssueID
-	case "message":
-		var m struct {
-			From string `json:"from"`
-		}
-		if err := json.Unmarshal(payload, &m); err != nil {
-			return false
-		}
-		return m.From == s.config.IssueID
-	default:
+// isSelfEcho checks whether an SSE event originated from this server instance.
+// It compares the payload's sender_id against this server's InstanceID.
+// Events without a sender_id (e.g. from older clients) are never treated as self-echo.
+func (s *Server) isSelfEcho(payload json.RawMessage) bool {
+	var p struct {
+		SenderID string `json:"sender_id"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil || p.SenderID == "" {
 		return false
 	}
+	return p.SenderID == s.config.InstanceID
 }
 
 // --- I/O helpers ---

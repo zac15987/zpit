@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -30,6 +31,10 @@ import (
 	"github.com/zac15987/zpit/internal/watcher"
 	"github.com/zac15987/zpit/internal/worktree"
 )
+
+// errChannelClosed is a sentinel error returned by channelReadNextCmd when the
+// EventBus channel is closed (normal shutdown after Unsubscribe).
+var errChannelClosed = errors.New("channel closed")
 
 const (
 	statusDisplayDuration      = 5 * time.Second
@@ -608,7 +613,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nextCmd
 
 	case ChannelSubscribedMsg:
-		if msg.Err != nil {
+		if msg.Err != nil && !errors.Is(msg.Err, errChannelClosed) {
 			m.state.logger.Printf("channel: subscribe error project=%s err=%v", msg.ProjectID, msg.Err)
 		}
 		return m, nil
@@ -2373,7 +2378,7 @@ func channelReadNextCmd(projectID string, ch <-chan broker.Event, logger *log.Lo
 		event, ok := <-ch
 		if !ok {
 			logger.Printf("channel: EventBus channel closed for project=%s", projectID)
-			return ChannelSubscribedMsg{ProjectID: projectID, Err: fmt.Errorf("channel closed")}
+			return ChannelSubscribedMsg{ProjectID: projectID, Err: errChannelClosed}
 		}
 		return ChannelEventMsg{ProjectID: projectID, Event: event}
 	}
