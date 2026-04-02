@@ -771,18 +771,12 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Clean up channel subscription under lock.
 			subCh := m.state.channelSubs[p.ID]
 			delete(m.state.channelSubs, p.ID)
-			// Capture and nil-out broker reference under lock.
-			brokerToClose := m.state.broker
-			m.state.broker = nil
 			m.state.NotifyAll()
 			m.state.Unlock()
-			// Unsubscribe and close broker outside lock (both are thread-safe).
-			if brokerToClose != nil {
-				if subCh != nil {
-					brokerToClose.Events().Unsubscribe(p.ID, subCh)
-				}
-				m.state.logger.Printf("loop: closing broker for project=%s", p.ID)
-				brokerToClose.Close()
+			// Unsubscribe channel outside lock (thread-safe).
+			// Broker lifecycle is tied to the Zpit process, not individual loops.
+			if subCh != nil && m.state.broker != nil {
+				m.state.broker.Events().Unsubscribe(p.ID, subCh)
 			}
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil
@@ -1807,11 +1801,14 @@ func (m *Model) showDeployConfirm() {
 }
 
 // deployAndLaunchClarifier deploys clarifier.md to the project and launches it.
+// If the broker is available (channel_enabled), writes .mcp.json to the project root
+// with ZPIT_ISSUE_ID = "0" (lobby) so the manual agent can use channel communication.
 func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	clarifierMD := injectLangInstruction(m.state.clarifierMD)
 	cfg := m.state.cfg.Terminal
+	logger := m.state.logger
 
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
@@ -1821,6 +1818,13 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	}
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
 
 	return func() tea.Msg {
 		// Deploy hooks
@@ -1837,6 +1841,15 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
 		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
+
+		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin); err != nil {
+				logger.Printf("clarifier: failed to write .mcp.json for project=%s: %v", project.ID, err)
+			} else {
+				logger.Printf("clarifier: wrote .mcp.json to %s for project=%s", projectPath, project.ID)
+			}
+		}
 
 		// Launch
 		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
@@ -2039,18 +2052,6 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	case PendingLoop:
 		m.pendingOp = nil
 		project := m.state.projects[op.ProjectIndex]
-
-		// Start broker if channel_enabled for this project.
-		if project.ChannelEnabled && m.state.broker == nil {
-			b, err := broker.New(m.state.logger)
-			if err != nil {
-				m.state.logger.Printf("loop: broker start failed for %s: %v", project.ID, err)
-				m.setStatus(fmt.Sprintf("Broker start failed: %v", err))
-			} else {
-				m.state.broker = b
-				m.state.logger.Printf("loop: broker started on %s for project=%s", b.Addr(), project.ID)
-			}
-		}
 
 		m.state.Lock()
 		ls := &loop.LoopState{

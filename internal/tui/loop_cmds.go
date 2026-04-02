@@ -204,6 +204,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	if channelEnabled && m.state.broker != nil {
 		brokerAddr = m.state.broker.Addr()
 	}
+	zpitBin := m.state.cfg.ZpitBin
 	logger := m.state.logger
 
 	return func() tea.Msg {
@@ -224,7 +225,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 
 		// Write .mcp.json for channel communication if enabled.
 		if channelEnabled && brokerAddr != "" {
-			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID); err != nil {
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin); err != nil {
 				logger.Printf("loop: failed to write .mcp.json for issue #%s: %v", issueID, err)
 			} else {
 				logger.Printf("loop: wrote .mcp.json to %s for issue #%s", wtPath, issueID)
@@ -240,12 +241,17 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	}
 }
 
-// writeMCPConfig writes a .mcp.json file to the worktree root, configuring
+// writeMCPConfig writes a .mcp.json file to the target directory, configuring
 // the zpit-channel MCP server to connect to the broker.
-func writeMCPConfig(wtPath, brokerAddr, projectID, issueID string) error {
-	zpitBin, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("get executable path: %w", err)
+// zpitBinOverride is used as the executable path if non-empty; otherwise falls back to os.Executable().
+func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride string) error {
+	zpitBin := zpitBinOverride
+	if zpitBin == "" {
+		var err error
+		zpitBin, err = os.Executable()
+		if err != nil {
+			return fmt.Errorf("get executable path: %w", err)
+		}
 	}
 
 	// Build the .mcp.json structure.
@@ -268,7 +274,7 @@ func writeMCPConfig(wtPath, brokerAddr, projectID, issueID string) error {
 		return fmt.Errorf("marshal .mcp.json: %w", err)
 	}
 
-	return os.WriteFile(filepath.Join(wtPath, ".mcp.json"), data, 0o644)
+	return os.WriteFile(filepath.Join(targetDir, ".mcp.json"), data, 0o644)
 }
 
 // loopWriteAgentCmd fetches the issue, parses spec, builds prompt, writes temp agent file.
