@@ -595,8 +595,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.AppendChannelEvent(msg.ProjectID, msg.Event)
 		m.state.logger.Printf("channel: event received project=%s type=%s", msg.ProjectID, msg.Event.Type)
 
-		// Auto-scroll: if viewing this project's channel and at bottom, follow new content.
-		autoScroll := m.currentView == ViewChannel && m.channelProjectID == msg.ProjectID && m.viewport.AtBottom()
+		// Auto-scroll: if viewing channel and at bottom, follow new content (any project).
+		autoScroll := m.currentView == ViewChannel && m.viewport.AtBottom()
 
 		// Re-issue read cmd for the next event.
 		m.state.RLock()

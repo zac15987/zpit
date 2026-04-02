@@ -62,29 +62,76 @@ func (m Model) renderChannelScrollable() string {
 	}
 	if p != nil {
 		for _, lp := range p.ChannelListen {
+			if lp == "_global" {
+				continue // _global events shown in the global section below
+			}
 			for _, ev := range m.state.channelEvents[lp] {
 				all = append(all, taggedEvent{source: lp, event: ev})
 			}
 		}
 	}
 
-	if len(all) == 0 {
-		b.WriteString("  " + detailStyle.Render(locale.T(locale.KeyChannelNoActivity)) + "\n")
-		return b.String()
+	writeTimeline(&b, all, locale.T(locale.KeyChannelNoActivity))
+
+	b.WriteString("\n")
+	b.WriteString(m.renderGlobalChannel())
+
+	return b.String()
+}
+
+// renderGlobalChannel renders events from the _global channel and any projects
+// not already shown in the project-specific section above.
+func (m Model) renderGlobalChannel() string {
+	var b strings.Builder
+	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyChannelGlobalTitle)))
+	b.WriteString("\n")
+	b.WriteString("  " + strings.Repeat(boxHoriz, 60) + "\n\n")
+
+	// Build set of already-displayed project keys to skip.
+	// _global is never added — it always belongs in this section.
+	shown := map[string]bool{m.channelProjectID: true}
+	if p := m.findProject(m.channelProjectID); p != nil {
+		for _, lp := range p.ChannelListen {
+			if lp == "_global" {
+				continue
+			}
+			shown[lp] = true
+		}
 	}
 
-	// Sort by timestamp for chronological display.
-	sort.Slice(all, func(i, j int) bool {
-		return extractEventTimestamp(all[i].event).Before(extractEventTimestamp(all[j].event))
+	// Collect events from _global and any other non-shown projects.
+	var all []taggedEvent
+	for projectID, events := range m.state.channelEvents {
+		if shown[projectID] {
+			continue
+		}
+		name := m.projectName(projectID)
+		for _, ev := range events {
+			all = append(all, taggedEvent{source: name, event: ev})
+		}
+	}
+
+	writeTimeline(&b, all, locale.T(locale.KeyChannelGlobalNoEvents))
+	return b.String()
+}
+
+// writeTimeline sorts tagged events by timestamp and writes the formatted timeline to b.
+// If events is empty, writes emptyMsg instead.
+func writeTimeline(b *strings.Builder, events []taggedEvent, emptyMsg string) {
+	if len(events) == 0 {
+		b.WriteString("  " + detailStyle.Render(emptyMsg) + "\n")
+		return
+	}
+
+	sort.Slice(events, func(i, j int) bool {
+		return extractEventTimestamp(events[i].event).Before(extractEventTimestamp(events[j].event))
 	})
 
-	for _, te := range all {
+	for _, te := range events {
 		b.WriteString("  ")
 		b.WriteString(formatChannelEvent(te.event, te.source))
 		b.WriteString("\n")
 	}
-
-	return b.String()
 }
 
 // renderChannelFooter returns the fixed footer for the channel view.

@@ -261,9 +261,17 @@ func (m Model) renderActiveTerminals() string {
 			))
 		}
 
-		// Channel event counts (artifact/message) for this project.
-		if events := m.state.channelEvents[baseProjectID(projectID)]; len(events) > 0 {
-			artCount, msgCount := countAllChannelEvents(events)
+		// Channel event counts (own + listen projects) for this project.
+		pid := baseProjectID(projectID)
+		var allEvents []broker.Event
+		allEvents = append(allEvents, m.state.channelEvents[pid]...)
+		if proj := m.findProject(pid); proj != nil {
+			for _, lk := range proj.ChannelListen {
+				allEvents = append(allEvents, m.state.channelEvents[lk]...)
+			}
+		}
+		if len(allEvents) > 0 {
+			artCount, msgCount := countAllChannelEvents(allEvents)
 			if artCount > 0 || msgCount > 0 {
 				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
 			}

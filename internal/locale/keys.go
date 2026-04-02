@@ -84,11 +84,13 @@ const (
 	KeyLoopSlotHelp   Key = "loop_slot_help"
 
 	// Channel view
-	KeyChannelTitle      Key = "channel_title"
-	KeyChannelNoActivity Key = "channel_no_activity"
-	KeyChannelDisabled   Key = "channel_disabled"
-	KeyChannelScroll     Key = "channel_scroll"
-	KeyChannelBack       Key = "channel_back"
+	KeyChannelTitle          Key = "channel_title"
+	KeyChannelNoActivity     Key = "channel_no_activity"
+	KeyChannelDisabled       Key = "channel_disabled"
+	KeyChannelScroll         Key = "channel_scroll"
+	KeyChannelBack           Key = "channel_back"
+	KeyChannelGlobalTitle    Key = "channel_global_title"
+	KeyChannelGlobalNoEvents Key = "channel_global_no_events"
 
 	// Agent init messages (loop_cmds)
 	KeyInitCoding         Key = "init_coding"

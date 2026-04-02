@@ -90,11 +90,13 @@ var zhTW = map[Key]string{
 	KeyInitRevisionReview: "開始 revision review，專注檢查上次 MUST FIX 項目",
 
 	// Channel view
-	KeyChannelTitle:      "Channel — %s",
-	KeyChannelNoActivity: "尚無 Channel 活動",
-	KeyChannelDisabled:   "此專案未啟用 Channel，請在設定中設定 channel_enabled = true。",
-	KeyChannelScroll:     "捲動",
-	KeyChannelBack:       "返回",
+	KeyChannelTitle:          "Channel — %s",
+	KeyChannelNoActivity:     "尚無 Channel 活動",
+	KeyChannelDisabled:       "此專案未啟用 Channel，請在設定中設定 channel_enabled = true。",
+	KeyChannelScroll:         "捲動",
+	KeyChannelBack:           "返回",
+	KeyChannelGlobalTitle:    "全域 Channel",
+	KeyChannelGlobalNoEvents: "尚無全域 Channel 活動",
 
 	KeyErrConfigTitle:       "設定錯誤",
 	KeyErrDismissHint:       "按 Esc 或 Enter 關閉",
