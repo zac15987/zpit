@@ -197,12 +197,17 @@ func (m Model) renderHotkeys() string {
 	return b.String()
 }
 
-func (m Model) projectName(id string) string {
-	// Strip "#N" suffix used for multi-session tracking keys.
-	lookupID := id
-	if idx := strings.Index(id, "#"); idx != -1 {
-		lookupID = id[:idx]
+// baseProjectID strips the "#N" suffix from a multi-session tracking key,
+// returning the original project ID.
+func baseProjectID(trackingKey string) string {
+	if idx := strings.Index(trackingKey, "#"); idx != -1 {
+		return trackingKey[:idx]
 	}
+	return trackingKey
+}
+
+func (m Model) projectName(id string) string {
+	lookupID := baseProjectID(id)
 	for _, p := range m.state.projects {
 		if p.ID == lookupID {
 			return p.Name
@@ -255,6 +260,15 @@ func (m Model) renderActiveTerminals() string {
 				detailStyle.Render(at.LaunchResult.SwitchHint),
 			))
 		}
+
+		// Channel event counts (artifact/message) for this project.
+		if events := m.state.channelEvents[baseProjectID(projectID)]; len(events) > 0 {
+			artCount, msgCount := countAllChannelEvents(events)
+			if artCount > 0 || msgCount > 0 {
+				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
+			}
+		}
+
 		i++
 	}
 
@@ -392,6 +406,20 @@ func countChannelEvents(events []broker.Event, issueID string) (artifacts, messa
 			if err := json.Unmarshal(ev.Payload, &msg); err == nil && (msg.From == issueID || msg.To == issueID) {
 				messages++
 			}
+		}
+	}
+	return
+}
+
+// countAllChannelEvents counts all artifact and message events regardless of issue ID.
+// Used by Active Terminals which have no per-issue context.
+func countAllChannelEvents(events []broker.Event) (artifacts, messages int) {
+	for _, ev := range events {
+		switch ev.Type {
+		case "artifact":
+			artifacts++
+		case "message":
+			messages++
 		}
 	}
 	return
