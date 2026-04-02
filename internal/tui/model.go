@@ -119,6 +119,9 @@ type Model struct {
 	statusLoading   bool
 	statusError     string
 
+	// Channel view state
+	channelProjectID string
+
 	// Error overlay (dismissible with Esc/Enter)
 	errorOverlay string
 
