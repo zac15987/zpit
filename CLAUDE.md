@@ -34,22 +34,27 @@ docs/architecture/       # Architecture docs (split by topic) — see docs/archi
 scripts/                 # Manual hook deployment fallback (setup-hooks.sh)
 testdata/                # Config fixtures + JSONL session fixtures
 internal/
+├── broker/              # HTTP event broker for cross-agent channel communication
 ├── config/              # Config structs, Load(), defaults, BaseDir(), WriteTemplate()
-├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
 ├── locale/              # i18n: SetLanguage(), T(), ResponseInstruction() — en + zh-TW
 ├── loop/                # Loop state machine types: SlotState enum, Slot, LoopState
-├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
-├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
+├── mcp/                 # MCP stdio server for agent↔broker communication (zpit serve-channel)
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
-├── ssh/                 # Wish SSH server: StartServer(), auth config (pub-key + password)
-├── worktree/            # Worktree Manager, Slugify(), DeployHooks(), settings.json merge
+├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
 ├── prompt/              # Prompt assembly: BuildCodingPrompt, BuildReviewerPrompt, BuildRevisionPrompt
+├── ssh/                 # Wish SSH server: StartServer(), auth config (pub-key + password)
+├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
+├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
+├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
+├── worktree/            # Worktree Manager, Slugify(), DeployHooks(), settings.json merge
 └── tui/                 # Bubble Tea TUI — see "TUI Message Flow" below
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
+    ├── keymap.go        # Key bindings definition (Help, Channel, etc.)
     ├── model.go         # Root Model, Update (key routing + message dispatch), View routing
     ├── msg.go           # All custom tea.Msg types
     ├── loop_cmds.go     # Loop tea.Cmd functions (poll, create worktree, launch, cleanup)
     ├── loop_handler.go  # Loop message handlers (state machine transitions)
+    ├── view_channel.go  # Channel event timeline view ([m] key)
     ├── view_projects.go # Main screen rendering
     ├── view_status.go   # Issue list sub-view
     └── validate.go      # Input validation helpers with RLock
@@ -101,8 +106,9 @@ The TUI monitors Claude Code sessions via JSONL log files:
 ```
 zpit serve
   └─ AppState (one instance)
-       ├─ cfg, env, clients          (read-only after init — no locks needed)
-       ├─ activeTerminals, loops     (mutable — protected by sync.RWMutex)
+       ├─ cfg, env, clients, broker   (read-only after init — no locks needed)
+       ├─ activeTerminals, loops,    (mutable — protected by sync.RWMutex)
+       │  channelEvents, channelSubs
        └─ Subscribe/NotifyAll        (pub/sub — separate sync.Mutex)
             ├─ SSH Client A → Model { state: *AppState, isRemote: true }
             ├─ SSH Client B → Model { state: *AppState, isRemote: true }
@@ -114,6 +120,32 @@ zpit serve
 - Copy-before-closure pattern: cmd closures never hold references to AppState fields; mutable data copied to locals before lock release
 - Action-defer pattern: handlers collect actions under write lock, create cmds after unlock to avoid nested lock acquisition
 - Buffered channel (size 1): coalesces rapid state changes into single notification per subscriber
+
+### Cross-Agent Channel (Broker + MCP)
+
+When `channel_enabled = true` for a project, agents can communicate in real time via a local HTTP broker:
+
+```
+Agent A (Claude Code)          Agent B (Claude Code)
+  └─ MCP stdio server            └─ MCP stdio server
+       ↓ HTTP POST                     ↓ HTTP POST
+     ┌──────────────────────────────────────┐
+     │ Broker (HTTP on 127.0.0.1:broker_port)│
+     │ ├─ /api/artifacts/{project}/{issue}  │
+     │ ├─ /api/messages/{project}/{to}      │
+     │ └─ /api/events/{project} (SSE)       │
+     └──────────────────────────────────────┘
+       ↓ EventBus (in-memory pub/sub)
+     TUI: AppState.channelEvents → ViewChannel ([m] key)
+```
+
+**Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, plus SSE streaming. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Started in `NewAppState()` only if any project has `channel_enabled`.
+
+**MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes three tools: `publish_artifact`, `list_artifacts`, `send_message`. Maintains a background SSE listener that forwards events as MCP notifications, with self-echo filtering. Entry point: `zpit serve-channel` subcommand.
+
+**TUI integration**: Loop start calls `loopChannelSubscribeCmd()` → subscribes to EventBus → `channelReadNextCmd()` blocks on channel → `ChannelEventMsg` appended to `AppState.channelEvents[projectID]` → `ViewChannel` renders timeline.
+
+**Config**: `channel_enabled` (per-project), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation).
 
 ### TrackerClient
 
@@ -175,4 +207,4 @@ See `testdata/config.toml` for a working example and `README.md` for full config
 - **Agent docs**: `docs/agent-guidelines.md` (behavioral rules), `docs/code-construction-principles.md` (quality baseline)
 - **Logging**: Use `m.state.logger` for all state transitions and lifecycle events (not `setStatus`, which is TUI-only). Include identifiers (key, PID, state, issue ID, role, round). In goroutine closures, capture `logger := m.state.logger` before use. Do not log ticks or renders.
 - **i18n**: All user-facing strings in TUI views must go through `locale.T()`. Never hardcode display text — define a key in `internal/locale/keys.go`, add translations in `en.go` and `zh_tw.go`.
-- **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `lastLivenessCheck`, `lastPermissionCheck`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.
+- **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `channelEvents`, `channelSubs`, `lastLivenessCheck`, `lastPermissionCheck`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.
