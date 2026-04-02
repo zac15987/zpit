@@ -416,6 +416,12 @@ func (s *Server) consumeSSE(ctx context.Context, url string) error {
 			continue
 		}
 
+		// Skip events that originated from this agent to avoid self-echo.
+		if s.isSelfEcho(event.Type, event.Payload) {
+			s.logger.Printf("mcp: SSE skip self-echo type=%s issue=%s", event.Type, s.config.IssueID)
+			continue
+		}
+
 		content := fmt.Sprintf("[%s] %s", event.Type, string(event.Payload))
 		meta := map[string]any{
 			"source":  "zpit-broker",
@@ -426,6 +432,33 @@ func (s *Server) consumeSSE(ctx context.Context, url string) error {
 		s.writeNotification(notification)
 	}
 	return scanner.Err()
+}
+
+// isSelfEcho checks whether an SSE event originated from this agent.
+// Returns true when:
+//   - eventType is "artifact" and the payload's issue_id matches this server's IssueID
+//   - eventType is "message" and the payload's from matches this server's IssueID
+func (s *Server) isSelfEcho(eventType string, payload json.RawMessage) bool {
+	switch eventType {
+	case "artifact":
+		var a struct {
+			IssueID string `json:"issue_id"`
+		}
+		if err := json.Unmarshal(payload, &a); err != nil {
+			return false
+		}
+		return a.IssueID == s.config.IssueID
+	case "message":
+		var m struct {
+			From string `json:"from"`
+		}
+		if err := json.Unmarshal(payload, &m); err != nil {
+			return false
+		}
+		return m.From == s.config.IssueID
+	default:
+		return false
+	}
 }
 
 // --- I/O helpers ---
