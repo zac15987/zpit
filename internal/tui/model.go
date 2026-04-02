@@ -837,9 +837,6 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p == nil {
 			return m, nil
 		}
-		if !p.ChannelEnabled {
-			return m, nil
-		}
 		m.focusedPanel = FocusProjects
 		m.currentView = ViewChannel
 		m.channelProjectID = p.ID

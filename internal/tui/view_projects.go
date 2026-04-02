@@ -177,6 +177,7 @@ func (m Model) renderHotkeys() string {
 		{"o", locale.T(locale.KeyOpenFolder), false},
 		{"p", locale.T(locale.KeyOpenTracker), false},
 		{"u", locale.T(locale.KeyUndeploy), false},
+		{"m", locale.T(locale.KeyChannelComm), false},
 		{"a", locale.T(locale.KeyAddProject), true},
 		{"e", locale.T(locale.KeyEditConfig), false},
 		{"Tab", locale.T(locale.KeyFocusSlot), true},

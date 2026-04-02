@@ -174,4 +174,5 @@ See `testdata/config.toml` for a working example and `README.md` for full config
 - **Hook exit codes**: 0 = allow, 2 = block (stderr fed back to Claude), never use exit 1
 - **Agent docs**: `docs/agent-guidelines.md` (behavioral rules), `docs/code-construction-principles.md` (quality baseline)
 - **Logging**: Use `m.state.logger` for all state transitions and lifecycle events (not `setStatus`, which is TUI-only). Include identifiers (key, PID, state, issue ID, role, round). In goroutine closures, capture `logger := m.state.logger` before use. Do not log ticks or renders.
+- **i18n**: All user-facing strings in TUI views must go through `locale.T()`. Never hardcode display text — define a key in `internal/locale/keys.go`, add translations in `en.go` and `zh_tw.go`.
 - **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `lastLivenessCheck`, `lastPermissionCheck`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.

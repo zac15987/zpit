@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/zac15987/zpit/internal/broker"
+	"github.com/zac15987/zpit/internal/locale"
 )
 
 // viewChannel renders the channel event timeline view.
@@ -37,13 +38,19 @@ func (m Model) renderChannelScrollable() string {
 	var b strings.Builder
 
 	projectName := m.projectName(m.channelProjectID)
-	b.WriteString(sectionTitleStyle.Render(fmt.Sprintf("Channel — %s", projectName)))
+	b.WriteString(sectionTitleStyle.Render(fmt.Sprintf(locale.T(locale.KeyChannelTitle), projectName)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 60) + "\n\n")
 
+	p := m.findProject(m.channelProjectID)
+	if p != nil && !p.ChannelEnabled {
+		b.WriteString("  " + detailStyle.Render(locale.T(locale.KeyChannelDisabled)) + "\n")
+		return b.String()
+	}
+
 	events := m.state.channelEvents[m.channelProjectID]
 	if len(events) == 0 {
-		b.WriteString("  No channel activity yet\n")
+		b.WriteString("  " + detailStyle.Render(locale.T(locale.KeyChannelNoActivity)) + "\n")
 		return b.String()
 	}
 
@@ -60,8 +67,8 @@ func (m Model) renderChannelScrollable() string {
 func (m Model) renderChannelFooter() string {
 	var b strings.Builder
 	hotkeys := []struct{ key, desc string }{
-		{"↑/↓", "scroll"},
-		{"Esc", "back"},
+		{"↑/↓", locale.T(locale.KeyChannelScroll)},
+		{"Esc", locale.T(locale.KeyChannelBack)},
 	}
 	for _, h := range hotkeys {
 		b.WriteString("  ")

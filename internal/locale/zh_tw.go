@@ -19,6 +19,7 @@ var zhTW = map[Key]string{
 	KeyAddProject:     "新增專案",
 	KeyEditConfig:     "編輯設定",
 	KeyUndeploy:       "清除部署檔案",
+	KeyChannelComm:    "Channel 通訊",
 	KeyHelp:           "說明",
 	KeyQuit:           "離開",
 
@@ -87,6 +88,13 @@ var zhTW = map[Key]string{
 	KeyInitRevisionCoding: "讀取 PR review comment，修正問題",
 	KeyInitReview:         "開始 review",
 	KeyInitRevisionReview: "開始 revision review，專注檢查上次 MUST FIX 項目",
+
+	// Channel view
+	KeyChannelTitle:      "Channel — %s",
+	KeyChannelNoActivity: "尚無 Channel 活動",
+	KeyChannelDisabled:   "此專案未啟用 Channel，請在設定中設定 channel_enabled = true。",
+	KeyChannelScroll:     "捲動",
+	KeyChannelBack:       "返回",
 
 	KeyErrConfigTitle:       "設定錯誤",
 	KeyErrDismissHint:       "按 Esc 或 Enter 關閉",

@@ -20,6 +20,7 @@ const (
 	KeyAddProject      Key = "add_project"
 	KeyEditConfig      Key = "edit_config"
 	KeyUndeploy        Key = "undeploy"
+	KeyChannelComm     Key = "channel_comm"
 	KeyHelp            Key = "help"
 	KeyQuit            Key = "quit"
 
@@ -81,6 +82,13 @@ const (
 	KeyCannotLaunch   Key = "cannot_launch"
 	KeyNoWorktreePath Key = "no_worktree_path"
 	KeyLoopSlotHelp   Key = "loop_slot_help"
+
+	// Channel view
+	KeyChannelTitle      Key = "channel_title"
+	KeyChannelNoActivity Key = "channel_no_activity"
+	KeyChannelDisabled   Key = "channel_disabled"
+	KeyChannelScroll     Key = "channel_scroll"
+	KeyChannelBack       Key = "channel_back"
 
 	// Agent init messages (loop_cmds)
 	KeyInitCoding         Key = "init_coding"
