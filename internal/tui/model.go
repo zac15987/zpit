@@ -1164,10 +1164,22 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	m.state.activeTerminals[trackKey] = at
 	// Snapshot tracked PIDs while still holding the lock.
 	excludePIDs := m.trackedPIDs()
+	// Check if channel subscription already exists while holding the lock.
+	_, channelSubscribed := m.state.channelSubs[msg.ProjectID]
 	m.state.NotifyAll()
 	m.state.Unlock()
 
-	return m, m.startWatcherDirCmdWithExcludes(trackKey, workDir, excludePIDs)
+	cmds := []tea.Cmd{m.startWatcherDirCmdWithExcludes(trackKey, workDir, excludePIDs)}
+
+	// Subscribe to broker EventBus if channel_enabled and not already subscribed.
+	if !channelSubscribed {
+		project := m.findProject(msg.ProjectID)
+		if project != nil && project.ChannelEnabled && m.state.broker != nil {
+			cmds = append(cmds, m.channelSubscribeCmd(msg.ProjectID))
+		}
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
@@ -1773,7 +1785,11 @@ func (m Model) launchClarifierCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
+		args := []string{"--agent", "clarifier"}
+		if project.ChannelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -1852,7 +1868,11 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		}
 
 		// Launch
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
+		args := []string{"--agent", "clarifier"}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -2068,7 +2088,7 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 			m.loopPollCmd(project.ID),
 		}
 		if project.ChannelEnabled && m.state.broker != nil {
-			cmds = append(cmds, m.loopChannelSubscribeCmd(project.ID))
+			cmds = append(cmds, m.channelSubscribeCmd(project.ID))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -2166,7 +2186,11 @@ func (m Model) launchReviewerCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
+		args := []string{"--agent", "reviewer"}
+		if project.ChannelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -2270,6 +2294,14 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	}
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		// Deploy hooks
@@ -2286,7 +2318,20 @@ func (m Model) deployAndLaunchReviewer() tea.Cmd {
 		}
 		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
+		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin); err != nil {
+				logger.Printf("reviewer: failed to write .mcp.json for project=%s: %v", project.ID, err)
+			} else {
+				logger.Printf("reviewer: wrote .mcp.json to %s for project=%s", projectPath, project.ID)
+			}
+		}
+
+		args := []string{"--agent", "reviewer"}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -2351,10 +2396,10 @@ func openInBrowser(url string) tea.Cmd {
 	}
 }
 
-// loopChannelSubscribeCmd subscribes to the broker's EventBus for the given project.
+// channelSubscribeCmd subscribes to the broker's EventBus for the given project.
 // Stores the subscription channel in AppState.channelSubs and returns a cmd that
 // reads the first event. Subsequent reads are triggered by channelReadNextCmd.
-func (m Model) loopChannelSubscribeCmd(projectID string) tea.Cmd {
+func (m Model) channelSubscribeCmd(projectID string) tea.Cmd {
 	logger := m.state.logger
 	brokerRef := m.state.broker
 	if brokerRef == nil {
