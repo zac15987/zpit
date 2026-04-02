@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 func newTestBroker(t *testing.T) *Broker {
 	t.Helper()
 	logger := log.New(io.Discard, "", 0)
-	b, err := New(logger)
+	b, err := New(logger, 0) // port 0 = OS-assigned for test isolation
 	if err != nil {
 		t.Fatalf("failed to create broker: %v", err)
 	}
@@ -350,18 +351,74 @@ func TestEventBus_MultipleSubscribers(t *testing.T) {
 func TestBroker_New_LoggerOutput(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
-	b, err := New(logger)
+	b, err := New(logger, 0)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer b.Close()
 
 	output := buf.String()
-	if !strings.Contains(output, "broker: starting") {
-		t.Errorf("expected 'broker: starting' in log, got: %s", output)
+	if !strings.Contains(output, "broker: starting on port") {
+		t.Errorf("expected 'broker: starting on port' in log, got: %s", output)
 	}
 	if !strings.Contains(output, "broker: listening on") {
 		t.Errorf("expected 'broker: listening on' in log, got: %s", output)
+	}
+}
+
+func TestBroker_New_FixedPort(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+
+	// Find a free port to use as fixed port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close() // release so broker can bind
+
+	b, err := New(logger, port)
+	if err != nil {
+		t.Fatalf("New with port %d: %v", port, err)
+	}
+	defer b.Close()
+
+	// Verify the broker is listening on the exact port we specified.
+	expectedSuffix := fmt.Sprintf(":%d", port)
+	if !strings.HasSuffix(b.Addr(), expectedSuffix) {
+		t.Errorf("expected addr ending with %s, got %s", expectedSuffix, b.Addr())
+	}
+
+	// Verify the broker is reachable on the fixed port.
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/artifacts/test-project", port))
+	if err != nil {
+		t.Fatalf("GET on fixed port: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestBroker_New_PortConflict(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+
+	// Occupy a port first.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	// Attempt to create broker on occupied port — should fail.
+	b, err := New(logger, port)
+	if err == nil {
+		b.Close()
+		t.Fatal("expected error when port is occupied, got nil")
+	}
+	if !strings.Contains(err.Error(), "broker listen") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -424,7 +481,7 @@ func TestBroker_SSE_DifferentProjectIsolation(t *testing.T) {
 
 func TestBroker_Close(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
-	b, err := New(logger)
+	b, err := New(logger, 0)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

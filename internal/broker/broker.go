@@ -15,7 +15,7 @@ import (
 
 // Broker is an in-memory HTTP broker for cross-worktree agent communication.
 // It provides REST endpoints for artifacts and messages, plus SSE for real-time events.
-// Binds to 127.0.0.1:0 (dynamic port) to avoid conflicts between multiple Zpit instances.
+// Binds to 127.0.0.1:<port> using the configured broker_port (default 17731).
 type Broker struct {
 	mu        sync.RWMutex
 	artifacts map[string][]Artifact // project → artifacts
@@ -27,17 +27,18 @@ type Broker struct {
 	logger   *log.Logger
 }
 
-// New creates a new Broker, binds to a dynamic port on localhost, and starts serving.
+// New creates a new Broker, binds to the specified port on localhost, and starts serving.
 // The caller must call Close() to stop the broker.
-func New(logger *log.Logger) (*Broker, error) {
+func New(logger *log.Logger, port int) (*Broker, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	logger.Println("broker: starting")
+	logger.Printf("broker: starting on port %d", port)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		logger.Printf("broker: listen failed: %v", err)
+		logger.Printf("broker: listen failed on port %d: %v", port, err)
 		return nil, fmt.Errorf("broker listen: %w", err)
 	}
 
