@@ -17,7 +17,7 @@ import (
 func testServer(t *testing.T) (*Server, *broker.Broker, *io.PipeWriter, *bytes.Buffer) {
 	t.Helper()
 	logger := log.New(io.Discard, "", 0)
-	b, err := broker.New(logger)
+	b, err := broker.New(logger, 0)
 	if err != nil {
 		t.Fatalf("broker: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestReadConfigFromEnv_PartialMissing(t *testing.T) {
 
 func TestServer_SSE_ChannelNotification(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
-	b, err := broker.New(logger)
+	b, err := broker.New(logger, 0)
 	if err != nil {
 		t.Fatalf("broker: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestServer_IsSelfEcho(t *testing.T) {
 
 func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
-	b, err := broker.New(logger)
+	b, err := broker.New(logger, 0)
 	if err != nil {
 		t.Fatalf("broker: %v", err)
 	}
@@ -602,7 +602,7 @@ func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
 
 func TestServer_SSE_OtherMessageToSelf(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
-	b, err := broker.New(logger)
+	b, err := broker.New(logger, 0)
 	if err != nil {
 		t.Fatalf("broker: %v", err)
 	}

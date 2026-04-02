@@ -1,6 +1,13 @@
 # ~/.zpit/config.toml
 language = "zh-TW"
 
+# Cross-agent channel broker port (default 17731).
+broker_port = 17731
+
+# Explicit path to zpit executable for .mcp.json generation.
+# Useful when running via "go run ." where the temp binary path becomes invalid.
+# zpit_bin = "D:/path/to/zpit.exe"
+
 [terminal]
 windows_mode = "new_tab"
 tmux_mode = "new_window"

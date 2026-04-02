@@ -159,6 +159,25 @@ func NewAppState(
 		clients[name] = client
 	}
 
+	// Start broker if at least one project has channel_enabled = true.
+	var b *broker.Broker
+	channelNeeded := false
+	for _, p := range cfg.Projects {
+		if p.ChannelEnabled {
+			channelNeeded = true
+			break
+		}
+	}
+	if channelNeeded {
+		var err error
+		b, err = broker.New(logger, cfg.BrokerPort)
+		if err != nil {
+			logger.Printf("broker: listen failed on port %d: %v", cfg.BrokerPort, err)
+		} else {
+			logger.Printf("broker: started on %s", b.Addr())
+		}
+	}
+
 	return &AppState{
 		cfg:                          cfg,
 		env:                          platform.Detect(),
@@ -169,6 +188,7 @@ func NewAppState(
 		clients:                      clients,
 		loops:                        make(map[string]*loop.LoopState),
 		wtManager:                    worktree.NewManager(cfg.Worktree),
+		broker:                       b, // nil when no project has channel_enabled or listen failed
 		subscribers:                  make(map[int]chan struct{}),
 		channelEvents:                make(map[string][]broker.Event),
 		channelSubs:                  make(map[string]<-chan broker.Event),
