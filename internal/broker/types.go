@@ -88,6 +88,18 @@ func (eb *eventBus) Unsubscribe(project string, ch <-chan Event) {
 	close(wch)
 }
 
+// closeAll closes all subscriber channels so blocked readers unblock immediately.
+// Safe to call before server.Shutdown() — deferred Unsubscribe calls become no-ops.
+func (eb *eventBus) closeAll() {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	for _, wch := range eb.mapping {
+		close(wch)
+	}
+	eb.subs = make(map[string]map[chan Event]struct{})
+	eb.mapping = make(map[<-chan Event]chan Event)
+}
+
 // publish sends an event to all subscribers of the given project.
 // Non-blocking: if a subscriber's buffer is full, the event is dropped for that subscriber.
 func (eb *eventBus) publish(project string, event Event) {

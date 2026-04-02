@@ -86,6 +86,8 @@ func (b *Broker) Events() EventBus {
 // Close gracefully shuts down the broker.
 func (b *Broker) Close() error {
 	b.logger.Println("broker: shutting down")
+	b.listener.Close() // stop accepting new connections
+	b.bus.closeAll()    // unblock all SSE handlers
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return b.server.Shutdown(ctx)
