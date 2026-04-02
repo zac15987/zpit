@@ -3,6 +3,7 @@ package tui
 import (
 	"time"
 
+	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -151,6 +152,20 @@ type LoopLabelPollMsg struct {
 type loopLabelPollTickMsg struct {
 	ProjectID string
 	IssueID   string
+}
+
+// --- Channel event messages ---
+
+// ChannelEventMsg carries a single broker event received from the EventBus subscription.
+type ChannelEventMsg struct {
+	ProjectID string
+	Event     broker.Event
+}
+
+// ChannelSubscribedMsg indicates the result of subscribing to the broker's EventBus.
+type ChannelSubscribedMsg struct {
+	ProjectID string
+	Err       error
 }
 
 // StateRefreshMsg is sent when shared state changes and the UI needs to re-render.

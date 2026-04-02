@@ -15,6 +15,7 @@ type KeyMap struct {
 	Tracker    key.Binding
 	Add        key.Binding
 	EditConfig key.Binding
+	Channel    key.Binding
 	Undeploy   key.Binding
 	Help       key.Binding
 	Quit        key.Binding
@@ -37,6 +38,7 @@ func DefaultKeyMap() KeyMap {
 		Tracker:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "tracker")),
 		Add:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add project")),
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
+		Channel:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "channel")),
 		Undeploy:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undeploy")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),

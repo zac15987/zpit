@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -362,10 +364,36 @@ func (m Model) renderLoopStatus() string {
 					detailStyle.Render(slot.Error.Error()),
 				))
 			}
+
+			// Channel event counts (artifact/message) for this issue.
+			artCount, msgCount := countChannelEvents(m.state.channelEvents[projectID], slot.IssueID)
+			if artCount > 0 || msgCount > 0 {
+				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
+			}
 		}
 	}
 
 	return b.String()
+}
+
+// countChannelEvents counts artifact and message events matching the given issueID.
+// For artifacts, matches on IssueID. For messages, matches on From or To.
+func countChannelEvents(events []broker.Event, issueID string) (artifacts, messages int) {
+	for _, ev := range events {
+		switch ev.Type {
+		case "artifact":
+			var art broker.Artifact
+			if err := json.Unmarshal(ev.Payload, &art); err == nil && art.IssueID == issueID {
+				artifacts++
+			}
+		case "message":
+			var msg broker.Message
+			if err := json.Unmarshal(ev.Payload, &msg); err == nil && (msg.From == issueID || msg.To == issueID) {
+				messages++
+			}
+		}
+	}
+	return
 }
 
 // agentContextPreview returns a prefix and truncated one-line preview for the
