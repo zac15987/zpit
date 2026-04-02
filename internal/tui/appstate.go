@@ -50,6 +50,8 @@ type AppState struct {
 	wtManager *worktree.Manager
 	broker    *broker.Broker // read-only after init per project; nil when channel disabled
 
+	channelEvents map[string][]broker.Event // projectID → events (mutable, protected by mu)
+
 	clarifierMD                  []byte
 	reviewerMD                   []byte
 	agentGuidelinesMD            []byte
@@ -109,6 +111,29 @@ func (s *AppState) NotifyAll() {
 	}
 }
 
+// AppendChannelEvent stores a channel event for the given project and notifies subscribers.
+// Acquires write lock and calls NotifyAll.
+func (s *AppState) AppendChannelEvent(projectID string, event broker.Event) {
+	s.mu.Lock()
+	s.channelEvents[projectID] = append(s.channelEvents[projectID], event)
+	s.NotifyAll()
+	s.mu.Unlock()
+}
+
+// ChannelEvents returns a copy of channel events for the given project.
+// Acquires read lock.
+func (s *AppState) ChannelEvents(projectID string) []broker.Event {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	src := s.channelEvents[projectID]
+	if len(src) == 0 {
+		return nil
+	}
+	cp := make([]broker.Event, len(src))
+	copy(cp, src)
+	return cp
+}
+
 // NewAppState creates and initializes a new AppState. logWriter may be nil (uses io.Discard).
 // Initializes all maps and sets defaults equivalent to the former NewModel logic.
 func NewAppState(
@@ -144,6 +169,7 @@ func NewAppState(
 		loops:                        make(map[string]*loop.LoopState),
 		wtManager:                    worktree.NewManager(cfg.Worktree),
 		subscribers:                  make(map[int]chan struct{}),
+		channelEvents:                make(map[string][]broker.Event),
 		clarifierMD:                  clarifierMD,
 		reviewerMD:                   reviewerMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
