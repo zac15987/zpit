@@ -46,6 +46,7 @@ type View int
 const (
 	ViewProjects View = iota
 	ViewStatus
+	ViewChannel
 )
 
 // FocusedPanel indicates which panel has keyboard focus in ViewProjects.
@@ -294,6 +295,10 @@ func (m *Model) syncViewportContent() {
 		header = m.renderStatusHeader()
 		footer = m.renderStatusFooter()
 		m.viewport.SetContent(m.renderStatusScrollable())
+	case ViewChannel:
+		header = m.renderChannelHeader()
+		footer = m.renderChannelFooter()
+		m.viewport.SetContent(m.renderChannelScrollable())
 	}
 	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
@@ -580,6 +585,34 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loopLabelPollTickMsg:
 		return m, m.loopPollLabelsCmd(msg.ProjectID, msg.IssueID)
 
+	// Channel event messages
+	case ChannelEventMsg:
+		m.state.AppendChannelEvent(msg.ProjectID, msg.Event)
+		m.state.logger.Printf("channel: event received project=%s type=%s", msg.ProjectID, msg.Event.Type)
+
+		// Auto-scroll: if viewing this project's channel and at bottom, follow new content.
+		autoScroll := m.currentView == ViewChannel && m.channelProjectID == msg.ProjectID && m.viewport.AtBottom()
+
+		// Re-issue read cmd for the next event.
+		m.state.RLock()
+		ch, ok := m.state.channelSubs[msg.ProjectID]
+		m.state.RUnlock()
+		var nextCmd tea.Cmd
+		if ok && ch != nil {
+			nextCmd = channelReadNextCmd(msg.ProjectID, ch, m.state.logger)
+		}
+
+		if autoScroll {
+			m.viewport.GotoBottom()
+		}
+		return m, nextCmd
+
+	case ChannelSubscribedMsg:
+		if msg.Err != nil {
+			m.state.logger.Printf("channel: subscribe error project=%s err=%v", msg.ProjectID, msg.Err)
+		}
+		return m, nil
+
 	}
 
 	return m, nil
@@ -595,6 +628,8 @@ func (m Model) View() string {
 		bg = m.viewProjects()
 	case ViewStatus:
 		bg = m.viewStatus()
+	case ViewChannel:
+		bg = m.viewChannel()
 	default:
 		bg = "Unknown view"
 	}
@@ -657,6 +692,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleProjectsKey(msg)
 	case ViewStatus:
 		return m.handleStatusKey(msg)
+	case ViewChannel:
+		return m.handleChannelKey(msg)
 	}
 	return m, nil
 }
@@ -731,13 +768,19 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if ls, ok := m.state.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
 			ls.Slots = make(map[string]*loop.Slot)
+			// Clean up channel subscription under lock.
+			subCh := m.state.channelSubs[p.ID]
+			delete(m.state.channelSubs, p.ID)
 			// Capture and nil-out broker reference under lock.
 			brokerToClose := m.state.broker
 			m.state.broker = nil
 			m.state.NotifyAll()
 			m.state.Unlock()
-			// Close broker outside lock (Close is thread-safe).
+			// Unsubscribe and close broker outside lock (both are thread-safe).
 			if brokerToClose != nil {
+				if subCh != nil {
+					brokerToClose.Events().Unsubscribe(p.ID, subCh)
+				}
 				m.state.logger.Printf("loop: closing broker for project=%s", p.ID)
 				brokerToClose.Close()
 			}
@@ -788,6 +831,20 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusError = ""
 		m.viewport.GotoTop()
 		return m, m.loadIssuesCmd()
+
+	case key.Matches(msg, m.keys.Channel):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !p.ChannelEnabled {
+			return m, nil
+		}
+		m.focusedPanel = FocusProjects
+		m.currentView = ViewChannel
+		m.channelProjectID = p.ID
+		m.viewport.GotoTop()
+		return m, nil
 
 	case key.Matches(msg, m.keys.Add):
 		m.setStatus(locale.T(locale.KeyAddProjectStub))
@@ -857,6 +914,27 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.openIssueURLCmd()
+	}
+
+	return m, nil
+}
+
+func (m Model) handleChannelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.currentView = ViewProjects
+		m.viewport.GotoTop()
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case key.Matches(msg, m.keys.Down):
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
@@ -1986,11 +2064,15 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 		m.state.NotifyAll()
 		m.state.Unlock()
 		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			m.loopCleanupMergedCmd(project.ID),
 			m.loopScanOpenPRsCmd(project.ID),
 			m.loopPollCmd(project.ID),
-		)
+		}
+		if project.ChannelEnabled && m.state.broker != nil {
+			cmds = append(cmds, m.loopChannelSubscribeCmd(project.ID))
+		}
+		return m, tea.Batch(cmds...)
 
 	case PendingConfirmIssue:
 		m.pendingOp = nil
@@ -2271,3 +2353,36 @@ func openInBrowser(url string) tea.Cmd {
 	}
 }
 
+// loopChannelSubscribeCmd subscribes to the broker's EventBus for the given project.
+// Stores the subscription channel in AppState.channelSubs and returns a cmd that
+// reads the first event. Subsequent reads are triggered by channelReadNextCmd.
+func (m Model) loopChannelSubscribeCmd(projectID string) tea.Cmd {
+	logger := m.state.logger
+	brokerRef := m.state.broker
+	if brokerRef == nil {
+		return func() tea.Msg {
+			return ChannelSubscribedMsg{ProjectID: projectID, Err: fmt.Errorf("broker not available")}
+		}
+	}
+	bus := brokerRef.Events()
+	ch := bus.Subscribe(projectID)
+
+	m.state.Lock()
+	m.state.channelSubs[projectID] = ch
+	m.state.Unlock()
+
+	logger.Printf("channel: subscribed to EventBus for project=%s", projectID)
+	return channelReadNextCmd(projectID, ch, logger)
+}
+
+// channelReadNextCmd returns a tea.Cmd that blocks until the next event arrives on ch.
+func channelReadNextCmd(projectID string, ch <-chan broker.Event, logger *log.Logger) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-ch
+		if !ok {
+			logger.Printf("channel: EventBus channel closed for project=%s", projectID)
+			return ChannelSubscribedMsg{ProjectID: projectID, Err: fmt.Errorf("channel closed")}
+		}
+		return ChannelEventMsg{ProjectID: projectID, Event: event}
+	}
+}

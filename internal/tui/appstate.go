@@ -50,7 +50,8 @@ type AppState struct {
 	wtManager *worktree.Manager
 	broker    *broker.Broker // read-only after init per project; nil when channel disabled
 
-	channelEvents map[string][]broker.Event // projectID → events (mutable, protected by mu)
+	channelEvents map[string][]broker.Event   // projectID → events (mutable, protected by mu)
+	channelSubs   map[string]<-chan broker.Event // projectID → subscription channel (mutable, protected by mu)
 
 	clarifierMD                  []byte
 	reviewerMD                   []byte
@@ -170,6 +171,7 @@ func NewAppState(
 		wtManager:                    worktree.NewManager(cfg.Worktree),
 		subscribers:                  make(map[int]chan struct{}),
 		channelEvents:                make(map[string][]broker.Event),
+		channelSubs:                  make(map[string]<-chan broker.Event),
 		clarifierMD:                  clarifierMD,
 		reviewerMD:                   reviewerMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
