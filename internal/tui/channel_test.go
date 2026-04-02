@@ -143,7 +143,7 @@ func TestCountChannelEventsZero(t *testing.T) {
 
 func TestFormatChannelEventArtifact(t *testing.T) {
 	ev := makeArtifactEvent("42", "interface", "type Foo struct{}")
-	result := formatChannelEvent(ev)
+	result := formatChannelEvent(ev, "")
 	if result == "" {
 		t.Error("expected non-empty result")
 	}
@@ -155,7 +155,7 @@ func TestFormatChannelEventArtifact(t *testing.T) {
 
 func TestFormatChannelEventMessage(t *testing.T) {
 	ev := makeMessageEvent("43", "42", "need your interface def")
-	result := formatChannelEvent(ev)
+	result := formatChannelEvent(ev, "")
 	if result == "" {
 		t.Error("expected non-empty result")
 	}

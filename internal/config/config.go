@@ -103,6 +103,7 @@ type ProjectConfig struct {
 	LogLevel       string            `toml:"log_level"`
 	BaseBranch     string            `toml:"base_branch"`
 	ChannelEnabled bool              `toml:"channel_enabled"`
+	ChannelListen  []string          `toml:"channel_listen"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
 }

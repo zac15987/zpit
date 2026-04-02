@@ -200,6 +200,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	hookMode := project.HookMode
 	hookScripts := m.state.hookScripts
 	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
 	var brokerAddr string
 	if channelEnabled && m.state.broker != nil {
 		brokerAddr = m.state.broker.Addr()
@@ -225,7 +226,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 
 		// Write .mcp.json for channel communication if enabled.
 		if channelEnabled && brokerAddr != "" {
-			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin); err != nil {
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin, channelListen); err != nil {
 				logger.Printf("loop: failed to write .mcp.json for issue #%s: %v", issueID, err)
 			} else {
 				logger.Printf("loop: wrote .mcp.json to %s for issue #%s", wtPath, issueID)
@@ -244,7 +245,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 // writeMCPConfig writes a .mcp.json file to the target directory, configuring
 // the zpit-channel MCP server to connect to the broker.
 // zpitBinOverride is used as the executable path if non-empty; otherwise falls back to os.Executable().
-func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride string) error {
+func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride string, listenProjects []string) error {
 	zpitBin := zpitBinOverride
 	if zpitBin == "" {
 		var err error
@@ -260,11 +261,17 @@ func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride s
 			"zpit-channel": map[string]any{
 				"command": zpitBin,
 				"args":    []string{"serve-channel"},
-				"env": map[string]string{
-					"ZPIT_BROKER_URL": "http://" + brokerAddr,
-					"ZPIT_PROJECT_ID": projectID,
-					"ZPIT_ISSUE_ID":   issueID,
-				},
+				"env": func() map[string]string {
+					env := map[string]string{
+						"ZPIT_BROKER_URL": "http://" + brokerAddr,
+						"ZPIT_PROJECT_ID": projectID,
+						"ZPIT_ISSUE_ID":   issueID,
+					}
+					if len(listenProjects) > 0 {
+						env["ZPIT_LISTEN_PROJECTS"] = strings.Join(listenProjects, ",")
+					}
+					return env
+				}(),
 			},
 		},
 	}

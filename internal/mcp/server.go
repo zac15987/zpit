@@ -18,10 +18,11 @@ import (
 
 // ServerConfig holds the configuration for a Channel MCP stdio server.
 type ServerConfig struct {
-	BrokerURL  string // e.g. "http://127.0.0.1:54321"
-	ProjectID  string // project identifier
-	IssueID    string // this agent's issue ID
-	InstanceID string // unique per-process ID for self-echo filtering
+	BrokerURL      string   // e.g. "http://127.0.0.1:54321"
+	ProjectID      string   // project identifier
+	IssueID        string   // this agent's issue ID
+	InstanceID     string   // unique per-process ID for self-echo filtering
+	ListenProjects []string // additional project keys to subscribe SSE (e.g. ["_global", "other-proj"])
 }
 
 // ReadConfigFromEnv reads server configuration from environment variables.
@@ -44,10 +45,14 @@ func ReadConfigFromEnv() (ServerConfig, error) {
 	if len(missing) > 0 {
 		return ServerConfig{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
-	return ServerConfig{BrokerURL: brokerURL, ProjectID: projectID, IssueID: issueID}, nil
+	cfg := ServerConfig{BrokerURL: brokerURL, ProjectID: projectID, IssueID: issueID}
+	if lp := os.Getenv("ZPIT_LISTEN_PROJECTS"); lp != "" {
+		cfg.ListenProjects = strings.Split(lp, ",")
+	}
+	return cfg, nil
 }
 
-// channelTools returns the three MCP tools for cross-agent communication.
+// channelTools returns the MCP tools for cross-agent communication.
 func channelTools() []Tool {
 	return []Tool{
 		{
@@ -56,18 +61,22 @@ func channelTools() []Tool {
 			InputSchema: JSONSchema{
 				Type: "object",
 				Properties: map[string]SchemaProperty{
-					"issue_id": {Type: "string", Description: "The issue ID this artifact belongs to"},
-					"type":     {Type: "string", Description: "Artifact type (e.g. interface, type, schema, config)"},
-					"content":  {Type: "string", Description: "The artifact content (code, definition, etc.)"},
+					"issue_id":       {Type: "string", Description: "The issue ID this artifact belongs to"},
+					"type":           {Type: "string", Description: "Artifact type (e.g. interface, type, schema, config)"},
+					"content":        {Type: "string", Description: "The artifact content (code, definition, etc.)"},
+					"target_project": {Type: "string", Description: "Target project ID (omit for current project, use '_global' for global broadcast)"},
 				},
 				Required: []string{"issue_id", "type", "content"},
 			},
 		},
 		{
 			Name:        "list_artifacts",
-			Description: "List all published artifacts from all agents in the current project.",
+			Description: "List all published artifacts. Defaults to current project; specify project to query another.",
 			InputSchema: JSONSchema{
 				Type: "object",
+				Properties: map[string]SchemaProperty{
+					"project": {Type: "string", Description: "Project ID to list artifacts from (omit for current project)"},
+				},
 			},
 		},
 		{
@@ -76,10 +85,18 @@ func channelTools() []Tool {
 			InputSchema: JSONSchema{
 				Type: "object",
 				Properties: map[string]SchemaProperty{
-					"to_issue_id": {Type: "string", Description: "The target agent's issue ID"},
-					"content":     {Type: "string", Description: "Message content"},
+					"to_issue_id":    {Type: "string", Description: "The target agent's issue ID (use '_project' to broadcast to all agents in target project, '_all' for global)"},
+					"content":        {Type: "string", Description: "Message content"},
+					"target_project": {Type: "string", Description: "Target project ID (omit for current project, use '_global' for global broadcast)"},
 				},
 				Required: []string{"to_issue_id", "content"},
+			},
+		},
+		{
+			Name:        "list_projects",
+			Description: "List all active projects with their issues and connected agent counts. Use for cross-project discovery.",
+			InputSchema: JSONSchema{
+				Type: "object",
 			},
 		},
 	}
@@ -126,11 +143,27 @@ func (s *Server) Run() error {
 	s.logger.Println("mcp: server starting")
 	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID)
 
-	// Start SSE listener in background with cancellable context.
+	// Start SSE listeners in background with cancellable context.
+	// Subscribe to own project + configured additional projects.
 	ctx, cancel := context.WithCancel(context.Background())
 	s.sseCancel = cancel
-	go s.listenSSE(ctx)
 	defer cancel()
+
+	seen := map[string]bool{s.config.ProjectID: true}
+	sseProjects := []string{s.config.ProjectID}
+	for _, p := range s.config.ListenProjects {
+		p = strings.TrimSpace(p)
+		if p != "" && !seen[p] {
+			seen[p] = true
+			sseProjects = append(sseProjects, p)
+		}
+	}
+	for _, proj := range sseProjects {
+		go s.listenSSE(ctx, proj)
+	}
+	if len(sseProjects) > 1 {
+		s.logger.Printf("mcp: subscribing to %d SSE channels: %v", len(sseProjects), sseProjects)
+	}
 
 	scanner := bufio.NewScanner(s.stdin)
 	// Increase buffer to handle large MCP messages.
@@ -249,9 +282,11 @@ func (s *Server) handleToolsCall(req Request) {
 	case "publish_artifact":
 		s.callPublishArtifact(req.ID, params.Arguments)
 	case "list_artifacts":
-		s.callListArtifacts(req.ID)
+		s.callListArtifacts(req.ID, params.Arguments)
 	case "send_message":
 		s.callSendMessage(req.ID, params.Arguments)
+	case "list_projects":
+		s.callListProjects(req.ID)
 	default:
 		s.logger.Printf("mcp: unknown tool: %s", params.Name)
 		s.writeResponse(newResponse(req.ID, CallToolResult{
@@ -264,9 +299,10 @@ func (s *Server) handleToolsCall(req Request) {
 // --- Tool implementations (HTTP calls to broker) ---
 
 type publishArtifactArgs struct {
-	IssueID string `json:"issue_id"`
-	Type    string `json:"type"`
-	Content string `json:"content"`
+	IssueID       string `json:"issue_id"`
+	Type          string `json:"type"`
+	Content       string `json:"content"`
+	TargetProject string `json:"target_project,omitempty"`
 }
 
 func (s *Server) callPublishArtifact(id json.RawMessage, args json.RawMessage) {
@@ -277,7 +313,11 @@ func (s *Server) callPublishArtifact(id json.RawMessage, args json.RawMessage) {
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/artifacts/%s/%s", s.config.BrokerURL, s.config.ProjectID, a.IssueID)
+	project := s.config.ProjectID
+	if a.TargetProject != "" {
+		project = a.TargetProject
+	}
+	url := fmt.Sprintf("%s/api/artifacts/%s/%s", s.config.BrokerURL, project, a.IssueID)
 	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content, "sender_id": s.config.InstanceID})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
@@ -300,8 +340,22 @@ func (s *Server) callPublishArtifact(id json.RawMessage, args json.RawMessage) {
 	}))
 }
 
-func (s *Server) callListArtifacts(id json.RawMessage) {
-	url := fmt.Sprintf("%s/api/artifacts/%s", s.config.BrokerURL, s.config.ProjectID)
+func (s *Server) callListArtifacts(id json.RawMessage, args json.RawMessage) {
+	var a struct {
+		Project string `json:"project"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &a); err != nil {
+			s.logger.Printf("mcp: list_artifacts bad args: %v", err)
+			s.writeToolError(id, "invalid arguments: "+err.Error())
+			return
+		}
+	}
+	project := s.config.ProjectID
+	if a.Project != "" {
+		project = a.Project
+	}
+	url := fmt.Sprintf("%s/api/artifacts/%s", s.config.BrokerURL, project)
 
 	resp, err := s.client.Get(url)
 	if err != nil {
@@ -325,8 +379,9 @@ func (s *Server) callListArtifacts(id json.RawMessage) {
 }
 
 type sendMessageArgs struct {
-	ToIssueID string `json:"to_issue_id"`
-	Content   string `json:"content"`
+	ToIssueID     string `json:"to_issue_id"`
+	Content       string `json:"content"`
+	TargetProject string `json:"target_project,omitempty"`
 }
 
 func (s *Server) callSendMessage(id json.RawMessage, args json.RawMessage) {
@@ -337,7 +392,11 @@ func (s *Server) callSendMessage(id json.RawMessage, args json.RawMessage) {
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/messages/%s/%s", s.config.BrokerURL, s.config.ProjectID, a.ToIssueID)
+	project := s.config.ProjectID
+	if a.TargetProject != "" {
+		project = a.TargetProject
+	}
+	url := fmt.Sprintf("%s/api/messages/%s/%s", s.config.BrokerURL, project, a.ToIssueID)
 	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content, "sender_id": s.config.InstanceID})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
@@ -360,24 +419,49 @@ func (s *Server) callSendMessage(id json.RawMessage, args json.RawMessage) {
 	}))
 }
 
+func (s *Server) callListProjects(id json.RawMessage) {
+	url := fmt.Sprintf("%s/api/projects", s.config.BrokerURL)
+
+	resp, err := s.client.Get(url)
+	if err != nil {
+		s.logger.Printf("mcp: list_projects HTTP error: %v", err)
+		s.writeToolError(id, "broker request failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		s.logger.Printf("mcp: list_projects read body error: %v", err)
+		s.writeToolError(id, "failed to read response: "+err.Error())
+		return
+	}
+
+	s.logger.Printf("mcp: list_projects success (%d bytes)", len(data))
+	s.writeResponse(newResponse(id, CallToolResult{
+		Content: []ContentBlock{{Type: "text", Text: string(data)}},
+	}))
+}
+
 // --- SSE listener ---
 
-// listenSSE connects to the broker's SSE endpoint and forwards events as MCP channel notifications.
-// Reconnects on failure with a 3-second backoff. Stops when ctx is cancelled.
-func (s *Server) listenSSE(ctx context.Context) {
-	url := fmt.Sprintf("%s/api/events/%s", s.config.BrokerURL, s.config.ProjectID)
+// listenSSE connects to the broker's SSE endpoint for the given project and forwards events
+// as MCP channel notifications. Reconnects on failure with a 3-second backoff.
+// Stops when ctx is cancelled.
+func (s *Server) listenSSE(ctx context.Context, project string) {
+	url := fmt.Sprintf("%s/api/events/%s", s.config.BrokerURL, project)
 	s.logger.Printf("mcp: SSE connecting to %s", url)
 
 	for {
-		err := s.consumeSSE(ctx, url)
+		err := s.consumeSSE(ctx, url, project)
 		if ctx.Err() != nil {
-			s.logger.Println("mcp: SSE stopped (context cancelled)")
+			s.logger.Printf("mcp: SSE stopped for project=%s (context cancelled)", project)
 			return
 		}
 		if err != nil {
-			s.logger.Printf("mcp: SSE error: %v", err)
+			s.logger.Printf("mcp: SSE error for project=%s: %v", project, err)
 		}
-		s.logger.Println("mcp: SSE reconnecting to broker")
+		s.logger.Printf("mcp: SSE reconnecting to broker for project=%s", project)
 		select {
 		case <-ctx.Done():
 			return
@@ -387,7 +471,8 @@ func (s *Server) listenSSE(ctx context.Context) {
 }
 
 // consumeSSE reads from a single SSE connection and pushes channel notifications.
-func (s *Server) consumeSSE(ctx context.Context, url string) error {
+// The project parameter identifies which project's SSE stream this is, used in notification metadata.
+func (s *Server) consumeSSE(ctx context.Context, url string, project string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("SSE request create: %w", err)
@@ -437,7 +522,7 @@ func (s *Server) consumeSSE(ctx context.Context, url string) error {
 		meta := map[string]any{
 			"source":  "zpit-broker",
 			"type":    event.Type,
-			"project": s.config.ProjectID,
+			"project": project,
 		}
 		notification := newChannelNotification(content, meta)
 		s.writeNotification(notification)

@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +12,12 @@ import (
 	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/locale"
 )
+
+// taggedEvent pairs a broker event with its source project for cross-project display.
+type taggedEvent struct {
+	source string
+	event  broker.Event
+}
 
 // viewChannel renders the channel event timeline view.
 // Follows the same header + viewport + footer structure as viewStatus.
@@ -48,15 +55,32 @@ func (m Model) renderChannelScrollable() string {
 		return b.String()
 	}
 
-	events := m.state.channelEvents[m.channelProjectID]
-	if len(events) == 0 {
+	// Collect events from own project + listen projects.
+	var all []taggedEvent
+	for _, ev := range m.state.channelEvents[m.channelProjectID] {
+		all = append(all, taggedEvent{source: "", event: ev}) // own project: no tag
+	}
+	if p != nil {
+		for _, lp := range p.ChannelListen {
+			for _, ev := range m.state.channelEvents[lp] {
+				all = append(all, taggedEvent{source: lp, event: ev})
+			}
+		}
+	}
+
+	if len(all) == 0 {
 		b.WriteString("  " + detailStyle.Render(locale.T(locale.KeyChannelNoActivity)) + "\n")
 		return b.String()
 	}
 
-	for _, ev := range events {
+	// Sort by timestamp for chronological display.
+	sort.Slice(all, func(i, j int) bool {
+		return extractEventTimestamp(all[i].event).Before(extractEventTimestamp(all[j].event))
+	})
+
+	for _, te := range all {
 		b.WriteString("  ")
-		b.WriteString(formatChannelEvent(ev))
+		b.WriteString(formatChannelEvent(te.event, te.source))
 		b.WriteString("\n")
 	}
 
@@ -81,8 +105,9 @@ func (m Model) renderChannelFooter() string {
 }
 
 // formatChannelEvent formats a single broker event as a timeline line.
-// Format: {HH:MM:SS}  {icon} #{issueID} {action}: {content_preview}
-func formatChannelEvent(ev broker.Event) string {
+// Format: {HH:MM:SS}  [source] {icon} #{issueID} {action}: {content_preview}
+// sourceProject is shown as a prefix tag for cross-project events (empty for own project).
+func formatChannelEvent(ev broker.Event, sourceProject string) string {
 	icon := "📦"
 	if ev.Type == "message" {
 		icon = "💬"
@@ -113,13 +138,36 @@ func formatChannelEvent(ev broker.Event) string {
 	timeStr := ts.Format("15:04:05")
 	preview := truncateChannel(content, 120)
 
-	return fmt.Sprintf("%s  %s #%s %s: %s",
+	projectTag := ""
+	if sourceProject != "" {
+		projectTag = detailStyle.Render(fmt.Sprintf("[%s] ", sourceProject))
+	}
+
+	return fmt.Sprintf("%s  %s%s #%s %s: %s",
 		detailStyle.Render(timeStr),
+		projectTag,
 		icon,
 		issueID,
 		detailStyle.Render(action),
 		normalStyle.Render(preview),
 	)
+}
+
+// extractEventTimestamp extracts the timestamp from a broker event payload for sorting.
+func extractEventTimestamp(ev broker.Event) time.Time {
+	switch ev.Type {
+	case "artifact":
+		var art broker.Artifact
+		if err := json.Unmarshal(ev.Payload, &art); err == nil {
+			return art.Timestamp
+		}
+	case "message":
+		var msg broker.Message
+		if err := json.Unmarshal(ev.Payload, &msg); err == nil {
+			return msg.Timestamp
+		}
+	}
+	return time.Time{}
 }
 
 // truncateChannel truncates a string to maxLen runes, appending "..." if truncated.

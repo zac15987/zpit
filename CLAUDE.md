@@ -123,29 +123,41 @@ zpit serve
 
 ### Cross-Agent Channel (Broker + MCP)
 
-When `channel_enabled = true` for a project, agents can communicate in real time via a local HTTP broker:
+When `channel_enabled = true` for a project, agents can communicate in real time via a local HTTP broker. Supports same-project, cross-project, and global broadcast communication:
 
 ```
-Agent A (Claude Code)          Agent B (Claude Code)
+Agent A (Project X)            Agent B (Project Y)
   └─ MCP stdio server            └─ MCP stdio server
        ↓ HTTP POST                     ↓ HTTP POST
-     ┌──────────────────────────────────────┐
-     │ Broker (HTTP on 127.0.0.1:broker_port)│
-     │ ├─ /api/artifacts/{project}/{issue}  │
-     │ ├─ /api/messages/{project}/{to}      │
-     │ └─ /api/events/{project} (SSE)       │
-     └──────────────────────────────────────┘
-       ↓ EventBus (in-memory pub/sub)
+     ┌──────────────────────────────────────────┐
+     │ Broker (HTTP on 127.0.0.1:broker_port)   │
+     │ ├─ /api/artifacts/{project}/{issue}      │
+     │ ├─ /api/messages/{project}/{to}          │
+     │ ├─ /api/events/{project} (SSE)           │
+     │ └─ /api/projects (discovery)             │
+     └──────────────────────────────────────────┘
+       ↓ EventBus (in-memory pub/sub, keyed by project)
      TUI: AppState.channelEvents → ViewChannel ([m] key)
 ```
 
-**Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, plus SSE streaming. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Started in `NewAppState()` only if any project has `channel_enabled`.
+**Cross-project targeting model** — agents choose communication scope via `target_project`:
 
-**MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes three tools: `publish_artifact`, `list_artifacts`, `send_message`. Maintains a background SSE listener that forwards events as MCP notifications, with self-echo filtering. Entry point: `zpit serve-channel` subcommand.
+| `target_project` | `to` | Effect |
+|---|---|---|
+| omitted (default) | `"3"` | Same project, specific issue |
+| `"project-a"` | `"5"` | Cross-project, specific issue |
+| `"project-a"` | `"_project"` | Broadcast to all agents in target project |
+| `"_global"` | `"_all"` | Global broadcast to all listening agents |
 
-**TUI integration**: Loop start calls `loopChannelSubscribeCmd()` → subscribes to EventBus → `channelReadNextCmd()` blocks on channel → `ChannelEventMsg` appended to `AppState.channelEvents[projectID]` → `ViewChannel` renders timeline.
+`_global` and cross-project keys are regular project keys in the EventBus — no special broker logic.
 
-**Config**: `channel_enabled` (per-project), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation).
+**Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, SSE streaming, and project discovery. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Tracks SSE connection count per project for discovery. Started in `NewAppState()` only if any project has `channel_enabled`.
+
+**MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes four tools: `publish_artifact`, `list_artifacts`, `send_message`, `list_projects`. Tools accept optional `target_project` parameter for cross-project communication. Spawns one SSE listener goroutine per subscribed project (own + `ListenProjects`), with self-echo filtering via per-instance UUID. Entry point: `zpit serve-channel` subcommand.
+
+**TUI integration**: Loop start / manual launch calls `channelSubscribeCmd()` for own project + each `channel_listen` entry → subscribes to EventBus → `channelReadNextCmd()` blocks on channel → `ChannelEventMsg` appended to `AppState.channelEvents[projectID]` → `ViewChannel` merges events from own + listen projects, sorted by timestamp, with `[source]` tag for cross-project events. Loop stop unsubscribes all related channels (own + listen).
+
+**Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server.
 
 ### TrackerClient
 

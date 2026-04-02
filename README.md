@@ -176,6 +176,8 @@ hook_mode = "strict"        # strict | standard | relaxed
 tracker = "my-forgejo"
 repo = "org/repo"
 base_branch = "dev"
+channel_enabled = false     # enable cross-agent channel communication
+channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
 tags = ["go"]
 
 [projects.path]

@@ -108,6 +108,8 @@ repo = "leyu/ase-inspection"
 shared_core = true
 log_level = "strict"
 base_branch = "dev"
+channel_enabled = false         # 啟用跨 agent channel 通訊
+channel_listen = []             # 額外訂閱的 project key，如 ["_global", "other-proj"]
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]

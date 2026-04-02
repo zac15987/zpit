@@ -782,15 +782,27 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if ls, ok := m.state.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
 			ls.Slots = make(map[string]*loop.Slot)
-			// Clean up channel subscription under lock.
-			subCh := m.state.channelSubs[p.ID]
-			delete(m.state.channelSubs, p.ID)
+			// Clean up channel subscriptions under lock (own project + listen projects).
+			capturedSubs := make(map[string]<-chan broker.Event)
+			if ch, exists := m.state.channelSubs[p.ID]; exists {
+				capturedSubs[p.ID] = ch
+				delete(m.state.channelSubs, p.ID)
+			}
+			for _, lp := range p.ChannelListen {
+				if ch, exists := m.state.channelSubs[lp]; exists {
+					capturedSubs[lp] = ch
+					delete(m.state.channelSubs, lp)
+				}
+			}
 			m.state.NotifyAll()
 			m.state.Unlock()
-			// Unsubscribe channel outside lock (thread-safe).
+			// Unsubscribe channels outside lock (thread-safe).
 			// Broker lifecycle is tied to the Zpit process, not individual loops.
-			if subCh != nil && m.state.broker != nil {
-				m.state.broker.Events().Unsubscribe(p.ID, subCh)
+			if m.state.broker != nil {
+				bus := m.state.broker.Events()
+				for pid, ch := range capturedSubs {
+					bus.Unsubscribe(pid, ch)
+				}
 			}
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil
@@ -1180,6 +1192,18 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	excludePIDs := m.trackedPIDs()
 	// Check if channel subscription already exists while holding the lock.
 	_, channelSubscribed := m.state.channelSubs[msg.ProjectID]
+	// Snapshot listen project subscription status under lock.
+	var unsubscribedListenProjects []string
+	if !channelSubscribed {
+		project := m.findProject(msg.ProjectID)
+		if project != nil && project.ChannelEnabled && m.state.broker != nil {
+			for _, lp := range project.ChannelListen {
+				if _, exists := m.state.channelSubs[lp]; !exists && lp != project.ID {
+					unsubscribedListenProjects = append(unsubscribedListenProjects, lp)
+				}
+			}
+		}
+	}
 	m.state.NotifyAll()
 	m.state.Unlock()
 
@@ -1190,6 +1214,9 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 		project := m.findProject(msg.ProjectID)
 		if project != nil && project.ChannelEnabled && m.state.broker != nil {
 			cmds = append(cmds, m.channelSubscribeCmd(msg.ProjectID))
+			for _, lp := range unsubscribedListenProjects {
+				cmds = append(cmds, m.channelSubscribeCmd(lp))
+			}
 		}
 	}
 
@@ -1849,6 +1876,7 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	}
 	// Capture broker info for .mcp.json (read-only after init).
 	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
 	var brokerAddr string
 	if channelEnabled && m.state.broker != nil {
 		brokerAddr = m.state.broker.Addr()
@@ -1873,7 +1901,7 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 
 		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
 		if channelEnabled && brokerAddr != "" {
-			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin); err != nil {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelListen); err != nil {
 				logger.Printf("%s: failed to write .mcp.json for project=%s: %v", agentName, project.ID, err)
 			} else {
 				logger.Printf("%s: wrote .mcp.json to %s for project=%s", agentName, projectPath, project.ID)
@@ -2092,6 +2120,15 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 			Slots:  make(map[string]*loop.Slot),
 		}
 		m.state.loops[project.ID] = ls
+		// Snapshot listen subscription status under lock.
+		var unsubscribedListenProjects []string
+		if project.ChannelEnabled && m.state.broker != nil {
+			for _, lp := range project.ChannelListen {
+				if _, exists := m.state.channelSubs[lp]; !exists && lp != project.ID {
+					unsubscribedListenProjects = append(unsubscribedListenProjects, lp)
+				}
+			}
+		}
 		m.state.NotifyAll()
 		m.state.Unlock()
 		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
@@ -2102,6 +2139,9 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 		}
 		if project.ChannelEnabled && m.state.broker != nil {
 			cmds = append(cmds, m.channelSubscribeCmd(project.ID))
+			for _, lp := range unsubscribedListenProjects {
+				cmds = append(cmds, m.channelSubscribeCmd(lp))
+			}
 		}
 		return m, tea.Batch(cmds...)
 

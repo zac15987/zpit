@@ -142,6 +142,11 @@ shared_core = false
 log_level = "minimal"
 base_branch = "dev"
 channel_enabled = true
+# channel_listen: subscribe to other projects' SSE streams for cross-project communication.
+# "_global" receives global broadcasts; specific project IDs (e.g. "ase-inspection") receive that project's events.
+# Targeted cross-project messaging (send_message with target_project) works without this — only needed for
+# receiving broadcasts or passively monitoring another project's channel.
+channel_listen = ["_global"]
 tags = ["go", "bubbletea"]
 
 [projects.path]

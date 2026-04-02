@@ -479,6 +479,117 @@ func TestBroker_SSE_DifferentProjectIsolation(t *testing.T) {
 	}
 }
 
+func TestBroker_ListProjects_Empty(t *testing.T) {
+	b := newTestBroker(t)
+	resp, err := http.Get(brokerURL(b) + "/api/projects")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var projects []projectInfo
+	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(projects) != 0 {
+		t.Errorf("expected empty list, got %d", len(projects))
+	}
+}
+
+func TestBroker_ListProjects_WithData(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Post artifacts to two projects.
+	resp, _ := http.Post(base+"/api/artifacts/proj-a/3", "application/json", strings.NewReader(`{"type":"x","content":"a"}`))
+	resp.Body.Close()
+	resp, _ = http.Post(base+"/api/artifacts/proj-a/5", "application/json", strings.NewReader(`{"type":"y","content":"b"}`))
+	resp.Body.Close()
+	resp, _ = http.Post(base+"/api/artifacts/proj-b/10", "application/json", strings.NewReader(`{"type":"z","content":"c"}`))
+	resp.Body.Close()
+
+	// Send a message in proj-b.
+	resp, _ = http.Post(base+"/api/messages/proj-b/10", "application/json", strings.NewReader(`{"from":"7","content":"hi"}`))
+	resp.Body.Close()
+
+	resp2, err := http.Get(base + "/api/projects")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var projects []projectInfo
+	if err := json.NewDecoder(resp2.Body).Decode(&projects); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(projects))
+	}
+
+	// Results are sorted by ID.
+	if projects[0].ID != "proj-a" {
+		t.Errorf("project 0: got %q, want proj-a", projects[0].ID)
+	}
+	if len(projects[0].IssueIDs) != 2 {
+		t.Errorf("proj-a issues: got %d, want 2", len(projects[0].IssueIDs))
+	}
+
+	if projects[1].ID != "proj-b" {
+		t.Errorf("project 1: got %q, want proj-b", projects[1].ID)
+	}
+	// proj-b has issue 10 from artifact + issues 7 (from) and 10 (to) from message.
+	if len(projects[1].IssueIDs) != 2 { // "7" and "10"
+		t.Errorf("proj-b issues: got %v, want [7, 10]", projects[1].IssueIDs)
+	}
+}
+
+func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Post an artifact so project exists.
+	resp, _ := http.Post(base+"/api/artifacts/proj-x/1", "application/json", strings.NewReader(`{"type":"x","content":"a"}`))
+	resp.Body.Close()
+
+	// No SSE connections yet.
+	resp2, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp2.Body).Decode(&projects)
+	resp2.Body.Close()
+	if len(projects) != 1 || projects[0].AgentCount != 0 {
+		t.Fatalf("before SSE: got %+v", projects)
+	}
+
+	// Connect SSE.
+	sseResp, err := http.Get(base + "/api/events/proj-x")
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+
+	// Wait briefly for SSE handler to register.
+	time.Sleep(100 * time.Millisecond)
+
+	resp3, _ := http.Get(base + "/api/projects")
+	var projects2 []projectInfo
+	json.NewDecoder(resp3.Body).Decode(&projects2)
+	resp3.Body.Close()
+	if len(projects2) != 1 || projects2[0].AgentCount != 1 {
+		t.Fatalf("during SSE: got %+v", projects2)
+	}
+
+	// Disconnect SSE.
+	sseResp.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	resp4, _ := http.Get(base + "/api/projects")
+	var projects3 []projectInfo
+	json.NewDecoder(resp4.Body).Decode(&projects3)
+	resp4.Body.Close()
+	if len(projects3) != 1 || projects3[0].AgentCount != 0 {
+		t.Fatalf("after SSE close: got %+v", projects3)
+	}
+}
+
 func TestBroker_Close(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
 	b, err := New(logger, 0)
