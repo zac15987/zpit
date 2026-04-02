@@ -451,6 +451,213 @@ func TestServer_SSE_ChannelNotification(t *testing.T) {
 	stdoutPw.Close()
 }
 
+func TestServer_IsSelfEcho(t *testing.T) {
+	srv := &Server{
+		config: ServerConfig{IssueID: "42"},
+		logger: log.New(io.Discard, "", 0),
+	}
+
+	tests := []struct {
+		name      string
+		eventType string
+		payload   string
+		want      bool
+	}{
+		{
+			name:      "self artifact",
+			eventType: "artifact",
+			payload:   `{"issue_id":"42","type":"interface","content":"type Foo struct{}"}`,
+			want:      true,
+		},
+		{
+			name:      "self message",
+			eventType: "message",
+			payload:   `{"from":"42","to":"99","content":"hello"}`,
+			want:      true,
+		},
+		{
+			name:      "other artifact",
+			eventType: "artifact",
+			payload:   `{"issue_id":"99","type":"schema","content":"CREATE TABLE ..."}`,
+			want:      false,
+		},
+		{
+			name:      "other message to self",
+			eventType: "message",
+			payload:   `{"from":"99","to":"42","content":"info for you"}`,
+			want:      false,
+		},
+		{
+			name:      "unknown event type",
+			eventType: "unknown",
+			payload:   `{"issue_id":"42"}`,
+			want:      false,
+		},
+		{
+			name:      "malformed payload",
+			eventType: "artifact",
+			payload:   `not json`,
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := srv.isSelfEcho(tt.eventType, json.RawMessage(tt.payload))
+			if got != tt.want {
+				t.Errorf("isSelfEcho(%q, %s) = %v, want %v", tt.eventType, tt.payload, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServer_SSE_SelfEchoFiltering(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	b, err := broker.New(logger)
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	defer b.Close()
+
+	cfg := ServerConfig{
+		BrokerURL: "http://" + b.Addr(),
+		ProjectID: "test-proj",
+		IssueID:   "42",
+	}
+
+	pr, pw := io.Pipe()
+	stdoutPr, stdoutPw := io.Pipe()
+
+	var logBuf bytes.Buffer
+	testLogger := log.New(&logBuf, "", 0)
+	srv := NewServer(cfg, testLogger, pr, stdoutPw)
+
+	// Run server in background.
+	done := make(chan error, 1)
+	go func() { done <- srv.Run() }()
+
+	// Give SSE time to connect.
+	time.Sleep(200 * time.Millisecond)
+
+	// (a) Post self artifact (issue_id=42) — should be skipped.
+	selfArtifact := strings.NewReader(`{"type":"interface","content":"type Foo struct{}"}`)
+	resp, err := srv.client.Post(cfg.BrokerURL+"/api/artifacts/test-proj/42", "application/json", selfArtifact)
+	if err != nil {
+		t.Fatalf("POST self artifact: %v", err)
+	}
+	resp.Body.Close()
+
+	// (b) Post self message (from=42) — should be skipped.
+	selfMsg := strings.NewReader(`{"from":"42","content":"self talk"}`)
+	resp, err = srv.client.Post(cfg.BrokerURL+"/api/messages/test-proj/99", "application/json", selfMsg)
+	if err != nil {
+		t.Fatalf("POST self message: %v", err)
+	}
+	resp.Body.Close()
+
+	// Brief pause to let SSE process the self-echo events.
+	time.Sleep(200 * time.Millisecond)
+
+	// (c) Post other agent's artifact (issue_id=99) — should produce notification.
+	otherArtifact := strings.NewReader(`{"type":"schema","content":"CREATE TABLE bar"}`)
+	resp, err = srv.client.Post(cfg.BrokerURL+"/api/artifacts/test-proj/99", "application/json", otherArtifact)
+	if err != nil {
+		t.Fatalf("POST other artifact: %v", err)
+	}
+	resp.Body.Close()
+
+	// Read the notification from stdout (with timeout).
+	readDone := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := stdoutPr.Read(buf)
+		readDone <- string(buf[:n])
+	}()
+
+	select {
+	case output := <-readDone:
+		// Should contain the other agent's artifact notification.
+		if !strings.Contains(output, "notifications/claude/channel") {
+			t.Errorf("expected channel notification, got: %s", output)
+		}
+		if !strings.Contains(output, "CREATE TABLE bar") {
+			t.Errorf("expected other artifact content, got: %s", output)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for other artifact notification")
+	}
+
+	// Verify self-echo events were logged as skipped.
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "mcp: SSE skip self-echo type=artifact issue=42") {
+		t.Errorf("expected self-echo artifact skip log, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "mcp: SSE skip self-echo type=message issue=42") {
+		t.Errorf("expected self-echo message skip log, got: %s", logOutput)
+	}
+
+	pw.Close()
+	stdoutPw.Close()
+}
+
+func TestServer_SSE_OtherMessageToSelf(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	b, err := broker.New(logger)
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	defer b.Close()
+
+	cfg := ServerConfig{
+		BrokerURL: "http://" + b.Addr(),
+		ProjectID: "test-proj",
+		IssueID:   "42",
+	}
+
+	pr, pw := io.Pipe()
+	stdoutPr, stdoutPw := io.Pipe()
+	srv := NewServer(cfg, log.New(io.Discard, "", 0), pr, stdoutPw)
+
+	// Run server in background.
+	done := make(chan error, 1)
+	go func() { done <- srv.Run() }()
+
+	// Give SSE time to connect.
+	time.Sleep(200 * time.Millisecond)
+
+	// (d) Post message from other agent (from=99) TO self (to=42) — should produce notification.
+	otherMsg := strings.NewReader(`{"from":"99","content":"info for you"}`)
+	resp, err := srv.client.Post(cfg.BrokerURL+"/api/messages/test-proj/42", "application/json", otherMsg)
+	if err != nil {
+		t.Fatalf("POST other message to self: %v", err)
+	}
+	resp.Body.Close()
+
+	// Read the notification from stdout (with timeout).
+	readDone := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := stdoutPr.Read(buf)
+		readDone <- string(buf[:n])
+	}()
+
+	select {
+	case output := <-readDone:
+		if !strings.Contains(output, "notifications/claude/channel") {
+			t.Errorf("expected channel notification, got: %s", output)
+		}
+		if !strings.Contains(output, "info for you") {
+			t.Errorf("expected message content, got: %s", output)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for other-to-self message notification")
+	}
+
+	pw.Close()
+	stdoutPw.Close()
+	_ = done
+}
+
 func TestChannelTools(t *testing.T) {
 	tools := channelTools()
 	if len(tools) != 3 {
