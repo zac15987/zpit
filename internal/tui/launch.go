@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/zac15987/zpit/internal/locale"
@@ -409,4 +410,70 @@ func injectLangInstruction(md []byte) []byte {
 		result = strings.ReplaceAll(result, "\n", "\r\n")
 	}
 	return []byte(result)
+}
+
+// --- Focus panel: loop slot selection ---
+
+func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
+	if m.focusedPanel == FocusLoopSlots {
+		m.focusedPanel = FocusProjects
+		return m, nil
+	}
+	project := m.state.projects[m.cursor]
+	m.state.RLock()
+	keys := m.sortedSlotKeys(project.ID)
+	m.state.RUnlock()
+	if len(keys) == 0 {
+		return m, nil
+	}
+	m.focusedPanel = FocusLoopSlots
+	m.focusProjectID = project.ID
+	m.loopCursor = 0
+	return m, nil
+}
+
+func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	keys := m.sortedSlotKeys(m.focusProjectID)
+	m.state.RUnlock()
+	if len(keys) == 0 {
+		m.focusedPanel = FocusProjects
+		return m, nil
+	}
+	if m.loopCursor >= len(keys) {
+		m.loopCursor = len(keys) - 1
+	}
+
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.focusedPanel = FocusProjects
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		if m.loopCursor > 0 {
+			m.loopCursor--
+		}
+
+	case key.Matches(msg, m.keys.Down):
+		if m.loopCursor < len(keys)-1 {
+			m.loopCursor++
+		}
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+
+	case key.Matches(msg, m.keys.Enter):
+		return m.launchFocusClaudeCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Open):
+		return m.openSlotFolderCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Tracker):
+		return m.openSlotIssueCmd(keys[m.loopCursor])
+	}
+
+	return m, nil
 }

@@ -85,12 +85,27 @@ type permissionSignal struct {
 
 // Session constants.
 const (
-	sessionRetryInterval = 2 * time.Second
-	sessionRetryMax      = 8  // 8 * 2s = 16s max wait
-	logWaitWarnAfter     = 15 // log a warning after 15 * 2s = 30s, but keep waiting
+	tickInterval            = 1 * time.Second
+	livenessCheckInterval   = 5 * time.Second
+	permissionCheckInterval = 2 * time.Second
+	endedDisplayDuration    = 3 * time.Second
+	sessionScanInterval     = 10 * time.Second
+	sessionRetryInterval    = 2 * time.Second
+	sessionRetryMax         = 8  // 8 * 2s = 16s max wait
+	logWaitWarnAfter        = 15 // log a warning after 15 * 2s = 30s, but keep waiting
 )
 
 // === Msg handlers ===
+
+func (m Model) handleTick() (tea.Model, tea.Cmd) {
+	cmds := m.checkSessionLiveness()
+	m.checkPermissionSignals()
+	if scanCmd := m.checkNewSessions(); scanCmd != nil {
+		cmds = append(cmds, scanCmd)
+	}
+	cmds = append(cmds, tickCmd())
+	return m, tea.Batch(cmds...)
+}
 
 func (m Model) handleExistingSessions(msg existingSessionsMsg) (tea.Model, tea.Cmd) {
 	m.state.Lock()
@@ -195,6 +210,61 @@ func (m Model) handleSessionLost(msg sessionLostMsg) (tea.Model, tea.Cmd) {
 }
 
 // === Cmd factories ===
+
+// RunServerInit performs server-init logic synchronously (for zpit serve startup).
+// Runs session scan and provider validation on the AppState.
+func RunServerInit(state *AppState) {
+	seenMissing := make(map[string]bool)
+	var missingProviders []string
+
+	for _, project := range state.projects {
+		if project.Tracker == "" || project.Repo == "" {
+			continue
+		}
+		if _, ok := state.clients[project.Tracker]; !ok {
+			if !seenMissing[project.Tracker] {
+				seenMissing[project.Tracker] = true
+				missingProviders = append(missingProviders, project.Tracker)
+			}
+		}
+	}
+	if len(missingProviders) > 0 {
+		state.logger.Printf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
+	}
+}
+
+// serverInitCmds returns tea.Cmd slices for server-init tasks (used by local TUI Init).
+func (m Model) serverInitCmds() []tea.Cmd {
+	var cmds []tea.Cmd
+
+	seenMissing := make(map[string]bool)
+	var missingProviders []string
+
+	for _, project := range m.state.projects {
+		if project.Tracker == "" || project.Repo == "" {
+			continue
+		}
+		if _, ok := m.state.clients[project.Tracker]; !ok {
+			if !seenMissing[project.Tracker] {
+				seenMissing[project.Tracker] = true
+				missingProviders = append(missingProviders, project.Tracker)
+			}
+		}
+	}
+
+	if len(missingProviders) > 0 {
+		msg := fmt.Sprintf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
+		m.state.logger.Println(msg)
+		cmds = append(cmds, func() tea.Msg {
+			return StatusMsg{Text: msg}
+		})
+	}
+
+	// Scan for already-running Claude Code sessions.
+	cmds = append(cmds, m.scanExistingSessionsCmd())
+
+	return cmds
+}
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
 func (m Model) scanExistingSessionsCmd() tea.Cmd {
@@ -356,6 +426,12 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 			time.Sleep(sessionRetryInterval)
 		}
 	}
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
+		return TickMsg(t)
+	})
 }
 
 func watchNextCmd(projectID string, w *watcher.Watcher) tea.Cmd {

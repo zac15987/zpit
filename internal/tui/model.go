@@ -3,8 +3,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"log"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -24,18 +22,7 @@ import (
 	"github.com/zac15987/zpit/internal/watcher"
 )
 
-// errChannelClosed is a sentinel error returned by channelReadNextCmd when the
-// EventBus channel is closed (normal shutdown after Unsubscribe).
-var errChannelClosed = errors.New("channel closed")
-
-const (
-	statusDisplayDuration      = 5 * time.Second
-	tickInterval               = 1 * time.Second
-	livenessCheckInterval      = 5 * time.Second
-	permissionCheckInterval    = 2 * time.Second
-	endedDisplayDuration       = 3 * time.Second
-	sessionScanInterval        = 10 * time.Second
-)
+const statusDisplayDuration = 5 * time.Second
 
 // View represents the current screen.
 type View int
@@ -186,61 +173,6 @@ func (m Model) waitForStateRefresh() tea.Cmd {
 	}
 }
 
-// RunServerInit performs server-init logic synchronously (for zpit serve startup).
-// Runs session scan and provider validation on the AppState.
-func RunServerInit(state *AppState) {
-	seenMissing := make(map[string]bool)
-	var missingProviders []string
-
-	for _, project := range state.projects {
-		if project.Tracker == "" || project.Repo == "" {
-			continue
-		}
-		if _, ok := state.clients[project.Tracker]; !ok {
-			if !seenMissing[project.Tracker] {
-				seenMissing[project.Tracker] = true
-				missingProviders = append(missingProviders, project.Tracker)
-			}
-		}
-	}
-	if len(missingProviders) > 0 {
-		state.logger.Printf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
-	}
-}
-
-// serverInitCmds returns tea.Cmd slices for server-init tasks (used by local TUI Init).
-func (m Model) serverInitCmds() []tea.Cmd {
-	var cmds []tea.Cmd
-
-	seenMissing := make(map[string]bool)
-	var missingProviders []string
-
-	for _, project := range m.state.projects {
-		if project.Tracker == "" || project.Repo == "" {
-			continue
-		}
-		if _, ok := m.state.clients[project.Tracker]; !ok {
-			if !seenMissing[project.Tracker] {
-				seenMissing[project.Tracker] = true
-				missingProviders = append(missingProviders, project.Tracker)
-			}
-		}
-	}
-
-	if len(missingProviders) > 0 {
-		msg := fmt.Sprintf("Tracker unavailable (token not set?): %s", strings.Join(missingProviders, ", "))
-		m.state.logger.Println(msg)
-		cmds = append(cmds, func() tea.Msg {
-			return StatusMsg{Text: msg}
-		})
-	}
-
-	// Scan for already-running Claude Code sessions.
-	cmds = append(cmds, m.scanExistingSessionsCmd())
-
-	return cmds
-}
-
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	if mdl, ok := model.(Model); ok {
@@ -368,13 +300,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWatcherReady(msg)
 
 	case TickMsg:
-		cmds := m.checkSessionLiveness()
-		m.checkPermissionSignals()
-		if scanCmd := m.checkNewSessions(); scanCmd != nil {
-			cmds = append(cmds, scanCmd)
-		}
-		cmds = append(cmds, tickCmd())
-		return m, tea.Batch(cmds...)
+		return m.handleTick()
 
 	case WatcherErrorMsg:
 		m.state.logger.Printf("watcher error: key=%s err=%v", msg.ProjectID, msg.Err)
@@ -389,55 +315,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case LabelCheckResultMsg:
-		if msg.Err != nil {
-			m.setStatus(fmt.Sprintf("Label check failed: %s", msg.Err))
-			m.pendingOp = nil
-			return m, nil
-		}
-		if len(msg.Missing) == 0 {
-			return m.executePendingOp()
-		}
-		m.showLabelConfirm(msg.ProjectID, msg.Missing)
-		return m, m.confirmForm.Init()
+		return m.handleLabelCheckResult(msg)
 
 	case LabelsEnsuredMsg:
-		if msg.Err != nil {
-			m.setStatus(fmt.Sprintf("Label sync failed: %s", msg.Err))
-			m.pendingOp = nil
-			return m, nil
-		}
-		if len(msg.Created) > 0 {
-			m.setStatus(fmt.Sprintf("Created labels: %s", strings.Join(msg.Created, ", ")))
-		}
-		if m.pendingOp != nil {
-			return m.executePendingOp()
-		}
-		return m, nil
+		return m.handleLabelsEnsured(msg)
 
 	case IssuesLoadedMsg:
-		if msg.ProjectID == m.statusProjectID {
-			m.statusLoading = false
-			if msg.Err != nil {
-				m.statusError = msg.Err.Error()
-			} else {
-				m.statusIssues = msg.Issues
-			}
-		}
-		return m, nil
+		return m.handleIssuesLoaded(msg)
 
 	case IssueConfirmedMsg:
-		if msg.Err != nil {
-			m.setStatus(fmt.Sprintf("Confirm failed: %s", msg.Err))
-		} else {
-			m.setStatus(fmt.Sprintf("Issue #%s confirmed → todo", msg.IssueID))
-			for i, issue := range m.statusIssues {
-				if issue.ID == msg.IssueID {
-					m.statusIssues[i].Status = tracker.StatusTodo
-					break
-				}
-			}
-		}
-		return m, nil
+		return m.handleIssueConfirmed(msg)
 
 	// Loop engine messages
 	case LoopPollMsg:
@@ -473,25 +360,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Channel event messages
 	case ChannelEventMsg:
-		m.state.AppendChannelEvent(msg.ProjectID, msg.Event)
-		m.state.logger.Printf("channel: event received project=%s type=%s", msg.ProjectID, msg.Event.Type)
-
-		// Auto-scroll: if viewing channel and at bottom, follow new content (any project).
-		autoScroll := m.currentView == ViewChannel && m.viewport.AtBottom()
-
-		// Re-issue read cmd for the next event.
-		m.state.RLock()
-		ch, ok := m.state.channelSubs[msg.ProjectID]
-		m.state.RUnlock()
-		var nextCmd tea.Cmd
-		if ok && ch != nil {
-			nextCmd = channelReadNextCmd(msg.ProjectID, ch, m.state.logger)
-		}
-
-		if autoScroll {
-			m.viewport.GotoBottom()
-		}
-		return m, nextCmd
+		return m.handleChannelEvent(msg)
 
 	case ChannelSubscribedMsg:
 		if msg.Err != nil && !errors.Is(msg.Err, errChannelClosed) {
@@ -858,72 +727,6 @@ func (m Model) handleChannelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// --- Focus panel: loop slot selection ---
-
-func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
-	if m.focusedPanel == FocusLoopSlots {
-		m.focusedPanel = FocusProjects
-		return m, nil
-	}
-	project := m.state.projects[m.cursor]
-	m.state.RLock()
-	keys := m.sortedSlotKeys(project.ID)
-	m.state.RUnlock()
-	if len(keys) == 0 {
-		return m, nil
-	}
-	m.focusedPanel = FocusLoopSlots
-	m.focusProjectID = project.ID
-	m.loopCursor = 0
-	return m, nil
-}
-
-func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.state.RLock()
-	keys := m.sortedSlotKeys(m.focusProjectID)
-	m.state.RUnlock()
-	if len(keys) == 0 {
-		m.focusedPanel = FocusProjects
-		return m, nil
-	}
-	if m.loopCursor >= len(keys) {
-		m.loopCursor = len(keys) - 1
-	}
-
-	switch {
-	case key.Matches(msg, m.keys.Back):
-		m.focusedPanel = FocusProjects
-		return m, nil
-
-	case key.Matches(msg, m.keys.Up):
-		if m.loopCursor > 0 {
-			m.loopCursor--
-		}
-
-	case key.Matches(msg, m.keys.Down):
-		if m.loopCursor < len(keys)-1 {
-			m.loopCursor++
-		}
-
-	case key.Matches(msg, m.keys.PageUp):
-		m.viewport.PageUp()
-
-	case key.Matches(msg, m.keys.PageDown):
-		m.viewport.PageDown()
-
-	case key.Matches(msg, m.keys.Enter):
-		return m.launchFocusClaudeCmd(keys[m.loopCursor])
-
-	case key.Matches(msg, m.keys.Open):
-		return m.openSlotFolderCmd(keys[m.loopCursor])
-
-	case key.Matches(msg, m.keys.Tracker):
-		return m.openSlotIssueCmd(keys[m.loopCursor])
-	}
-
-	return m, nil
-}
-
 func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
 		m.setStatus(fmt.Sprintf("Launch failed: %s", msg.Err))
@@ -1054,42 +857,4 @@ func (m Model) findProject(id string) *config.ProjectConfig {
 	return nil
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
-		return TickMsg(t)
-	})
-}
 
-// channelSubscribeCmd subscribes to the broker's EventBus for the given project.
-// Stores the subscription channel in AppState.channelSubs and returns a cmd that
-// reads the first event. Subsequent reads are triggered by channelReadNextCmd.
-func (m Model) channelSubscribeCmd(projectID string) tea.Cmd {
-	logger := m.state.logger
-	brokerRef := m.state.broker
-	if brokerRef == nil {
-		return func() tea.Msg {
-			return ChannelSubscribedMsg{ProjectID: projectID, Err: fmt.Errorf("broker not available")}
-		}
-	}
-	bus := brokerRef.Events()
-	ch := bus.Subscribe(projectID)
-
-	m.state.Lock()
-	m.state.channelSubs[projectID] = ch
-	m.state.Unlock()
-
-	logger.Printf("channel: subscribed to EventBus for project=%s", projectID)
-	return channelReadNextCmd(projectID, ch, logger)
-}
-
-// channelReadNextCmd returns a tea.Cmd that blocks until the next event arrives on ch.
-func channelReadNextCmd(projectID string, ch <-chan broker.Event, logger *log.Logger) tea.Cmd {
-	return func() tea.Msg {
-		event, ok := <-ch
-		if !ok {
-			logger.Printf("channel: EventBus channel closed for project=%s", projectID)
-			return ChannelSubscribedMsg{ProjectID: projectID, Err: errChannelClosed}
-		}
-		return ChannelEventMsg{ProjectID: projectID, Event: event}
-	}
-}

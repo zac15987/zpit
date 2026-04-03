@@ -23,6 +23,61 @@ import (
 	"github.com/zac15987/zpit/internal/tracker"
 )
 
+func (m Model) handleLabelCheckResult(msg LabelCheckResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.setStatus(fmt.Sprintf("Label check failed: %s", msg.Err))
+		m.pendingOp = nil
+		return m, nil
+	}
+	if len(msg.Missing) == 0 {
+		return m.executePendingOp()
+	}
+	m.showLabelConfirm(msg.ProjectID, msg.Missing)
+	return m, m.confirmForm.Init()
+}
+
+func (m Model) handleLabelsEnsured(msg LabelsEnsuredMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.setStatus(fmt.Sprintf("Label sync failed: %s", msg.Err))
+		m.pendingOp = nil
+		return m, nil
+	}
+	if len(msg.Created) > 0 {
+		m.setStatus(fmt.Sprintf("Created labels: %s", strings.Join(msg.Created, ", ")))
+	}
+	if m.pendingOp != nil {
+		return m.executePendingOp()
+	}
+	return m, nil
+}
+
+func (m Model) handleIssuesLoaded(msg IssuesLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.ProjectID == m.statusProjectID {
+		m.statusLoading = false
+		if msg.Err != nil {
+			m.statusError = msg.Err.Error()
+		} else {
+			m.statusIssues = msg.Issues
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleIssueConfirmed(msg IssueConfirmedMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.setStatus(fmt.Sprintf("Confirm failed: %s", msg.Err))
+	} else {
+		m.setStatus(fmt.Sprintf("Issue #%s confirmed → todo", msg.IssueID))
+		for i, issue := range m.statusIssues {
+			if issue.ID == msg.IssueID {
+				m.statusIssues[i].Status = tracker.StatusTodo
+				break
+			}
+		}
+	}
+	return m, nil
+}
+
 // loadIssuesCmd fetches issues from the tracker via TrackerClient.
 func (m Model) loadIssuesCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
