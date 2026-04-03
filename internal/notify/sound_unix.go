@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const soundTimeout = 5 * time.Second
+const soundTimeout = 15 * time.Second
 
 // playerSpec defines a command-line audio player with its arguments.
 type playerSpec struct {

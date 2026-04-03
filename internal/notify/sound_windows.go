@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const soundTimeout = 5 * time.Second
+const soundTimeout = 15 * time.Second
 
 func playSound(path string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), soundTimeout)
@@ -22,7 +22,7 @@ func playSound(path string) error {
 				`$p = New-Object System.Windows.Media.MediaPlayer; `+
 				`$p.Open([Uri]::new('%s')); `+
 				`$p.Play(); `+
-				`Start-Sleep -Milliseconds 3000; `+
+				`Start-Sleep -Milliseconds 14000; `+
 				`$p.Close()`,
 			path,
 		)
