@@ -823,14 +823,26 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		if oldState == watcher.StatePermission && ev.State != watcher.StatePermission {
 			at.PermissionMessage = ""
 			deletePermissionSignal(at.SessionID)
+			// Reset cooldown so the next waiting notification is not suppressed
+			// by the permission notification's cooldown window.
+			m.state.notifier.Reset(msg.ProjectID)
 		}
 
 		if ev.State == watcher.StateWaiting {
+			// Detect new question: even in Waiting→Waiting transitions (e.g. clarifier
+			// consecutive end_turn without tool_use), a different question text means
+			// the agent asked something new and the user should be notified.
+			isNewQuestion := at.LastQuestion != ev.QuestionText
 			at.LastQuestion = ev.QuestionText
-			// Notify on transition to waiting.
-			if oldState != watcher.StateWaiting {
+
+			if oldState != watcher.StateWaiting || isNewQuestion {
+				if isNewQuestion {
+					m.state.notifier.Reset(msg.ProjectID)
+				}
 				projectName := m.projectName(msg.ProjectID)
-				m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText)
+				if !m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText) {
+					m.state.logger.Printf("notification suppressed by cooldown: key=%s", msg.ProjectID)
+				}
 			}
 		} else if ev.State == watcher.StateWorking {
 			// User responded — reset notification cooldown.
