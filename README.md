@@ -139,6 +139,7 @@ tmux_mode = "new_window"    # new_window | new_pane
 tui_alert = true
 windows_toast = true
 sound = true
+# sound_file = "D:/sounds/notify.mp3"  # custom notification sound (WAV/MP3/M4A/OGG)
 re_remind_minutes = 2
 
 [worktree]
