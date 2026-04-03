@@ -1,8 +1,8 @@
 # Zpit
 
-A TUI-based AI development cockpit that orchestrates [Claude Code](https://claude.ai/code) agents across multiple projects. Zpit acts as a **dispatch center** — it selects projects, launches agents in separate terminal windows, monitors their progress, and coordinates the full issue lifecycle from requirement clarification to PR.
+**Zpit** (zac + cockpit) — a TUI-based AI development cockpit that orchestrates [Claude Code](https://claude.ai/code) agents across multiple projects. Zpit acts as a **dispatch center** — it selects projects, launches agents in separate terminal windows, monitors their progress, coordinates the full issue lifecycle from requirement clarification to PR, and enables real-time cross-agent communication via a built-in HTTP broker + MCP channel.
 
-> **Key principle:** Claude Code runs in independent terminal windows. Zpit never wraps or embeds it — it monitors via session logs and coordinates via issue trackers.
+> **Key principle:** Claude Code runs in independent terminal windows. Zpit never wraps or embeds it — it monitors via session logs, coordinates via issue trackers, and bridges agents via a local channel broker.
 
 ## TUI Preview
 
@@ -69,16 +69,6 @@ A TUI-based AI development cockpit that orchestrates [Claude Code](https://claud
   [y] Confirm (pending→todo)  [p] Open in browser  [Esc] Back
 ```
 
-## Status
-
-> **This project is under active development.** Core features are functional but some areas remain untested.
-
-| Area | Status |
-|------|--------|
-| Clarifier agent → Coding agent → Reviewer agent | ✅ Working |
-| Reviewer agent auto-retry (NEEDS CHANGES → Coding agent) | ⚠️ Not yet tested end-to-end |
-| Worktree cleanup after PR merge | ⚠️ Not fully tested |
-
 ## How It Works
 
 ```
@@ -107,6 +97,7 @@ You (TUI)                    Claude Code Agents
 - **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Permission / Ended), auto-detects running sessions on startup, survives `/resume` session switches
 - **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
+- **Cross-agent channel** — real-time agent-to-agent communication via HTTP broker + MCP; supports same-project, cross-project, and global broadcast messaging
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
@@ -176,6 +167,8 @@ hook_mode = "strict"        # strict | standard | relaxed
 tracker = "my-forgejo"
 repo = "org/repo"
 base_branch = "dev"
+channel_enabled = false     # enable cross-agent channel communication
+channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
 tags = ["go"]
 
 [projects.path]

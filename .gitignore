@@ -36,3 +36,4 @@ go.work.sum
 .claude/docs/
 .claude/settings.local.json
 .claude/hooks/
+.mcp.json

@@ -254,6 +254,174 @@ func TestDeployHooksToProject_NotificationHookInSettings(t *testing.T) {
 	}
 }
 
+func TestEnsureGitignore_NewFile(t *testing.T) {
+	dir := t.TempDir()
+	EnsureGitignore(dir)
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	for _, rule := range zpitIgnoreRules {
+		if !strings.Contains(string(data), rule) {
+			t.Errorf("missing rule: %s", rule)
+		}
+	}
+	if !strings.Contains(string(data), "# Zpit auto-deploy") {
+		t.Error("missing header comment")
+	}
+}
+
+func TestEnsureGitignore_PartialExists(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-populate with one rule already present.
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".mcp.json\n"), 0o644)
+
+	EnsureGitignore(dir)
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	content := string(data)
+	// .mcp.json should appear exactly once (the original).
+	if strings.Count(content, ".mcp.json") != 1 {
+		t.Errorf(".mcp.json duplicated:\n%s", content)
+	}
+	// Other rules should be present.
+	for _, rule := range zpitIgnoreRules {
+		if !strings.Contains(content, rule) {
+			t.Errorf("missing rule: %s", rule)
+		}
+	}
+}
+
+func TestEnsureGitignore_AllExist(t *testing.T) {
+	dir := t.TempDir()
+	// Write all rules already.
+	var buf strings.Builder
+	buf.WriteString("# Zpit auto-deploy\n")
+	for _, rule := range zpitIgnoreRules {
+		buf.WriteString(rule + "\n")
+	}
+	initial := buf.String()
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(initial), 0o644)
+
+	EnsureGitignore(dir)
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(data) != initial {
+		t.Errorf("file was modified when all rules already existed:\n%s", string(data))
+	}
+}
+
+func TestEnsureGitignore_NoDuplicateHeader(t *testing.T) {
+	dir := t.TempDir()
+	// First deploy: creates header + all rules.
+	EnsureGitignore(dir)
+
+	// Simulate a future zpitIgnoreRules addition by removing one rule from .gitignore.
+	path := filepath.Join(dir, ".gitignore")
+	data, _ := os.ReadFile(path)
+	trimmed := strings.Replace(string(data), ".mcp.json\n", "", 1)
+	os.WriteFile(path, []byte(trimmed), 0o644)
+
+	// Second deploy: should add the missing rule without a second header.
+	EnsureGitignore(dir)
+
+	data, _ = os.ReadFile(path)
+	if strings.Count(string(data), "# Zpit auto-deploy") != 1 {
+		t.Errorf("duplicate header:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), ".mcp.json") {
+		t.Error("missing rule was not re-added")
+	}
+}
+
+func TestEnsureGitattributes_NewFile(t *testing.T) {
+	dir := t.TempDir()
+	EnsureGitattributes(dir)
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitattributes"))
+	if err != nil {
+		t.Fatalf("read .gitattributes: %v", err)
+	}
+	for _, rule := range zpitGitattributesRules {
+		if !strings.Contains(string(data), rule) {
+			t.Errorf("missing rule: %s", rule)
+		}
+	}
+	if !strings.Contains(string(data), "# Zpit auto-deploy") {
+		t.Error("missing header comment")
+	}
+}
+
+func TestEnsureGitattributes_PartialExists(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-populate with an existing rule.
+	os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.go text eol=lf\n"), 0o644)
+
+	EnsureGitattributes(dir)
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitattributes"))
+	if err != nil {
+		t.Fatalf("read .gitattributes: %v", err)
+	}
+	content := string(data)
+	// Original rule should remain.
+	if !strings.Contains(content, "*.go text eol=lf") {
+		t.Error("original rule was lost")
+	}
+	// Zpit rules should be present.
+	for _, rule := range zpitGitattributesRules {
+		if !strings.Contains(content, rule) {
+			t.Errorf("missing rule: %s", rule)
+		}
+	}
+}
+
+func TestEnsureGitattributes_AllExist(t *testing.T) {
+	dir := t.TempDir()
+	var buf strings.Builder
+	buf.WriteString("# Zpit auto-deploy\n")
+	for _, rule := range zpitGitattributesRules {
+		buf.WriteString(rule + "\n")
+	}
+	initial := buf.String()
+	os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte(initial), 0o644)
+
+	EnsureGitattributes(dir)
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitattributes"))
+	if string(data) != initial {
+		t.Errorf("file was modified when all rules already existed:\n%s", string(data))
+	}
+}
+
+func TestEnsureGitattributes_NoDuplicateHeader(t *testing.T) {
+	dir := t.TempDir()
+	EnsureGitattributes(dir)
+
+	// Simulate removing one rule.
+	path := filepath.Join(dir, ".gitattributes")
+	data, _ := os.ReadFile(path)
+	trimmed := strings.Replace(string(data), zpitGitattributesRules[0]+"\n", "", 1)
+	os.WriteFile(path, []byte(trimmed), 0o644)
+
+	// Second deploy: should add missing rule without duplicating header.
+	EnsureGitattributes(dir)
+
+	data, _ = os.ReadFile(path)
+	if strings.Count(string(data), "# Zpit auto-deploy") != 1 {
+		t.Errorf("duplicate header:\n%s", string(data))
+	}
+	for _, rule := range zpitGitattributesRules {
+		if !strings.Contains(string(data), rule) {
+			t.Errorf("missing rule was not re-added: %s", rule)
+		}
+	}
+}
+
 func readSettingsLocal(t *testing.T, dir string) []byte {
 	t.Helper()
 	path := filepath.Join(dir, ".claude", "settings.local.json")

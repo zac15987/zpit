@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // HookScripts holds embedded hook script content for deployment.
@@ -132,6 +133,69 @@ func validateHookMode(hookMode string) error {
 		return fmt.Errorf("unknown hook_mode: %s (expected strict|standard|relaxed)", hookMode)
 	}
 	return nil
+}
+
+// zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
+var zpitIgnoreRules = []string{
+	".claude/agents/",
+	".claude/docs/",
+	".claude/hooks/",
+	".claude/settings.local.json",
+	".mcp.json",
+}
+
+// ensureFileRules appends missing rules to a file, using "# Zpit auto-deploy" as header.
+// Silently ignores errors (best-effort).
+func ensureFileRules(filePath string, rules []string) {
+	content, _ := os.ReadFile(filePath)
+	existing := make(map[string]bool)
+	for _, line := range strings.Split(string(content), "\n") {
+		existing[strings.TrimSpace(line)] = true
+	}
+
+	var missing []string
+	for _, rule := range rules {
+		if !existing[rule] {
+			missing = append(missing, rule)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	var buf strings.Builder
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		buf.WriteByte('\n')
+	}
+	if !existing["# Zpit auto-deploy"] {
+		buf.WriteString("\n# Zpit auto-deploy\n")
+	}
+	for _, rule := range missing {
+		buf.WriteString(rule)
+		buf.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(buf.String())
+}
+
+// EnsureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
+func EnsureGitignore(projectPath string) {
+	ensureFileRules(filepath.Join(projectPath, ".gitignore"), zpitIgnoreRules)
+}
+
+// zpitGitattributesRules are .gitattributes rules for Zpit-managed files.
+var zpitGitattributesRules = []string{
+	".claude/settings.json text eol=lf",
+}
+
+// EnsureGitattributes appends missing Zpit gitattributes rules to a project's .gitattributes.
+func EnsureGitattributes(projectPath string) {
+	ensureFileRules(filepath.Join(projectPath, ".gitattributes"), zpitGitattributesRules)
 }
 
 // DeployHooksToProject writes hook scripts to .claude/hooks/ and merges hook config

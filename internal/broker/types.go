@@ -11,6 +11,7 @@ type Artifact struct {
 	IssueID   string    `json:"issue_id"`
 	Type      string    `json:"type"`
 	Content   string    `json:"content"`
+	SenderID  string    `json:"sender_id,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -19,6 +20,7 @@ type Message struct {
 	From      string    `json:"from"`
 	To        string    `json:"to"`
 	Content   string    `json:"content"`
+	SenderID  string    `json:"sender_id,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -84,6 +86,18 @@ func (eb *eventBus) Unsubscribe(project string, ch <-chan Event) {
 		}
 	}
 	close(wch)
+}
+
+// closeAll closes all subscriber channels so blocked readers unblock immediately.
+// Safe to call before server.Shutdown() — deferred Unsubscribe calls become no-ops.
+func (eb *eventBus) closeAll() {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	for _, wch := range eb.mapping {
+		close(wch)
+	}
+	eb.subs = make(map[string]map[chan Event]struct{})
+	eb.mapping = make(map[<-chan Event]chan Event)
 }
 
 // publish sends an event to all subscribers of the given project.

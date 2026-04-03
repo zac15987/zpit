@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -175,6 +177,7 @@ func (m Model) renderHotkeys() string {
 		{"o", locale.T(locale.KeyOpenFolder), false},
 		{"p", locale.T(locale.KeyOpenTracker), false},
 		{"u", locale.T(locale.KeyUndeploy), false},
+		{"m", locale.T(locale.KeyChannelComm), false},
 		{"a", locale.T(locale.KeyAddProject), true},
 		{"e", locale.T(locale.KeyEditConfig), false},
 		{"Tab", locale.T(locale.KeyFocusSlot), true},
@@ -194,12 +197,17 @@ func (m Model) renderHotkeys() string {
 	return b.String()
 }
 
-func (m Model) projectName(id string) string {
-	// Strip "#N" suffix used for multi-session tracking keys.
-	lookupID := id
-	if idx := strings.Index(id, "#"); idx != -1 {
-		lookupID = id[:idx]
+// baseProjectID strips the "#N" suffix from a multi-session tracking key,
+// returning the original project ID.
+func baseProjectID(trackingKey string) string {
+	if idx := strings.Index(trackingKey, "#"); idx != -1 {
+		return trackingKey[:idx]
 	}
+	return trackingKey
+}
+
+func (m Model) projectName(id string) string {
+	lookupID := baseProjectID(id)
 	for _, p := range m.state.projects {
 		if p.ID == lookupID {
 			return p.Name
@@ -252,6 +260,23 @@ func (m Model) renderActiveTerminals() string {
 				detailStyle.Render(at.LaunchResult.SwitchHint),
 			))
 		}
+
+		// Channel event counts (own + listen projects) for this project.
+		pid := baseProjectID(projectID)
+		var allEvents []broker.Event
+		allEvents = append(allEvents, m.state.channelEvents[pid]...)
+		if proj := m.findProject(pid); proj != nil {
+			for _, lk := range proj.ChannelListen {
+				allEvents = append(allEvents, m.state.channelEvents[lk]...)
+			}
+		}
+		if len(allEvents) > 0 {
+			artCount, msgCount := countAllChannelEvents(allEvents)
+			if artCount > 0 || msgCount > 0 {
+				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
+			}
+		}
+
 		i++
 	}
 
@@ -362,10 +387,50 @@ func (m Model) renderLoopStatus() string {
 					detailStyle.Render(slot.Error.Error()),
 				))
 			}
+
+			// Channel event counts (artifact/message) for this issue.
+			artCount, msgCount := countChannelEvents(m.state.channelEvents[projectID], slot.IssueID)
+			if artCount > 0 || msgCount > 0 {
+				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
+			}
 		}
 	}
 
 	return b.String()
+}
+
+// countChannelEvents counts artifact and message events matching the given issueID.
+// For artifacts, matches on IssueID. For messages, matches on From or To.
+func countChannelEvents(events []broker.Event, issueID string) (artifacts, messages int) {
+	for _, ev := range events {
+		switch ev.Type {
+		case "artifact":
+			var art broker.Artifact
+			if err := json.Unmarshal(ev.Payload, &art); err == nil && art.IssueID == issueID {
+				artifacts++
+			}
+		case "message":
+			var msg broker.Message
+			if err := json.Unmarshal(ev.Payload, &msg); err == nil && (msg.From == issueID || msg.To == issueID) {
+				messages++
+			}
+		}
+	}
+	return
+}
+
+// countAllChannelEvents counts all artifact and message events regardless of issue ID.
+// Used by Active Terminals which have no per-issue context.
+func countAllChannelEvents(events []broker.Event) (artifacts, messages int) {
+	for _, ev := range events {
+		switch ev.Type {
+		case "artifact":
+			artifacts++
+		case "message":
+			messages++
+		}
+	}
+	return
 }
 
 // agentContextPreview returns a prefix and truncated one-line preview for the

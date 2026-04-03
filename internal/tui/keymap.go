@@ -4,8 +4,10 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines all key bindings for the TUI.
 type KeyMap struct {
-	Up      key.Binding
-	Down    key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
 	Enter   key.Binding
 	Clarify key.Binding
 	Loop    key.Binding
@@ -15,6 +17,7 @@ type KeyMap struct {
 	Tracker    key.Binding
 	Add        key.Binding
 	EditConfig key.Binding
+	Channel    key.Binding
 	Undeploy   key.Binding
 	Help       key.Binding
 	Quit        key.Binding
@@ -27,7 +30,9 @@ type KeyMap struct {
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "page up")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", "page down")),
 		Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "launch Claude Code")),
 		Clarify: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "clarify")),
 		Loop:    key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "loop")),
@@ -37,6 +42,7 @@ func DefaultKeyMap() KeyMap {
 		Tracker:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "tracker")),
 		Add:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add project")),
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
+		Channel:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "channel")),
 		Undeploy:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undeploy")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),

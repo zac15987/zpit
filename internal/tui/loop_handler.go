@@ -122,13 +122,19 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 	m.state.Unlock()
 
 	// Create cmds after releasing lock (cmd methods acquire their own RLock).
+	// Worktree creation cmds are sequenced (not batched) to avoid concurrent
+	// git operations that conflict on .git/config file locks (Windows).
 	var cmds []tea.Cmd
+	var wtCmds []tea.Cmd
 	for _, a := range actions {
 		if a.isResume {
 			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, a.issueID))
 		} else {
-			cmds = append(cmds, m.loopCreateWorktreeCmd(msg.ProjectID, a.issueID, a.issueTitle))
+			wtCmds = append(wtCmds, m.loopCreateWorktreeCmd(msg.ProjectID, a.issueID, a.issueTitle))
 		}
+	}
+	if len(wtCmds) > 0 {
+		cmds = append(cmds, tea.Sequence(wtCmds...))
 	}
 	cmds = append(cmds, m.loopSchedulePoll(msg.ProjectID))
 	return m, tea.Batch(cmds...)

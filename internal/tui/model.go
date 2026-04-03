@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -31,6 +32,10 @@ import (
 	"github.com/zac15987/zpit/internal/worktree"
 )
 
+// errChannelClosed is a sentinel error returned by channelReadNextCmd when the
+// EventBus channel is closed (normal shutdown after Unsubscribe).
+var errChannelClosed = errors.New("channel closed")
+
 const (
 	statusDisplayDuration      = 5 * time.Second
 	tickInterval               = 1 * time.Second
@@ -46,6 +51,7 @@ type View int
 const (
 	ViewProjects View = iota
 	ViewStatus
+	ViewChannel
 )
 
 // FocusedPanel indicates which panel has keyboard focus in ViewProjects.
@@ -118,6 +124,9 @@ type Model struct {
 	statusCursor    int
 	statusLoading   bool
 	statusError     string
+
+	// Channel view state
+	channelProjectID string
 
 	// Error overlay (dismissible with Esc/Enter)
 	errorOverlay string
@@ -199,18 +208,12 @@ func (m Model) waitForStateRefresh() tea.Cmd {
 }
 
 // RunServerInit performs server-init logic synchronously (for zpit serve startup).
-// Runs session scan, .gitignore check, and provider validation on the AppState.
+// Runs session scan and provider validation on the AppState.
 func RunServerInit(state *AppState) {
-	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
 
 	for _, project := range state.projects {
-		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-		if projectPath != "" && !seenPath[projectPath] {
-			seenPath[projectPath] = true
-			ensureGitignore(projectPath)
-		}
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -230,16 +233,10 @@ func RunServerInit(state *AppState) {
 func (m Model) serverInitCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 
-	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
 
 	for _, project := range m.state.projects {
-		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-		if projectPath != "" && !seenPath[projectPath] {
-			seenPath[projectPath] = true
-			ensureGitignore(projectPath)
-		}
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -291,6 +288,10 @@ func (m *Model) syncViewportContent() {
 		header = m.renderStatusHeader()
 		footer = m.renderStatusFooter()
 		m.viewport.SetContent(m.renderStatusScrollable())
+	case ViewChannel:
+		header = m.renderChannelHeader()
+		footer = m.renderChannelFooter()
+		m.viewport.SetContent(m.renderChannelScrollable())
 	}
 	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
@@ -354,15 +355,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
-
 	case tea.MouseMsg:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -577,6 +578,34 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loopLabelPollTickMsg:
 		return m, m.loopPollLabelsCmd(msg.ProjectID, msg.IssueID)
 
+	// Channel event messages
+	case ChannelEventMsg:
+		m.state.AppendChannelEvent(msg.ProjectID, msg.Event)
+		m.state.logger.Printf("channel: event received project=%s type=%s", msg.ProjectID, msg.Event.Type)
+
+		// Auto-scroll: if viewing channel and at bottom, follow new content (any project).
+		autoScroll := m.currentView == ViewChannel && m.viewport.AtBottom()
+
+		// Re-issue read cmd for the next event.
+		m.state.RLock()
+		ch, ok := m.state.channelSubs[msg.ProjectID]
+		m.state.RUnlock()
+		var nextCmd tea.Cmd
+		if ok && ch != nil {
+			nextCmd = channelReadNextCmd(msg.ProjectID, ch, m.state.logger)
+		}
+
+		if autoScroll {
+			m.viewport.GotoBottom()
+		}
+		return m, nextCmd
+
+	case ChannelSubscribedMsg:
+		if msg.Err != nil && !errors.Is(msg.Err, errChannelClosed) {
+			m.state.logger.Printf("channel: subscribe error project=%s err=%v", msg.ProjectID, msg.Err)
+		}
+		return m, nil
+
 	}
 
 	return m, nil
@@ -592,6 +621,8 @@ func (m Model) View() string {
 		bg = m.viewProjects()
 	case ViewStatus:
 		bg = m.viewStatus()
+	case ViewChannel:
+		bg = m.viewChannel()
 	default:
 		bg = "Unknown view"
 	}
@@ -636,12 +667,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, ls := range m.state.loops {
 			ls.Active = false
 		}
+		// Capture channel subscriptions for cleanup outside lock.
+		capturedSubs := make(map[string]<-chan broker.Event, len(m.state.channelSubs))
+		for pid, ch := range m.state.channelSubs {
+			capturedSubs[pid] = ch
+			delete(m.state.channelSubs, pid)
+		}
 		// Capture and nil-out broker reference under lock to prevent data race.
 		brokerToClose := m.state.broker
 		m.state.broker = nil
 		m.state.Unlock()
-		// Close broker outside lock (Close is thread-safe).
+		// Unsubscribe all channel listeners so SSE handlers return immediately.
 		if brokerToClose != nil {
+			for pid, ch := range capturedSubs {
+				brokerToClose.Events().Unsubscribe(pid, ch)
+			}
 			brokerToClose.Close()
 		}
 		m.state.Unsubscribe(m.subscriberID)
@@ -654,6 +694,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleProjectsKey(msg)
 	case ViewStatus:
 		return m.handleStatusKey(msg)
+	case ViewChannel:
+		return m.handleChannelKey(msg)
 	}
 	return m, nil
 }
@@ -681,6 +723,12 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 		m.ensureCursorVisible(m.cursor * 3)
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
 
 	case key.Matches(msg, m.keys.Enter):
 		if m.selectedProject() == nil {
@@ -728,15 +776,27 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if ls, ok := m.state.loops[p.ID]; ok && ls.Active {
 			ls.Active = false
 			ls.Slots = make(map[string]*loop.Slot)
-			// Capture and nil-out broker reference under lock.
-			brokerToClose := m.state.broker
-			m.state.broker = nil
+			// Clean up channel subscriptions under lock (own project + listen projects).
+			capturedSubs := make(map[string]<-chan broker.Event)
+			if ch, exists := m.state.channelSubs[p.ID]; exists {
+				capturedSubs[p.ID] = ch
+				delete(m.state.channelSubs, p.ID)
+			}
+			for _, lp := range p.ChannelListen {
+				if ch, exists := m.state.channelSubs[lp]; exists {
+					capturedSubs[lp] = ch
+					delete(m.state.channelSubs, lp)
+				}
+			}
 			m.state.NotifyAll()
 			m.state.Unlock()
-			// Close broker outside lock (Close is thread-safe).
-			if brokerToClose != nil {
-				m.state.logger.Printf("loop: closing broker for project=%s", p.ID)
-				brokerToClose.Close()
+			// Unsubscribe channels outside lock (thread-safe).
+			// Broker lifecycle is tied to the Zpit process, not individual loops.
+			if m.state.broker != nil {
+				bus := m.state.broker.Events()
+				for pid, ch := range capturedSubs {
+					bus.Unsubscribe(pid, ch)
+				}
 			}
 			m.setStatus(fmt.Sprintf("Loop stopped for %s", p.Name))
 			return m, nil
@@ -786,6 +846,17 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoTop()
 		return m, m.loadIssuesCmd()
 
+	case key.Matches(msg, m.keys.Channel):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		m.focusedPanel = FocusProjects
+		m.currentView = ViewChannel
+		m.channelProjectID = p.ID
+		m.viewport.GotoTop()
+		return m, nil
+
 	case key.Matches(msg, m.keys.Add):
 		m.setStatus(locale.T(locale.KeyAddProjectStub))
 
@@ -817,6 +888,12 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusCursor++
 		}
 		m.ensureCursorVisible(m.statusCursor + 3)
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
 
 	case key.Matches(msg, m.keys.Confirm):
 		// Validate before setting pendingOp.
@@ -854,6 +931,35 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.openIssueURLCmd()
+	}
+
+	return m, nil
+}
+
+func (m Model) handleChannelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.currentView = ViewProjects
+		m.viewport.GotoTop()
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case key.Matches(msg, m.keys.Down):
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+		return m, nil
 	}
 
 	return m, nil
@@ -906,6 +1012,12 @@ func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.loopCursor++
 		}
 
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+
 	case key.Matches(msg, m.keys.Enter):
 		return m.launchFocusClaudeCmd(keys[m.loopCursor])
 
@@ -948,6 +1060,14 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	}
 	wtPath := slot.WorktreePath
 	issueID := slot.IssueID
+	// Find project config to check channel_enabled (within existing RLock).
+	var channelEnabled bool
+	for i := range m.state.projects {
+		if m.state.projects[i].ID == m.focusProjectID {
+			channelEnabled = m.state.projects[i].ChannelEnabled
+			break
+		}
+	}
 	m.state.RUnlock()
 
 	if _, err := os.Stat(wtPath); err != nil {
@@ -962,7 +1082,11 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	focusProjectID := m.focusProjectID
 
 	return m, func() tea.Msg {
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg)
+		var args []string
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID:   focusProjectID,
 			TrackingKey: trackingKey,
@@ -1092,10 +1216,37 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	m.state.activeTerminals[trackKey] = at
 	// Snapshot tracked PIDs while still holding the lock.
 	excludePIDs := m.trackedPIDs()
+	// Check if channel subscription already exists while holding the lock.
+	_, channelSubscribed := m.state.channelSubs[msg.ProjectID]
+	// Snapshot listen project subscription status under lock.
+	var unsubscribedListenProjects []string
+	if !channelSubscribed {
+		project := m.findProject(msg.ProjectID)
+		if project != nil && project.ChannelEnabled && m.state.broker != nil {
+			for _, lp := range project.ChannelListen {
+				if _, exists := m.state.channelSubs[lp]; !exists && lp != project.ID {
+					unsubscribedListenProjects = append(unsubscribedListenProjects, lp)
+				}
+			}
+		}
+	}
 	m.state.NotifyAll()
 	m.state.Unlock()
 
-	return m, m.startWatcherDirCmdWithExcludes(trackKey, workDir, excludePIDs)
+	cmds := []tea.Cmd{m.startWatcherDirCmdWithExcludes(trackKey, workDir, excludePIDs)}
+
+	// Subscribe to broker EventBus if channel_enabled and not already subscribed.
+	if !channelSubscribed {
+		project := m.findProject(msg.ProjectID)
+		if project != nil && project.ChannelEnabled && m.state.broker != nil {
+			cmds = append(cmds, m.channelSubscribeCmd(msg.ProjectID))
+			for _, lp := range unsubscribedListenProjects {
+				cmds = append(cmds, m.channelSubscribeCmd(lp))
+			}
+		}
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
@@ -1154,8 +1305,33 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 func (m Model) launchClaudeCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	logger := m.state.logger
+
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
+
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaude(project, cfg)
+		// Write .mcp.json for channel communication (Enter launch uses issue_id "0" = lobby).
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelListen); err != nil {
+				logger.Printf("enter: failed to write .mcp.json for project=%s: %v", project.ID, err)
+			} else {
+				logger.Printf("enter: wrote .mcp.json to %s for project=%s", projectPath, project.ID)
+			}
+		}
+
+		var args []string
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -1701,7 +1877,11 @@ func (m Model) launchClarifierCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
+		args := []string{"--agent", "clarifier"}
+		if project.ChannelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -1724,16 +1904,18 @@ func (m *Model) showDeployConfirm() {
 		),
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAndLaunchClarifier()
+		return m.deployAndLaunchAgent("clarifier", injectLangInstruction(m.state.clarifierMD))
 	}
 }
 
-// deployAndLaunchClarifier deploys clarifier.md to the project and launches it.
-func (m Model) deployAndLaunchClarifier() tea.Cmd {
+// deployAndLaunchAgent deploys the named agent to the project and launches it.
+// If the broker is available (channel_enabled), writes .mcp.json to the project root
+// with ZPIT_ISSUE_ID = "0" (lobby) so the manual agent can use channel communication.
+func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	clarifierMD := injectLangInstruction(m.state.clarifierMD)
 	cfg := m.state.cfg.Terminal
+	logger := m.state.logger
 
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
@@ -1743,9 +1925,19 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
 	}
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
 
 	return func() tea.Msg {
-		// Deploy hooks
+		// Deploy hooks + gitignore + gitattributes
+		worktree.EnsureGitignore(projectPath)
+		worktree.EnsureGitattributes(projectPath)
 		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
 		}
@@ -1755,13 +1947,26 @@ func (m Model) deployAndLaunchClarifier() tea.Cmd {
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
-		if err := os.WriteFile(filepath.Join(agentDir, "clarifier.md"), clarifierMD, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(agentDir, agentName+".md"), agentMD, 0o644); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
 		}
 		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
+		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelListen); err != nil {
+				logger.Printf("%s: failed to write .mcp.json for project=%s: %v", agentName, project.ID, err)
+			} else {
+				logger.Printf("%s: wrote .mcp.json to %s for project=%s", agentName, projectPath, project.ID)
+			}
+		}
+
 		// Launch
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "clarifier")
+		args := []string{"--agent", agentName}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -1806,51 +2011,6 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 	}
 }
 
-// zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
-var zpitIgnoreRules = []string{
-	".claude/agents/",
-	".claude/docs/",
-	".claude/hooks/",
-	".claude/settings.local.json",
-}
-
-// ensureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
-func ensureGitignore(projectPath string) {
-	gitignorePath := filepath.Join(projectPath, ".gitignore")
-
-	content, _ := os.ReadFile(gitignorePath)
-	existing := make(map[string]bool)
-	for _, line := range strings.Split(string(content), "\n") {
-		existing[strings.TrimSpace(line)] = true
-	}
-
-	var missing []string
-	for _, rule := range zpitIgnoreRules {
-		if !existing[rule] {
-			missing = append(missing, rule)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-
-	var buf strings.Builder
-	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
-		buf.WriteByte('\n')
-	}
-	buf.WriteString("\n# Zpit auto-deploy\n")
-	for _, rule := range missing {
-		buf.WriteString(rule)
-		buf.WriteByte('\n')
-	}
-
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(buf.String())
-}
 
 // checkLabelsCmd checks which required labels are missing (read-only, no creation).
 func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
@@ -1962,32 +2122,36 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 		m.pendingOp = nil
 		project := m.state.projects[op.ProjectIndex]
 
-		// Start broker if channel_enabled for this project.
-		if project.ChannelEnabled && m.state.broker == nil {
-			b, err := broker.New(m.state.logger)
-			if err != nil {
-				m.state.logger.Printf("loop: broker start failed for %s: %v", project.ID, err)
-				m.setStatus(fmt.Sprintf("Broker start failed: %v", err))
-			} else {
-				m.state.broker = b
-				m.state.logger.Printf("loop: broker started on %s for project=%s", b.Addr(), project.ID)
-			}
-		}
-
 		m.state.Lock()
 		ls := &loop.LoopState{
 			Active: true,
 			Slots:  make(map[string]*loop.Slot),
 		}
 		m.state.loops[project.ID] = ls
+		// Snapshot listen subscription status under lock.
+		var unsubscribedListenProjects []string
+		if project.ChannelEnabled && m.state.broker != nil {
+			for _, lp := range project.ChannelListen {
+				if _, exists := m.state.channelSubs[lp]; !exists && lp != project.ID {
+					unsubscribedListenProjects = append(unsubscribedListenProjects, lp)
+				}
+			}
+		}
 		m.state.NotifyAll()
 		m.state.Unlock()
 		m.setStatus(fmt.Sprintf("Loop started for %s", project.Name))
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			m.loopCleanupMergedCmd(project.ID),
 			m.loopScanOpenPRsCmd(project.ID),
 			m.loopPollCmd(project.ID),
-		)
+		}
+		if project.ChannelEnabled && m.state.broker != nil {
+			cmds = append(cmds, m.channelSubscribeCmd(project.ID))
+			for _, lp := range unsubscribedListenProjects {
+				cmds = append(cmds, m.channelSubscribeCmd(lp))
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case PendingConfirmIssue:
 		m.pendingOp = nil
@@ -2083,7 +2247,11 @@ func (m Model) launchReviewerCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
+		args := []string{"--agent", "reviewer"}
+		if project.ChannelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
@@ -2106,7 +2274,7 @@ func (m *Model) showReviewerDeployConfirm() {
 		),
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAndLaunchReviewer()
+		return m.deployAndLaunchAgent("reviewer", injectLangInstruction(m.state.reviewerMD))
 	}
 }
 
@@ -2173,44 +2341,6 @@ func undeployFiles(projectPath string) int {
 	return removed
 }
 
-// deployAndLaunchReviewer deploys reviewer.md to the project and launches it.
-func (m Model) deployAndLaunchReviewer() tea.Cmd {
-	project := m.state.projects[m.cursor]
-	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	reviewerMD := injectLangInstruction(m.state.reviewerMD)
-	cfg := m.state.cfg.Terminal
-	agentGuidelines := m.state.agentGuidelinesMD
-	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
-	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
-	var trackerDocContent string
-	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
-		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
-	}
-
-	return func() tea.Msg {
-		// Deploy hooks
-		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
-		}
-
-		agentDir := filepath.Join(projectPath, ".claude", "agents")
-		if err := os.MkdirAll(agentDir, 0o755); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
-		}
-		if err := os.WriteFile(filepath.Join(agentDir, "reviewer.md"), reviewerMD, 0o644); err != nil {
-			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
-		}
-		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
-
-		result, err := terminal.LaunchClaude(project, cfg, "--agent", "reviewer")
-		return LaunchResultMsg{
-			ProjectID: project.ID,
-			Result:    result,
-			Err:       err,
-		}
-	}
-}
 
 // injectLangInstruction prepends the locale response instruction after YAML frontmatter.
 func injectLangInstruction(md []byte) []byte {
@@ -2268,3 +2398,36 @@ func openInBrowser(url string) tea.Cmd {
 	}
 }
 
+// channelSubscribeCmd subscribes to the broker's EventBus for the given project.
+// Stores the subscription channel in AppState.channelSubs and returns a cmd that
+// reads the first event. Subsequent reads are triggered by channelReadNextCmd.
+func (m Model) channelSubscribeCmd(projectID string) tea.Cmd {
+	logger := m.state.logger
+	brokerRef := m.state.broker
+	if brokerRef == nil {
+		return func() tea.Msg {
+			return ChannelSubscribedMsg{ProjectID: projectID, Err: fmt.Errorf("broker not available")}
+		}
+	}
+	bus := brokerRef.Events()
+	ch := bus.Subscribe(projectID)
+
+	m.state.Lock()
+	m.state.channelSubs[projectID] = ch
+	m.state.Unlock()
+
+	logger.Printf("channel: subscribed to EventBus for project=%s", projectID)
+	return channelReadNextCmd(projectID, ch, logger)
+}
+
+// channelReadNextCmd returns a tea.Cmd that blocks until the next event arrives on ch.
+func channelReadNextCmd(projectID string, ch <-chan broker.Event, logger *log.Logger) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-ch
+		if !ok {
+			logger.Printf("channel: EventBus channel closed for project=%s", projectID)
+			return ChannelSubscribedMsg{ProjectID: projectID, Err: errChannelClosed}
+		}
+		return ChannelEventMsg{ProjectID: projectID, Event: event}
+	}
+}

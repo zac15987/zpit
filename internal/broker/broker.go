@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,11 +16,12 @@ import (
 
 // Broker is an in-memory HTTP broker for cross-worktree agent communication.
 // It provides REST endpoints for artifacts and messages, plus SSE for real-time events.
-// Binds to 127.0.0.1:0 (dynamic port) to avoid conflicts between multiple Zpit instances.
+// Binds to 127.0.0.1:<port> using the configured broker_port (default 17731).
 type Broker struct {
 	mu        sync.RWMutex
 	artifacts map[string][]Artifact // project → artifacts
 	messages  map[string][]Message  // project → messages
+	sseConns  map[string]int        // project → active SSE connection count
 
 	bus      *eventBus
 	listener net.Listener
@@ -27,23 +29,25 @@ type Broker struct {
 	logger   *log.Logger
 }
 
-// New creates a new Broker, binds to a dynamic port on localhost, and starts serving.
+// New creates a new Broker, binds to the specified port on localhost, and starts serving.
 // The caller must call Close() to stop the broker.
-func New(logger *log.Logger) (*Broker, error) {
+func New(logger *log.Logger, port int) (*Broker, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	logger.Println("broker: starting")
+	logger.Printf("broker: starting on port %d", port)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		logger.Printf("broker: listen failed: %v", err)
+		logger.Printf("broker: listen failed on port %d: %v", port, err)
 		return nil, fmt.Errorf("broker listen: %w", err)
 	}
 
 	b := &Broker{
 		artifacts: make(map[string][]Artifact),
 		messages:  make(map[string][]Message),
+		sseConns:  make(map[string]int),
 		bus:       newEventBus(),
 		listener:  ln,
 		logger:    logger,
@@ -55,6 +59,7 @@ func New(logger *log.Logger) (*Broker, error) {
 	mux.HandleFunc("POST /api/messages/{project}/{to}", b.handlePostMessage)
 	mux.HandleFunc("GET /api/messages/{project}/{issue_id}", b.handleGetMessages)
 	mux.HandleFunc("GET /api/events/{project}", b.handleSSE)
+	mux.HandleFunc("GET /api/projects", b.handleListProjects)
 
 	b.server = &http.Server{Handler: mux}
 
@@ -81,6 +86,8 @@ func (b *Broker) Events() EventBus {
 // Close gracefully shuts down the broker.
 func (b *Broker) Close() error {
 	b.logger.Println("broker: shutting down")
+	b.listener.Close() // stop accepting new connections
+	b.bus.closeAll()    // unblock all SSE handlers
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return b.server.Shutdown(ctx)
@@ -90,8 +97,9 @@ func (b *Broker) Close() error {
 
 // postArtifactRequest is the JSON body for POST /api/artifacts/{project}/{issue_id}.
 type postArtifactRequest struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
+	Type     string `json:"type"`
+	Content  string `json:"content"`
+	SenderID string `json:"sender_id"`
 }
 
 func (b *Broker) handlePostArtifact(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +118,7 @@ func (b *Broker) handlePostArtifact(w http.ResponseWriter, r *http.Request) {
 		IssueID:   issueID,
 		Type:      req.Type,
 		Content:   req.Content,
+		SenderID:  req.SenderID,
 		Timestamp: time.Now(),
 	}
 
@@ -147,8 +156,9 @@ func (b *Broker) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 
 // postMessageRequest is the JSON body for POST /api/messages/{project}/{to}.
 type postMessageRequest struct {
-	From    string `json:"from"`
-	Content string `json:"content"`
+	From     string `json:"from"`
+	Content  string `json:"content"`
+	SenderID string `json:"sender_id"`
 }
 
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +177,7 @@ func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		From:      req.From,
 		To:        to,
 		Content:   req.Content,
+		SenderID:  req.SenderID,
 		Timestamp: time.Now(),
 	}
 
@@ -244,6 +255,19 @@ func (b *Broker) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	b.logger.Printf("broker: SSE sent %d initial artifacts for project=%s", len(existing), project)
 
+	// Track active SSE connection count for discovery endpoint.
+	b.mu.Lock()
+	b.sseConns[project]++
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.sseConns[project]--
+		if b.sseConns[project] == 0 {
+			delete(b.sseConns, project)
+		}
+		b.mu.Unlock()
+	}()
+
 	// Subscribe to new events.
 	ch := b.bus.Subscribe(project)
 	defer b.bus.Unsubscribe(project, ch)
@@ -265,6 +289,77 @@ func (b *Broker) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// projectInfo describes an active project for the discovery endpoint.
+type projectInfo struct {
+	ID         string   `json:"id"`
+	IssueIDs   []string `json:"issue_ids"`
+	AgentCount int      `json:"agent_count"`
+}
+
+func (b *Broker) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	b.logger.Println("broker: GET /api/projects")
+
+	// Snapshot data under RLock, then release before processing.
+	b.mu.RLock()
+	type projectSnapshot struct {
+		artifacts []Artifact
+		messages  []Message
+		sseCount  int
+	}
+	// Collect unique project keys.
+	projects := make(map[string]struct{})
+	for p := range b.artifacts {
+		projects[p] = struct{}{}
+	}
+	for p := range b.messages {
+		projects[p] = struct{}{}
+	}
+	for p := range b.sseConns {
+		projects[p] = struct{}{}
+	}
+	snapshots := make(map[string]projectSnapshot, len(projects))
+	for p := range projects {
+		snapshots[p] = projectSnapshot{
+			artifacts: b.artifacts[p],
+			messages:  b.messages[p],
+			sseCount:  b.sseConns[p],
+		}
+	}
+	b.mu.RUnlock()
+
+	// Build result outside the lock.
+	result := make([]projectInfo, 0, len(snapshots))
+	for p, snap := range snapshots {
+		issueSet := make(map[string]struct{})
+		for _, art := range snap.artifacts {
+			issueSet[art.IssueID] = struct{}{}
+		}
+		for _, msg := range snap.messages {
+			if msg.From != "" {
+				issueSet[msg.From] = struct{}{}
+			}
+			if msg.To != "" {
+				issueSet[msg.To] = struct{}{}
+			}
+		}
+		issueIDs := make([]string, 0, len(issueSet))
+		for id := range issueSet {
+			issueIDs = append(issueIDs, id)
+		}
+		sort.Strings(issueIDs)
+		result = append(result, projectInfo{
+			ID:         p,
+			IssueIDs:   issueIDs,
+			AgentCount: snap.sseCount,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	b.logger.Printf("broker: listed %d projects", len(result))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // writeSSEEvent writes a single SSE event in the format: "data: {json}\n\n".

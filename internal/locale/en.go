@@ -19,6 +19,7 @@ var en = map[Key]string{
 	KeyAddProject:     "Add project",
 	KeyEditConfig:     "Edit config",
 	KeyUndeploy:       "Undeploy agents",
+	KeyChannelComm:    "Channel communication",
 	KeyHelp:           "Help",
 	KeyQuit:           "Quit",
 
@@ -87,6 +88,15 @@ var en = map[Key]string{
 	KeyInitRevisionCoding: "Read PR review comments and fix the issues",
 	KeyInitReview:         "Start review",
 	KeyInitRevisionReview: "Start revision review, focus on previous MUST FIX items",
+
+	// Channel view
+	KeyChannelTitle:          "Channel — %s",
+	KeyChannelNoActivity:     "No channel activity yet",
+	KeyChannelDisabled:       "Channel is not enabled for this project. Set channel_enabled = true in config.",
+	KeyChannelScroll:         "Scroll",
+	KeyChannelBack:           "Back",
+	KeyChannelGlobalTitle:    "Global Channel",
+	KeyChannelGlobalNoEvents: "No global channel activity",
 
 	KeyErrConfigTitle:       "Configuration Error",
 	KeyErrDismissHint:       "Press Esc or Enter to dismiss",

@@ -20,6 +20,8 @@ const (
 	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
 	defaultBaseBranch      = "dev"
 
+	defaultBrokerPort = 17731
+
 	defaultSSHPort               = 2200
 	defaultSSHHost               = "0.0.0.0"
 	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
@@ -34,6 +36,8 @@ type ProfileConfig struct {
 
 type Config struct {
 	Language     string                    `toml:"language"`
+	BrokerPort   int                       `toml:"broker_port"`
+	ZpitBin      string                    `toml:"zpit_bin"`
 	Terminal     TerminalConfig            `toml:"terminal"`
 	Notification NotificationConfig        `toml:"notification"`
 	Worktree     WorktreeConfig            `toml:"worktree"`
@@ -99,6 +103,7 @@ type ProjectConfig struct {
 	LogLevel       string            `toml:"log_level"`
 	BaseBranch     string            `toml:"base_branch"`
 	ChannelEnabled bool              `toml:"channel_enabled"`
+	ChannelListen  []string          `toml:"channel_listen"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
 }
@@ -127,6 +132,15 @@ func DefaultConfigPath() (string, error) {
 
 const configTemplate = `# Zpit Configuration
 # Docs: https://github.com/zac15987/zpit
+
+# broker_port: TCP port for the cross-agent channel broker (default 17731).
+# The broker starts automatically when any project has channel_enabled = true.
+# broker_port = 17731
+
+# zpit_bin: explicit path to the zpit executable for .mcp.json generation.
+# Useful when running via "go run ." (temp binary path becomes invalid after exit).
+# If omitted, falls back to os.Executable().
+# zpit_bin = "/usr/local/bin/zpit"
 
 [terminal]
 windows_mode = "new_tab"    # new_tab | new_window
@@ -226,6 +240,9 @@ func (s *SSHConfig) ResolveSSHPaths() error {
 func applyDefaults(cfg *Config) {
 	if cfg.Language == "" {
 		cfg.Language = "en"
+	}
+	if cfg.BrokerPort == 0 {
+		cfg.BrokerPort = defaultBrokerPort
 	}
 	if cfg.Terminal.WindowsMode == "" {
 		cfg.Terminal.WindowsMode = defaultWindowsMode
