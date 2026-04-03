@@ -139,7 +139,7 @@ tmux_mode = "new_window"    # new_window | new_pane
 tui_alert = true
 windows_toast = true
 sound = true
-re_remind_minutes = 15
+re_remind_minutes = 2
 
 [worktree]
 base_dir_windows = "D:/worktrees"
