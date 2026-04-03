@@ -112,6 +112,7 @@ func teaHandler(appState *tui.AppState) wishbt.Handler {
 		model := tui.NewModelWithState(appState, true)
 		return model, []tea.ProgramOption{
 			tea.WithAltScreen(),
+			tea.WithMouseCellMotion(),
 		}
 	}
 }

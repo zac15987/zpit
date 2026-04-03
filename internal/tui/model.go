@@ -159,7 +159,7 @@ type Model struct {
 // shared watchers or deactivating loops.
 func NewModelWithState(appState *AppState, isRemote bool) Model {
 	vp := viewport.New(0, 0)
-	vp.MouseWheelEnabled = false
+	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 3
 	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
 
@@ -355,6 +355,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -719,6 +724,12 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.ensureCursorVisible(m.cursor * 3)
 
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+
 	case key.Matches(msg, m.keys.Enter):
 		if m.selectedProject() == nil {
 			return m, nil
@@ -878,6 +889,12 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.ensureCursorVisible(m.statusCursor + 3)
 
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+
 	case key.Matches(msg, m.keys.Confirm):
 		// Validate before setting pendingOp.
 		if m.statusCursor >= len(m.statusIssues) {
@@ -935,6 +952,14 @@ func (m Model) handleChannelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+		return m, nil
 	}
 
 	return m, nil
@@ -986,6 +1011,12 @@ func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.loopCursor < len(keys)-1 {
 			m.loopCursor++
 		}
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.launchFocusClaudeCmd(keys[m.loopCursor])
