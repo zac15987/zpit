@@ -56,7 +56,7 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 │    │                                               │    │
 │    └── (each session: NewModelWithState(state,true))│   │
 │                                                    │    │
-│  RunServerInit(state) — 啟動時同步執行一次          │    │
+│  RunServerInit(state) — 啟動時同步執行一次 (session.go)│   │
 │    ├── session scan (找已跑的 Claude Code)          │    │
 │    ├── .gitignore check                            │    │
 │    └── provider validation                         │    │
@@ -85,7 +85,7 @@ authorized_keys_path = "~/.ssh/authorized_keys" # 選配
 
 | 行為 | Local (`isRemote=false`) | Remote (`isRemote=true`) |
 |------|--------------------------|--------------------------|
-| `Init()` | `serverInitCmds()` + `tickCmd()` | `tickCmd()` only |
+| `Init()` | `serverInitCmds()` + `tickCmd()` (both in session.go) | `tickCmd()` only |
 | Quit (`q`) | 停 watchers + loops + `tea.Quit` | `tea.Quit` only |
 | Server init | 在 `Init()` 中執行 | `zpit serve` 啟動時同步執行一次 |
 

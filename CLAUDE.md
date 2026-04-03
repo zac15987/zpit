@@ -49,15 +49,20 @@ internal/
 ├── worktree/            # Worktree Manager, Slugify(), DeployHooks(), settings.json merge
 └── tui/                 # Bubble Tea TUI — see "TUI Message Flow" below
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
+    ├── channel.go       # Channel EventBus subscription and event reading
+    ├── confirm.go       # Confirm dialogs, executePendingOp, undeploy
     ├── keymap.go        # Key bindings definition (Help, Channel, etc.)
-    ├── model.go         # Root Model, Update (key routing + message dispatch), View routing
-    ├── msg.go           # All custom tea.Msg types
+    ├── launch.go        # Terminal launch cmds, slot operations, deploy helpers
     ├── loop_cmds.go     # Loop tea.Cmd functions (poll, create worktree, launch, cleanup)
     ├── loop_handler.go  # Loop message handlers (state machine transitions)
+    ├── model.go         # Root Model, Init, Update (one-line dispatch), View routing, key handlers
+    ├── msg.go           # All custom tea.Msg types
+    ├── session.go       # Session lifecycle, discovery, monitoring, liveness, permission detection
+    ├── tracker_ops.go   # Label check/ensure, issue load/confirm, label check flow
+    ├── validate.go      # Input validation helpers with RLock
     ├── view_channel.go  # Channel event timeline view ([m] key)
     ├── view_projects.go # Main screen rendering
-    ├── view_status.go   # Issue list sub-view
-    └── validate.go      # Input validation helpers with RLock
+    └── view_status.go   # Issue list sub-view
 ```
 
 ## Architecture
@@ -82,9 +87,9 @@ This means changes to `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md`
 The TUI follows Bubble Tea's Elm architecture with a consistent pattern across all features:
 
 1. **msg.go** — defines all `tea.Msg` types (data carriers, no logic)
-2. **loop_cmds.go** / model.go — `tea.Cmd` functions that perform async work (API calls, file I/O, polling), return messages. These acquire `RLock` for reads.
-3. **loop_handler.go** / model.go `Update()` — message handlers that mutate state and return next commands. These acquire `Lock` for writes + call `NotifyAll`.
-4. **view_projects.go** / view_status.go — pure rendering functions, acquire `RLock` for reads.
+2. **loop_cmds.go** / session.go / launch.go / tracker_ops.go / channel.go — `tea.Cmd` functions that perform async work (API calls, file I/O, polling), return messages. These acquire `RLock` for reads.
+3. **loop_handler.go** / session.go / launch.go / tracker_ops.go / confirm.go / channel.go — message handlers dispatched from model.go `Update()` (one-line dispatch). These acquire `Lock` for writes + call `NotifyAll`.
+4. **view_projects.go** / view_status.go / view_channel.go — pure rendering functions, acquire `RLock` for reads.
 
 Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
 

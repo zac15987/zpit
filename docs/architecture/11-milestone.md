@@ -75,6 +75,20 @@
 - [x] 所有 loop handlers 加 write lock + NotifyAll，所有 loop cmds 加 read lock
 - [x] View rendering 加 RLock
 
+## Refactoring: model.go 拆分 ✅
+
+> PR #59 | Issue #24
+
+- [x] model.go（2433 行）拆分為 6 檔，降至 860 行
+- [x] 新增 session.go（733 行）：session 生命週期、discovery、monitoring、liveness、permission detection
+- [x] 新增 launch.go（479 行）：terminal launch cmds、slot operations、deploy helpers
+- [x] 新增 tracker_ops.go（242 行）：label check/ensure、issue load/confirm
+- [x] 新增 confirm.go（208 行）：confirm dialogs、executePendingOp、undeploy
+- [x] 新增 channel.go（78 行）：broker EventBus subscription、event reading
+- [x] update() 所有 >5 行 inline handler 轉為 one-line dispatch（`return m.handleXxx(msg)`）
+- [x] 每個新檔案頂部標註 lock protocol doc comment
+- [x] 純 code movement + inline handler extraction，零行為變更
+
 ---
 
 ## M5: 完整體驗（規劃中）
