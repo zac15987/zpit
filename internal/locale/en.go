@@ -82,6 +82,9 @@ var en = map[Key]string{
 	KeyNoWorktreePath: "Slot has no worktree",
 	KeyLoopSlotHelp:   "Enter: open Claude  o: open folder  p: open issue  \u2191\u2193: navigate  Tab/Esc: back",
 
+	// Sound file warning
+	KeySoundFileNotFound: "Sound file not found: %s",
+
 	// Config validation errors
 	// Agent init messages
 	KeyInitCoding:         "Start implementation",

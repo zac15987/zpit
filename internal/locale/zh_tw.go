@@ -82,6 +82,9 @@ var zhTW = map[Key]string{
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
 	KeyLoopSlotHelp:   "Enter: 開啟 Claude  o: 開啟資料夾  p: 開啟 issue  \u2191\u2193: 選擇  Tab/Esc: 返回",
 
+	// Sound file warning
+	KeySoundFileNotFound: "找不到音效檔案：%s",
+
 	// Config validation errors
 	// Agent init messages
 	KeyInitCoding:         "開始實作",
