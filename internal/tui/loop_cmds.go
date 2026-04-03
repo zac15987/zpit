@@ -220,6 +220,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 		if err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
+		worktree.EnsureGitignore(wtPath)
 		if err := worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts); err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
@@ -328,7 +329,8 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	channelEnabled := project.ChannelEnabled
 
 	return func() tea.Msg {
-		// Safety-net: ensure hooks exist (handles resume from previous session)
+		// Safety-net: ensure hooks + gitignore exist (handles resume from previous session)
+		worktree.EnsureGitignore(wtPath)
 		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -470,7 +472,8 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	}
 
 	return func() tea.Msg {
-		// Safety-net: ensure hooks + docs exist
+		// Safety-net: ensure hooks + docs + gitignore exist
+		worktree.EnsureGitignore(wtPath)
 		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
@@ -811,7 +814,8 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
-		// Safety-net: ensure hooks + docs exist
+		// Safety-net: ensure hooks + docs + gitignore exist
+		worktree.EnsureGitignore(wtPath)
 		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
 		deployDocs(wtPath, "", agentGuidelines, codeConstructionPrinciples)
 

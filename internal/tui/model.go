@@ -208,18 +208,12 @@ func (m Model) waitForStateRefresh() tea.Cmd {
 }
 
 // RunServerInit performs server-init logic synchronously (for zpit serve startup).
-// Runs session scan, .gitignore check, and provider validation on the AppState.
+// Runs session scan and provider validation on the AppState.
 func RunServerInit(state *AppState) {
-	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
 
 	for _, project := range state.projects {
-		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-		if projectPath != "" && !seenPath[projectPath] {
-			seenPath[projectPath] = true
-			ensureGitignore(projectPath)
-		}
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -239,16 +233,10 @@ func RunServerInit(state *AppState) {
 func (m Model) serverInitCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 
-	seenPath := make(map[string]bool)
 	seenMissing := make(map[string]bool)
 	var missingProviders []string
 
 	for _, project := range m.state.projects {
-		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-		if projectPath != "" && !seenPath[projectPath] {
-			seenPath[projectPath] = true
-			ensureGitignore(projectPath)
-		}
 		if project.Tracker == "" || project.Repo == "" {
 			continue
 		}
@@ -1884,7 +1872,8 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	zpitBin := m.state.cfg.ZpitBin
 
 	return func() tea.Msg {
-		// Deploy hooks
+		// Deploy hooks + gitignore
+		worktree.EnsureGitignore(projectPath)
 		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
 		}
@@ -1958,52 +1947,6 @@ func (m Model) loadIssuesCmd() tea.Cmd {
 	}
 }
 
-// zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
-var zpitIgnoreRules = []string{
-	".claude/agents/",
-	".claude/docs/",
-	".claude/hooks/",
-	".claude/settings.local.json",
-	".mcp.json",
-}
-
-// ensureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
-func ensureGitignore(projectPath string) {
-	gitignorePath := filepath.Join(projectPath, ".gitignore")
-
-	content, _ := os.ReadFile(gitignorePath)
-	existing := make(map[string]bool)
-	for _, line := range strings.Split(string(content), "\n") {
-		existing[strings.TrimSpace(line)] = true
-	}
-
-	var missing []string
-	for _, rule := range zpitIgnoreRules {
-		if !existing[rule] {
-			missing = append(missing, rule)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-
-	var buf strings.Builder
-	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
-		buf.WriteByte('\n')
-	}
-	buf.WriteString("\n# Zpit auto-deploy\n")
-	for _, rule := range missing {
-		buf.WriteString(rule)
-		buf.WriteByte('\n')
-	}
-
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(buf.String())
-}
 
 // checkLabelsCmd checks which required labels are missing (read-only, no creation).
 func (m Model) checkLabelsCmd(projectID string, required []tracker.LabelDef) tea.Cmd {
