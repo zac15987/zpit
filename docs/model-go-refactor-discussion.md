@@ -3,7 +3,7 @@
 > 日期：2026-04-03
 > 對應 Issue：[#24](https://github.com/zac15987/zpit/issues/24) model.go 大檔案程式碼拆分評估
 > 方法：3 人 Agent Team 專家討論（3 輪）
-> **狀態：Phase 1 已完成** — [PR #59](https://github.com/zac15987/zpit/pull/59) merged（2026-04-03）
+> **狀態：已完成** — Phase 1 via [PR #59](https://github.com/zac15987/zpit/pull/59) merged（2026-04-03）；Phase 2 評估後決定不執行。
 
 ---
 
@@ -216,11 +216,53 @@ handleLaunchResult 在一次 Lock/Unlock 區間內做了：
 
 ---
 
+## 實作結果
+
+### Phase 1：已完成 ✅
+
+[PR #59](https://github.com/zac15987/zpit/pull/59) merged（2026-04-03）
+
+| 檔案 | 行數 | 說明 |
+|------|------|------|
+| `model.go` | 860（從 2433 降） | Core routing + key handling + orchestrators |
+| `session.go` | 733 | Session lifecycle：handlers + cmds + tick + types |
+| `launch.go` | 479 | Launch & Deploy：launch cmds + slot ops + utilities |
+| `tracker_ops.go` | 242 | Tracker & Label：label check/ensure + issue ops |
+| `confirm.go` | 208 | Confirm dialogs + executePendingOp + undeploy |
+| `channel.go` | 78 | Channel subscription + event reading |
+
+`update()` 的所有 message case 均為 one-line dispatch，每個新檔案頂部有 lock protocol doc comment。
+
+### Phase 2：評估後決定不執行 ✅
+
+Phase 1 完成後，以 Bo 提出的三項 God Class 測試重新評估 model.go：
+
+| 測試 | 拆分前 | 拆分後 |
+|------|--------|--------|
+| ①「一個修改是否牽動不相關的程式碼？」 | ❌ 改 session 要翻 2433 行 | ✅ 只開 session.go |
+| ②「理解一個功能是否需要讀完所有方法？」 | ❌ 50+ 方法混在一起 | ✅ 17 方法，全是 routing/key handling |
+| ③「struct 是否有大量方法不使用的 field 子集？」 | ❌ statusIssues 只被 10% 方法用 | ⚠️ 仍存在，但影響已小 |
+
+**結論：God Class 症狀已基本消除。**
+
+- model.go 860 行、17 方法——規模與 `loop_cmds.go`（856 行）同級，是正常的 Bubble Tea root Model
+- model.go 現在的職責為 **TUI application state machine**（routing + key handling + cross-domain orchestration），是 Bubble Tea Elm 架構下合法的單一抽象
+- 24 個 field 是 Bubble Tea 的結構性限制（single source of truth），不是設計缺陷
+- Embedded struct field 聚類（StatusViewState, ConfirmState, LoopFocusState）技術上可行，但屬於 §2 No speculative generality——目前結構已足夠清晰，無需強行重構
+
+Phase 2 的 embedded struct 聚類和 launch 方法參數化保留為「已知可選改善」，未來如有實際痛點再重新評估。
+
+| # | 決策 | 結論 | 理由 |
+|---|------|------|------|
+| 9 | Phase 2 是否執行 | **否（不需要）** | Phase 1 後 God Class 症狀已消除；24 field 是 Bubble Tea 結構性限制；§2 No speculative generality |
+
+---
+
 ## 風險提醒
 
-1. **已知耦合點**：`handleLaunchResult` 同時操作 `activeTerminals` + `channelSubs` 是架構級耦合。Phase 1 不處理，但若 channel 功能擴展，此 handler 可能需要重構。
-2. **Slice 共享**：Phase 2 的 `StatusViewState.Issues`（`[]tracker.Issue`）在 Bubble Tea value copy 時只複製 slice header。目前安全（整體替換），但未來若有 in-place mutation 需注意。
-3. **Embedded struct 不加方法**：Phase 2 的 embedded struct 純粹是 field 分組，不要加 `Init/Update/View` 方法，否則 Bubble Tea 可能混淆。
+1. **已知耦合點**：`handleLaunchResult` 同時操作 `activeTerminals` + `channelSubs` 是架構級耦合。若 channel 功能擴展，此 handler 可能需要重構。
+2. **Slice 共享**：`StatusViewState.Issues`（`[]tracker.Issue`）在 Bubble Tea value copy 時只複製 slice header。目前安全（整體替換），但未來若有 in-place mutation 需注意。
+3. **Embedded struct 不加方法**：若未來做 embedded struct 聚類，純粹是 field 分組，不要加 `Init/Update/View` 方法，否則 Bubble Tea 可能混淆。
 
 ---
 
