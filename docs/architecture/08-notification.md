@@ -75,7 +75,7 @@ Agent 停下來 / 需要權限
 tui_alert = true          # TUI 主畫面警示
 windows_toast = true      # Windows Toast 通知
 sound = true              # 音效提示
-re_remind_minutes = 15    # 超過 N 分鐘未回應，再次發送提醒
+re_remind_minutes = 2     # 超過 N 分鐘未回應，再次發送提醒
 ```
 
 實作位於 `internal/notify/`（`notify.go` + 平台特定檔案 `toast_windows.go`/`toast_unix.go`、`sound_windows.go`/`sound_unix.go`）。
