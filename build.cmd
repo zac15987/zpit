@@ -1,7 +1,7 @@
 @echo off
 
 echo === git fetch ===
-git fetch
+git fetch -v
 if %errorlevel% neq 0 (
     echo FETCH FAILED
     pause
@@ -9,7 +9,7 @@ if %errorlevel% neq 0 (
 )
 
 echo === git pull ===
-git pull
+git pull -v
 if %errorlevel% neq 0 (
     echo PULL FAILED
     pause
@@ -17,7 +17,7 @@ if %errorlevel% neq 0 (
 )
 
 echo === go build . ===
-go build .
+go build -v .
 if %errorlevel% neq 0 (
     echo BUILD FAILED
     pause
@@ -25,7 +25,7 @@ if %errorlevel% neq 0 (
 )
 
 echo === go install . ===
-go install .
+go install -v .
 if %errorlevel% neq 0 (
     echo INSTALL FAILED
     pause
