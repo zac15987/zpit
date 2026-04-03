@@ -16,7 +16,7 @@ const (
 	defaultWindowsMode     = "new_tab"
 	defaultTmuxMode        = "new_window"
 	defaultMaxPerProject   = 5
-	defaultReRemindMinutes = 15
+	defaultReRemindMinutes = 2
 	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
 	defaultBaseBranch      = "dev"
 
@@ -152,7 +152,7 @@ tmux_mode = "new_window"    # new_window | new_pane
 tui_alert = true
 windows_toast = true
 sound = true
-re_remind_minutes = 15
+re_remind_minutes = 2
 
 [worktree]
 base_dir_windows = ""       # e.g. "D:/worktrees"

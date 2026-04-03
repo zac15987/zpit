@@ -234,4 +234,4 @@ echo $?   # 應該是 2
 
 - Agent 在可見終端中運行，使用者可隨時切過去介入（天然安全閥）
 - `max_per_project` 限制每個專案同時 worktree 數量
-- agent 等待回應超過 `re_remind_minutes`（預設 15 分鐘）→ TUI 再次發送提醒通知
+- agent 等待回應超過 `re_remind_minutes`（預設 2 分鐘）→ TUI 再次發送提醒通知

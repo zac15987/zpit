@@ -596,7 +596,9 @@ func (m *Model) checkPermissionSignals() {
 			at.StateChangedAt = now
 			changed = true
 			projectName := m.projectName(projectID)
-			m.state.notifier.NotifyWaiting(projectID, projectName, ps.sig.Message)
+			if !m.state.notifier.NotifyWaiting(projectID, projectName, ps.sig.Message) {
+				m.state.logger.Printf("notification suppressed by cooldown: key=%s", projectID)
+			}
 			break
 		}
 		if !matched {
