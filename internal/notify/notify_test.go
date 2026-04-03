@@ -13,7 +13,7 @@ func newTestNotifier(reRemindMinutes int) *Notifier {
 		WindowsToast:    false, // don't send real toasts in tests
 		Sound:           false,
 		ReRemindMinutes: reRemindMinutes,
-	})
+	}, nil)
 }
 
 func TestShouldNotify_FirstTime(t *testing.T) {
