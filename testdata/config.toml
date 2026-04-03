@@ -33,8 +33,8 @@ base_dir_wsl = "/mnt/d/Documents/.worktrees"
 dir_format = "{project_id}/{issue_id}--{slug}"
 auto_cleanup = true
 max_per_project = 5
-poll_seconds = 15
-pr_poll_seconds = 30
+poll_seconds = 10
+pr_poll_seconds = 10
 
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"

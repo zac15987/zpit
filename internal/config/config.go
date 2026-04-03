@@ -158,8 +158,8 @@ re_remind_minutes = 2
 base_dir_windows = ""       # e.g. "D:/worktrees"
 base_dir_wsl = ""           # e.g. "/mnt/d/worktrees"
 max_per_project = 5
-# poll_seconds = 15         # todo issue polling interval (seconds)
-# pr_poll_seconds = 30      # PR merge polling interval (seconds)
+# poll_seconds = 10         # todo issue polling interval (seconds)
+# pr_poll_seconds = 10      # PR merge polling interval (seconds)
 
 # --- SSH Server (zpit serve) ---
 # [ssh]
