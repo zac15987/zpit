@@ -144,18 +144,17 @@ var zpitIgnoreRules = []string{
 	".mcp.json",
 }
 
-// EnsureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
-func EnsureGitignore(projectPath string) {
-	gitignorePath := filepath.Join(projectPath, ".gitignore")
-
-	content, _ := os.ReadFile(gitignorePath)
+// ensureFileRules appends missing rules to a file, using "# Zpit auto-deploy" as header.
+// Silently ignores errors (best-effort).
+func ensureFileRules(filePath string, rules []string) {
+	content, _ := os.ReadFile(filePath)
 	existing := make(map[string]bool)
 	for _, line := range strings.Split(string(content), "\n") {
 		existing[strings.TrimSpace(line)] = true
 	}
 
 	var missing []string
-	for _, rule := range zpitIgnoreRules {
+	for _, rule := range rules {
 		if !existing[rule] {
 			missing = append(missing, rule)
 		}
@@ -176,12 +175,27 @@ func EnsureGitignore(projectPath string) {
 		buf.WriteByte('\n')
 	}
 
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 	f.WriteString(buf.String())
+}
+
+// EnsureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
+func EnsureGitignore(projectPath string) {
+	ensureFileRules(filepath.Join(projectPath, ".gitignore"), zpitIgnoreRules)
+}
+
+// zpitGitattributesRules are .gitattributes rules for Zpit-managed files.
+var zpitGitattributesRules = []string{
+	".claude/settings.json text eol=lf",
+}
+
+// EnsureGitattributes appends missing Zpit gitattributes rules to a project's .gitattributes.
+func EnsureGitattributes(projectPath string) {
+	ensureFileRules(filepath.Join(projectPath, ".gitattributes"), zpitGitattributesRules)
 }
 
 // DeployHooksToProject writes hook scripts to .claude/hooks/ and merges hook config

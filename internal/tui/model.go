@@ -1872,8 +1872,9 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	zpitBin := m.state.cfg.ZpitBin
 
 	return func() tea.Msg {
-		// Deploy hooks + gitignore
+		// Deploy hooks + gitignore + gitattributes
 		worktree.EnsureGitignore(projectPath)
+		worktree.EnsureGitattributes(projectPath)
 		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
 		}
