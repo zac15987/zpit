@@ -25,7 +25,7 @@ authorized_keys_path = "~/.ssh/authorized_keys"
 tui_alert = true
 windows_toast = true
 sound = true
-re_remind_minutes = 15
+re_remind_minutes = 2
 
 [worktree]
 base_dir_windows = "D:/Documents/.worktrees"

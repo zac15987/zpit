@@ -29,8 +29,8 @@ func TestLoad(t *testing.T) {
 	if !cfg.Notification.TUIAlert {
 		t.Error("TUIAlert should be true")
 	}
-	if cfg.Notification.ReRemindMinutes != 15 {
-		t.Errorf("ReRemindMinutes = %d, want 15", cfg.Notification.ReRemindMinutes)
+	if cfg.Notification.ReRemindMinutes != 2 {
+		t.Errorf("ReRemindMinutes = %d, want 2", cfg.Notification.ReRemindMinutes)
 	}
 
 	// Worktree
