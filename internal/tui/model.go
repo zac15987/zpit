@@ -159,7 +159,7 @@ type Model struct {
 // shared watchers or deactivating loops.
 func NewModelWithState(appState *AppState, isRemote bool) Model {
 	vp := viewport.New(0, 0)
-	vp.MouseWheelEnabled = true
+	vp.MouseWheelEnabled = false
 	vp.MouseWheelDelta = 3
 	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
 
@@ -359,11 +359,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-
-	case tea.MouseMsg:
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
