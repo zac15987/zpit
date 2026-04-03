@@ -83,7 +83,6 @@ func runLocalTUI() {
 	p := tea.NewProgram(
 		tui.NewModel(appState),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	if _, err := p.Run(); err != nil {
