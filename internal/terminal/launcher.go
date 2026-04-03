@@ -14,6 +14,7 @@ type LaunchResult struct {
 	Command    string
 	Args       []string
 	SwitchHint string
+	Warnings   []string // non-fatal warnings (e.g. WT profile resolution failures)
 }
 
 // LaunchClaude opens a new terminal window/tab and runs claude in the project directory.
@@ -84,21 +85,42 @@ func hasAgentFlag(extraArgs []string) bool {
 }
 
 // BuildWindowsArgs constructs wt.exe arguments for testing without exec.
-// When extraArgs contains "--agent", the command is wrapped with zpit-env.cmd
-// to inject ZPIT_AGENT=1 (wt.exe does not inherit parent env vars).
-func BuildWindowsArgs(projectName, projectPath, mode string, extraArgs []string) []string {
-	base := []string{}
+// When profile is non-empty, -p "ProfileName" is inserted before the -- separator.
+// When extraArgs contains "--agent", the command is wrapped with the appropriate
+// env wrapper based on shell type to inject ZPIT_AGENT=1.
+// shell should be "cmd", "pwsh", or "powershell" (empty defaults to "cmd").
+func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, extraArgs []string) []string {
+	var base []string
 	switch mode {
 	case "new_window":
-		base = []string{"-w", "new", "-d", projectPath, "--title", projectName, "--"}
+		base = []string{"-w", "new"}
 	default: // "new_tab"
-		base = []string{"new-tab", "-d", projectPath, "--title", projectName, "--"}
+		base = []string{"new-tab"}
 	}
+
+	if profile != "" {
+		base = append(base, "-p", profile)
+	}
+	base = append(base, "-d", projectPath, "--title", projectName, "--")
+
 	if hasAgentFlag(extraArgs) {
-		wrapper := []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}
+		wrapper := buildEnvWrapper(shell)
 		return append(append(base, wrapper...), buildClaudeArgs(extraArgs)...)
 	}
 	return append(base, buildClaudeArgs(extraArgs)...)
+}
+
+// buildEnvWrapper returns the command prefix for the ZPIT_AGENT=1 env wrapper
+// based on the detected shell type.
+func buildEnvWrapper(shell string) []string {
+	switch shell {
+	case "pwsh":
+		return []string{"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1"}
+	case "powershell":
+		return []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1"}
+	default: // "cmd" or empty
+		return []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}
+	}
 }
 
 // BuildTmuxArgs constructs tmux arguments for testing without exec.

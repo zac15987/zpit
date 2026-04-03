@@ -57,8 +57,9 @@ type SSHConfig struct {
 }
 
 type TerminalConfig struct {
-	WindowsMode string `toml:"windows_mode"` // "new_tab" | "new_window"
-	TmuxMode    string `toml:"tmux_mode"`    // "new_window" | "new_pane"
+	WindowsMode            string `toml:"windows_mode"`              // "new_tab" | "new_window"
+	TmuxMode               string `toml:"tmux_mode"`                 // "new_window" | "new_pane"
+	WindowsTerminalProfile string `toml:"windows_terminal_profile"`  // WT profile name for -p flag
 }
 
 type NotificationConfig struct {
@@ -145,6 +146,7 @@ const configTemplate = `# Zpit Configuration
 [terminal]
 windows_mode = "new_tab"    # new_tab | new_window
 tmux_mode = "new_window"    # new_window | new_pane
+# windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag and auto shell detection
 
 [notification]
 tui_alert = true

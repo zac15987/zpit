@@ -46,6 +46,9 @@ var gitGuardSH []byte
 //go:embed hooks/zpit-env.cmd
 var zpitEnvCMD []byte
 
+//go:embed hooks/zpit-env.ps1
+var zpitEnvPS1 []byte
+
 //go:embed hooks/notify-permission.sh
 var notifyPermissionSH []byte
 
@@ -211,6 +214,7 @@ func buildHookScripts() worktree.HookScripts {
 		BashFirewall:     bashFirewallSH,
 		GitGuard:         gitGuardSH,
 		EnvWrapper:       zpitEnvCMD,
+		EnvWrapperPS1:    zpitEnvPS1,
 		NotifyPermission: notifyPermissionSH,
 	}
 }

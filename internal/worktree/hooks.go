@@ -14,7 +14,8 @@ type HookScripts struct {
 	PathGuard        []byte
 	BashFirewall     []byte
 	GitGuard         []byte
-	EnvWrapper       []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches
+	EnvWrapper       []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches (cmd)
+	EnvWrapperPS1    []byte // zpit-env.ps1 — sets ZPIT_AGENT=1 for Windows agent launches (pwsh/powershell)
 	NotifyPermission []byte // Notification hook — writes permission signal for Zpit TUI
 }
 
@@ -259,6 +260,7 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 		"bash-firewall.sh":      scripts.BashFirewall,
 		"git-guard.sh":          scripts.GitGuard,
 		"zpit-env.cmd":          scripts.EnvWrapper,
+		"zpit-env.ps1":          scripts.EnvWrapperPS1,
 		"notify-permission.sh":  scripts.NotifyPermission,
 	}
 	for name, content := range files {
