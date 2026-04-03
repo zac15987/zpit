@@ -181,7 +181,7 @@ func NewAppState(
 	return &AppState{
 		cfg:                          cfg,
 		env:                          platform.Detect(),
-		notifier:                     notify.NewNotifier(cfg.Notification),
+		notifier:                     notify.NewNotifier(cfg.Notification, logger),
 		logger:                       logger,
 		projects:                     cfg.Projects,
 		activeTerminals:              make(map[string]*ActiveTerminal),

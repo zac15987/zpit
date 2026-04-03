@@ -843,6 +843,9 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 				if !m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText) {
 					m.state.logger.Printf("notification suppressed by cooldown: key=%s", msg.ProjectID)
 				}
+				if w := m.state.notifier.ConsumeWarning(); w != "" {
+					m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
+				}
 			}
 		} else if ev.State == watcher.StateWorking {
 			// User responded — reset notification cooldown.

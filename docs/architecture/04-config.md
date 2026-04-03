@@ -27,6 +27,7 @@ tmux_mode = "new_window"    # "new_window" | "new_pane"
 tui_alert = true
 windows_toast = true
 sound = true
+# sound_file = "D:/sounds/notify.mp3"   # 自訂通知音效路徑（支援 WAV/MP3/M4A/OGG）
 re_remind_minutes = 2
 
 # ──────────────────────────────────────────────

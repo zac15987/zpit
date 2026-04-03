@@ -25,6 +25,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -598,6 +599,9 @@ func (m *Model) checkPermissionSignals() {
 			projectName := m.projectName(projectID)
 			if !m.state.notifier.NotifyWaiting(projectID, projectName, ps.sig.Message) {
 				m.state.logger.Printf("notification suppressed by cooldown: key=%s", projectID)
+			}
+			if w := m.state.notifier.ConsumeWarning(); w != "" {
+				m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
 			}
 			break
 		}

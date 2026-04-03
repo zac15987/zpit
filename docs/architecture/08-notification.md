@@ -75,7 +75,18 @@ Agent 停下來 / 需要權限
 tui_alert = true          # TUI 主畫面警示
 windows_toast = true      # Windows Toast 通知
 sound = true              # 音效提示
+# sound_file = "D:/sounds/notify.mp3"  # 自訂通知音效路徑（留空使用系統預設音效）
 re_remind_minutes = 2     # 超過 N 分鐘未回應，再次發送提醒
 ```
+
+#### 自訂音效播放
+
+`sound_file` 欄位允許使用者指定自訂通知音效檔案路徑。支援格式：WAV、MP3、M4A、OGG、WMA。
+
+- **Windows**：透過 PowerShell 載入 `PresentationCore` 並使用 `System.Windows.Media.MediaPlayer` 播放，原生支援多種格式，無需額外安裝。
+- **Linux**：依序嘗試 `mpv` → `ffplay` → `paplay` → `aplay`，第一個成功即停止。前兩者支援所有主流格式，後兩者限 WAV/OGG。
+- **空值或未設定**：Windows 使用 `SystemSounds::Asterisk`，Linux 使用 freedesktop 系統音效（現行行為）。
+- **檔案不存在**：log 記錄警告、跳過播放，TUI 透過 `setStatus` 顯示一次性警告。
+- **Timeout**：使用 `exec.CommandContext` 搭配 5 秒 timeout，防止 goroutine 洩漏。
 
 實作位於 `internal/notify/`（`notify.go` + 平台特定檔案 `toast_windows.go`/`toast_unix.go`、`sound_windows.go`/`sound_unix.go`）。

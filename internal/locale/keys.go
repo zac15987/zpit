@@ -98,6 +98,9 @@ const (
 	KeyInitReview         Key = "init_review"
 	KeyInitRevisionReview Key = "init_revision_review"
 
+	// Sound file warning
+	KeySoundFileNotFound Key = "sound_file_not_found"
+
 	// Config validation errors (error overlay)
 	KeyErrConfigTitle       Key = "err_config_title"
 	KeyErrDismissHint       Key = "err_dismiss_hint"
