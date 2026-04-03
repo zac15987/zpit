@@ -11,6 +11,7 @@ broker_port = 17731
 [terminal]
 windows_mode = "new_tab"
 tmux_mode = "new_window"
+# windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag and auto shell detection
 
 [ssh]
 port = 2200
