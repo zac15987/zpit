@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/tracker"
@@ -285,6 +286,9 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 				projectName := m.projectName(msg.ProjectID)
 				m.state.notifier.NotifyWaiting(msg.ProjectID, projectName,
 					fmt.Sprintf("Issue #%s exceeded %d review rounds", msg.IssueID, maxRounds))
+				if w := m.state.notifier.ConsumeWarning(); w != "" {
+					m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
+				}
 				return m, nil
 			}
 			slot.ReviewRound++
