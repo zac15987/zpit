@@ -63,10 +63,11 @@ type TerminalConfig struct {
 }
 
 type NotificationConfig struct {
-	TUIAlert        bool `toml:"tui_alert"`
-	WindowsToast    bool `toml:"windows_toast"`
-	Sound           bool `toml:"sound"`
-	ReRemindMinutes int  `toml:"re_remind_minutes"`
+	TUIAlert        bool   `toml:"tui_alert"`
+	WindowsToast    bool   `toml:"windows_toast"`
+	Sound           bool   `toml:"sound"`
+	SoundFile       string `toml:"sound_file"`
+	ReRemindMinutes int    `toml:"re_remind_minutes"`
 }
 
 type WorktreeConfig struct {
@@ -152,6 +153,7 @@ tmux_mode = "new_window"    # new_window | new_pane
 tui_alert = true
 windows_toast = true
 sound = true
+# sound_file = "D:/sounds/notify.mp3"
 re_remind_minutes = 2
 
 [worktree]
