@@ -84,7 +84,8 @@ repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
 shared_core = true
 log_level = "strict"
 base_branch = "dev"
-channel_enabled = false
+channel_enabled = true
+channel_listen = ["_global"]
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
@@ -152,3 +153,23 @@ tags = ["go", "bubbletea"]
 [projects.path]
 windows = "D:/Documents/MyProjects/zpit"
 wsl = "/mnt/d/Documents/MyProjects/zpit"
+
+[[projects]]
+name = "Zplex"
+id = "zplex"
+profile = "desktop"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "zplex"
+git = "github"
+repo = "zac15987/zplex"
+shared_core = false
+log_level = "standard"
+base_branch = "dev"
+channel_enabled = false
+channel_listen = ["_global"]
+tags = ["go", "electron", "xterm"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zplex"
+wsl = "/mnt/d/Documents/MyProjects/zplex"
