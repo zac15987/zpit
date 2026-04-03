@@ -1034,6 +1034,14 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	}
 	wtPath := slot.WorktreePath
 	issueID := slot.IssueID
+	// Find project config to check channel_enabled (within existing RLock).
+	var channelEnabled bool
+	for i := range m.state.projects {
+		if m.state.projects[i].ID == m.focusProjectID {
+			channelEnabled = m.state.projects[i].ChannelEnabled
+			break
+		}
+	}
 	m.state.RUnlock()
 
 	if _, err := os.Stat(wtPath); err != nil {
@@ -1048,7 +1056,11 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	focusProjectID := m.focusProjectID
 
 	return m, func() tea.Msg {
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg)
+		var args []string
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID:   focusProjectID,
 			TrackingKey: trackingKey,
@@ -1267,8 +1279,33 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 func (m Model) launchClaudeCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	logger := m.state.logger
+
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
+
 	return func() tea.Msg {
-		result, err := terminal.LaunchClaude(project, cfg)
+		// Write .mcp.json for channel communication (Enter launch uses issue_id "0" = lobby).
+		if channelEnabled && brokerAddr != "" {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelListen); err != nil {
+				logger.Printf("enter: failed to write .mcp.json for project=%s: %v", project.ID, err)
+			} else {
+				logger.Printf("enter: wrote .mcp.json to %s for project=%s", projectPath, project.ID)
+			}
+		}
+
+		var args []string
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
 		return LaunchResultMsg{
 			ProjectID: project.ID,
 			Result:    result,
