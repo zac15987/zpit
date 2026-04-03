@@ -212,6 +212,14 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 
 	slot.LaunchedAt = msg.LaunchedAt
 
+	// Log and display any non-fatal warnings (e.g. WT profile resolution failures).
+	if msg.Result != nil {
+		for _, w := range msg.Result.Warnings {
+			m.state.logger.Printf("loop: %s launch warning #%s: %s", msg.Role, msg.IssueID, w)
+			m.setStatus(fmt.Sprintf("Warning (#%s %s): %s", msg.IssueID, msg.Role, w))
+		}
+	}
+
 	if msg.Role == "coder" {
 		slot.State = loop.SlotCoding
 		m.state.logger.Printf("loop: coder launched #%s (round=%d)", msg.IssueID, slot.ReviewRound)

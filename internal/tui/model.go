@@ -735,6 +735,12 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 
 	m.setStatus(fmt.Sprintf("Launched! %s", msg.Result.SwitchHint))
 
+	// Log and display any non-fatal warnings (e.g. WT profile resolution failures).
+	for _, w := range msg.Result.Warnings {
+		m.state.logger.Printf("launch warning: project=%s %s", msg.ProjectID, w)
+		m.setStatus(fmt.Sprintf("Warning: %s", w))
+	}
+
 	// Resolve WorkDir before creating ActiveTerminal so it's always stored.
 	workDir := msg.WorkDir
 	if workDir == "" {
