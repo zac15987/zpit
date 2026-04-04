@@ -762,6 +762,7 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
 		WorkDir:        workDir,
+		WorktreeBranch: msg.WorktreeBranch,
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}

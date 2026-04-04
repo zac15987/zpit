@@ -200,6 +200,7 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	}
 	wtPath := slot.WorktreePath
 	issueID := slot.IssueID
+	branchName := slot.BranchName
 	// Find project config to check channel_enabled (within existing RLock).
 	var channelEnabled bool
 	for i := range m.state.projects {
@@ -228,11 +229,12 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 		}
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
 		return LaunchResultMsg{
-			ProjectID:   focusProjectID,
-			TrackingKey: trackingKey,
-			WorkDir:     wtPath,
-			Result:      result,
-			Err:         err,
+			ProjectID:      focusProjectID,
+			TrackingKey:    trackingKey,
+			WorkDir:        wtPath,
+			WorktreeBranch: branchName,
+			Result:         result,
+			Err:            err,
 		}
 	}
 }
