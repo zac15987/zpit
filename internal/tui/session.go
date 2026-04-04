@@ -271,6 +271,7 @@ func (m Model) serverInitCmds() []tea.Cmd {
 }
 
 // scanExistingSessionsCmd scans all projects for already-running Claude Code sessions at startup.
+// Also enumerates each project's git worktrees and scans those paths for sessions.
 func (m Model) scanExistingSessionsCmd() tea.Cmd {
 	type projectInfo struct {
 		id   string
@@ -291,6 +292,10 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 		projects = append(projects, projectInfo{id: p.ID, path: path})
 	}
 
+	// wtManager is read-only after init — safe to capture without lock.
+	wtManager := m.state.wtManager
+	logger := m.state.logger
+
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
@@ -298,20 +303,43 @@ func (m Model) scanExistingSessionsCmd() tea.Cmd {
 		}
 		var entries []existingSessionEntry
 		for _, p := range projects {
+			// Scan main project directory.
 			sessions, err := watcher.FindActiveSessions(claudeHome, p.path)
-			if err != nil || len(sessions) == 0 {
+			if err == nil {
+				for _, s := range sessions {
+					logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
+					entries = append(entries, existingSessionEntry{
+						ProjectID: p.id,
+						PID:       s.PID,
+						SessionID: s.SessionID,
+						WorkDir:   p.path,
+						LogPath:   logPath,
+					})
+				}
+			}
+
+			// Scan worktree directories.
+			worktrees, err := wtManager.List(p.path)
+			if err != nil {
+				logger.Printf("session scan: listing worktrees for %s failed: %v", p.path, err)
 				continue
 			}
-			// Track ALL active sessions per project, not just the latest.
-			for _, s := range sessions {
-				logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
-				entries = append(entries, existingSessionEntry{
-					ProjectID: p.id,
-					PID:       s.PID,
-					SessionID: s.SessionID,
-					WorkDir:   p.path,
-					LogPath:   logPath,
-				})
+			for _, wt := range worktrees {
+				wtSessions, err := watcher.FindActiveSessions(claudeHome, wt.Path)
+				if err != nil || len(wtSessions) == 0 {
+					continue
+				}
+				for _, s := range wtSessions {
+					logPath := watcher.LogFilePath(claudeHome, wt.Path, s.SessionID)
+					entries = append(entries, existingSessionEntry{
+						ProjectID:      p.id,
+						PID:            s.PID,
+						SessionID:      s.SessionID,
+						WorkDir:        wt.Path,
+						LogPath:        logPath,
+						WorktreeBranch: wt.Branch,
+					})
+				}
 			}
 		}
 		return existingSessionsMsg{Source: "startup", Entries: entries}
@@ -625,6 +653,7 @@ func (m *Model) checkPermissionSignals() {
 
 // checkNewSessions checks if sessionScanInterval has elapsed and, if so, returns a tea.Cmd
 // that scans for externally-launched Claude Code sessions not yet tracked in activeTerminals.
+// Also enumerates each project's git worktrees and scans those paths for sessions.
 // Follows the same tick + interval + lock pattern as checkSessionLiveness.
 func (m *Model) checkNewSessions() tea.Cmd {
 	m.state.Lock()
@@ -659,6 +688,9 @@ func (m *Model) checkNewSessions() tea.Cmd {
 	logger := m.state.logger
 	m.state.RUnlock()
 
+	// wtManager is read-only after init — safe to capture without lock.
+	wtManager := m.state.wtManager
+
 	return func() tea.Msg {
 		claudeHome, err := watcher.ClaudeHome()
 		if err != nil {
@@ -667,22 +699,49 @@ func (m *Model) checkNewSessions() tea.Cmd {
 		}
 		var entries []existingSessionEntry
 		for _, p := range projects {
+			// Scan main project directory.
 			sessions, err := watcher.FindActiveSessions(claudeHome, p.path)
-			if err != nil || len(sessions) == 0 {
+			if err == nil {
+				for _, s := range sessions {
+					if trackedPIDs[s.PID] {
+						continue
+					}
+					logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
+					entries = append(entries, existingSessionEntry{
+						ProjectID: p.id,
+						PID:       s.PID,
+						SessionID: s.SessionID,
+						WorkDir:   p.path,
+						LogPath:   logPath,
+					})
+				}
+			}
+
+			// Scan worktree directories.
+			worktrees, err := wtManager.List(p.path)
+			if err != nil {
+				logger.Printf("session scan: listing worktrees for %s failed: %v", p.path, err)
 				continue
 			}
-			for _, s := range sessions {
-				if trackedPIDs[s.PID] {
+			for _, wt := range worktrees {
+				wtSessions, err := watcher.FindActiveSessions(claudeHome, wt.Path)
+				if err != nil || len(wtSessions) == 0 {
 					continue
 				}
-				logPath := watcher.LogFilePath(claudeHome, p.path, s.SessionID)
-				entries = append(entries, existingSessionEntry{
-					ProjectID: p.id,
-					PID:       s.PID,
-					SessionID: s.SessionID,
-					WorkDir:   p.path,
-					LogPath:   logPath,
-				})
+				for _, s := range wtSessions {
+					if trackedPIDs[s.PID] {
+						continue
+					}
+					logPath := watcher.LogFilePath(claudeHome, wt.Path, s.SessionID)
+					entries = append(entries, existingSessionEntry{
+						ProjectID:      p.id,
+						PID:            s.PID,
+						SessionID:      s.SessionID,
+						WorkDir:        wt.Path,
+						LogPath:        logPath,
+						WorktreeBranch: wt.Branch,
+					})
+				}
 			}
 		}
 		if len(entries) == 0 {
