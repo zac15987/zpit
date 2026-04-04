@@ -112,6 +112,8 @@ TUI 按 [l]
 │  │ 4. 寫入臨時 agent 檔案到 worktree                      │
 │  │    .claude/agents/coding-{issue-id}.md                 │
 │  │    （由 BuildCodingPrompt 組裝 Issue Spec → prompt）   │
+│  │    若 Issue Spec 含 TASKS → 同時部署 task-runner.md    │
+│  │    （subagent 定義，供 coding agent 委派 task 使用）   │
 │  │                                                        │
 │  │ 5. 啟動 coding agent（新終端，可見）                   │
 │  │    工作目錄 = worktree 路徑，ZPIT_AGENT=1              │

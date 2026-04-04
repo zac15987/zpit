@@ -27,7 +27,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 
 ```
 main.go                  # Entry point: subcommand routing, go:embed declarations, config/log init
-agents/                  # Agent templates (clarifier.md, reviewer.md) — embedded via go:embed
+agents/                  # Agent templates (clarifier.md, reviewer.md, task-runner.md) — embedded via go:embed
 hooks/                   # PreToolUse hook scripts — embedded via go:embed, + hook_test.go
 docs/                    # Agent behavioral rules, code quality baseline, LLM failure mode research
 docs/architecture/       # Architecture docs (split by topic) — see docs/architecture/README.md for index
@@ -41,7 +41,7 @@ internal/
 ├── mcp/                 # MCP stdio server for agent↔broker communication (zpit serve-channel)
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
 ├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
-├── prompt/              # Prompt assembly: BuildCodingPrompt, BuildReviewerPrompt, BuildRevisionPrompt
+├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
 ├── ssh/                 # Wish SSH server: StartServer(), auth config (pub-key + password)
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
@@ -73,11 +73,12 @@ Agents, hooks, and docs are embedded in the binary and deployed at runtime to ta
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, guidelinesMD, principlesMD, hookScripts)
     → stored in AppState fields
       → DeployHooks() on every agent launch ([c]/[r]/[l])
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
+      → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
 ```
 
 This means changes to `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md` require a rebuild to take effect.
@@ -187,6 +188,24 @@ State transitions are **label-driven** (poll issue labels, not PID monitoring). 
 - Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
 
 States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotCoding` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+
+### Task Execution Model (Subagent + Agent Teams)
+
+When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrator** — it delegates each task to a `task-runner` subagent instead of implementing tasks itself. This provides context isolation between tasks.
+
+**Execution strategy:**
+- **Sequential tasks** (no `[P]`): Delegated one at a time to `task-runner` subagent via the Agent tool. Each subagent runs in its own context window, implements the task, and commits.
+- **Parallel tasks** (`[P]` marked): When a group of `[P]` tasks has all dependencies satisfied, the orchestrator creates an Agent Team with one teammate per task (each using `task-runner` subagent type). Teammates work in parallel.
+- **Mixed**: Groups execute in dependency order — sequential tasks use subagent, parallel groups use Agent Team.
+- **No tasks**: `buildStandardWorkflow()` generates the same prompt as before (no delegation).
+
+**Prompt generation** (`internal/prompt/coding.go`):
+- `groupTasks()` partitions tasks into sequential singletons and parallel batches
+- `buildSubagentDelegation()` generates Agent tool delegation instructions
+- `buildTeamDelegation()` generates Agent Team instructions (only when `[P]` tasks exist)
+- Task Execution Order section sequences the groups correctly
+
+**task-runner subagent** (`agents/task-runner.md`): Restricted tools (`Read, Write, Edit, Bash, Glob, Grep`), reads CLAUDE.md + agent-guidelines on startup, commits with `[ISSUE-ID] T{N}: {description}` format, stays within assigned file scope.
 
 ### Hook-Based Safety System (5 Layers)
 

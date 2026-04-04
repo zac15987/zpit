@@ -91,9 +91,22 @@
 
 ---
 
+## Refactoring: Task 執行模型重構 ✅
+
+> PR #69 | Issue #68
+
+- [x] 新增 `agents/task-runner.md` subagent 定義（tools: Read, Write, Edit, Bash, Glob, Grep）
+- [x] 改寫 `buildTaskWorkflow()` 為 subagent/team delegation prompt 生成
+- [x] 新增 `groupTasks()` 將 tasks 分組為循序 singletons 和平行 batches
+- [x] 新增 `buildSubagentDelegation()` 和 `buildTeamDelegation()` prompt builders
+- [x] `main.go` 新增 `//go:embed agents/task-runner.md`，`AppState` 新增 `taskRunnerMD` 欄位
+- [x] `loopWriteAgentCmd()` 在 spec 含 TASKS 時部署 `task-runner.md` 到 worktree
+- [x] 測試更新：循序 tasks、混合平行 tasks、無 tasks 三種場景
+
+---
+
 ## M5: 完整體驗（規劃中）
 
-- [ ] Agent 自主判斷 agent teams
 - [ ] 機台 push 回來後自動觸發 review
 - [ ] 最近活動 feed（從 session log 解析）
 - [ ] shared-core 跨專案影響偵測

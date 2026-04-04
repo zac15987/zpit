@@ -56,6 +56,7 @@
 │  每個專案的 repo:                                                    │
 │  ├── .claude/agents/clarifier.md                                    │
 │  ├── .claude/agents/reviewer.md                                     │
+│  ├── .claude/agents/task-runner.md  (deployed when TASKS exist)     │
 │  ├── .claude/docs/agent-guidelines.md                               │
 │  ├── .claude/docs/code-construction-principles.md                   │
 │  ├── .claude/docs/tracker.md                                        │
