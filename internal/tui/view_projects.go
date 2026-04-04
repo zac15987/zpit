@@ -197,13 +197,23 @@ func (m Model) renderHotkeys() string {
 	return b.String()
 }
 
-// baseProjectID strips the "#N" suffix from a multi-session tracking key,
-// returning the original project ID.
+// baseProjectID extracts the original project ID from a tracking key.
+// Handles formats: "projectID", "projectID#N", "focus:projectID:issueID",
+// and "focus:projectID:issueID#N".
 func baseProjectID(trackingKey string) string {
-	if idx := strings.Index(trackingKey, "#"); idx != -1 {
-		return trackingKey[:idx]
+	key := trackingKey
+	// Strip "#N" multi-session suffix first.
+	if idx := strings.Index(key, "#"); idx != -1 {
+		key = key[:idx]
 	}
-	return trackingKey
+	// Handle "focus:projectID:issueID" format.
+	if strings.HasPrefix(key, "focus:") {
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	}
+	return key
 }
 
 func (m Model) projectName(id string) string {
@@ -238,9 +248,15 @@ func (m Model) renderActiveTerminals() string {
 		// Elapsed time since last state change.
 		elapsed := formatElapsed(time.Since(at.StateChangedAt))
 
+		// Build project display name with optional worktree branch indicator.
+		displayName := m.projectName(projectID)
+		if at.WorktreeBranch != "" {
+			displayName += " 🌿" + at.WorktreeBranch
+		}
+
 		b.WriteString(fmt.Sprintf("  [%d] %s %s %s %s\n",
 			i,
-			selectedStyle.Render(m.projectName(projectID)),
+			selectedStyle.Render(displayName),
 			boxVert,
 			statusText,
 			detailStyle.Render(elapsed),
