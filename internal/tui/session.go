@@ -37,6 +37,7 @@ type ActiveTerminal struct {
 	SessionPID        int
 	SessionID         string // current session ID (for /resume change detection)
 	WorkDir           string // project work directory (needed to recompute logPath on session switch)
+	WorktreeBranch    string // non-empty when session runs in a git worktree (e.g. "feat/19-slug")
 	State             watcher.AgentState
 	LastQuestion      string
 	PermissionMessage string // message from permission signal (e.g., "Claude needs your permission to use Bash")
@@ -56,11 +57,12 @@ type sessionFoundMsg struct {
 
 // existingSessionEntry represents a session found during startup scan.
 type existingSessionEntry struct {
-	ProjectID string
-	PID       int
-	SessionID string
-	WorkDir   string
-	LogPath   string
+	ProjectID      string
+	PID            int
+	SessionID      string
+	WorkDir        string
+	LogPath        string
+	WorktreeBranch string // non-empty when session was found in a git worktree
 }
 
 // existingSessionsMsg carries results of scanning for already-running sessions.
@@ -138,6 +140,7 @@ func (m Model) handleExistingSessions(msg existingSessionsMsg) (tea.Model, tea.C
 			SessionPID:     entry.PID,
 			SessionID:      entry.SessionID,
 			WorkDir:        entry.WorkDir,
+			WorktreeBranch: entry.WorktreeBranch,
 			StateChangedAt: time.Now(),
 		}
 		currentPIDs[entry.PID] = true

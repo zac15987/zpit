@@ -11,11 +11,12 @@ import (
 
 // LaunchResultMsg is sent when a terminal launch completes.
 type LaunchResultMsg struct {
-	ProjectID   string
-	TrackingKey string // if set, use as activeTerminals key instead of ProjectID
-	WorkDir     string // if set, use for session discovery instead of project path
-	Result      *terminal.LaunchResult
-	Err         error
+	ProjectID      string
+	TrackingKey    string // if set, use as activeTerminals key instead of ProjectID
+	WorkDir        string // if set, use for session discovery instead of project path
+	WorktreeBranch string // non-empty when launched in a git worktree (e.g. "feat/19-slug")
+	Result         *terminal.LaunchResult
+	Err            error
 }
 
 // StatusMsg is a transient message displayed in the status bar.
