@@ -259,11 +259,11 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 	}
 }
 
-func testSpecWithTasks() *tracker.IssueSpec {
+func testSpecWithSequentialTasks() *tracker.IssueSpec {
 	spec := testSpec()
 	spec.Tasks = []tracker.TaskEntry{
 		{ID: "T1", Description: "Add retry logic", Paths: []string{"src/EtherCatService.cs"}, DependsOn: nil},
-		{ID: "T2", Description: "Add retry policy", Parallel: true, Paths: []string{"src/RetryPolicy.cs"}, DependsOn: []string{"T1"}},
+		{ID: "T2", Description: "Add retry policy", Paths: []string{"src/RetryPolicy.cs"}, DependsOn: []string{"T1"}},
 	}
 	return spec
 }
@@ -272,23 +272,29 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 	p := CodingParams{
 		IssueID:    "ASE-47",
 		IssueTitle: "EtherCAT reconnect backoff",
-		Spec:       testSpecWithTasks(),
+		Spec:       testSpecWithSequentialTasks(),
 		LogPolicy:  "strict",
 		BaseBranch: "dev",
 	}
 
 	result := BuildCodingPrompt(p)
 
+	// AC-1: pure sequential tasks — prompt must contain subagent delegation, no Agent Team
 	mustContain := []string{
-		"Execute tasks in order",
+		"Task Decomposition",
 		"Commit after each task",
 		"[ASE-47] T{N}:",
 		"T1:",
 		"T2:",
+		"Execution Strategy",
+		"orchestrator",
+		"task-runner",
+		"subagent_type",
+		"Subagent Delegation",
+		"Task Execution Order",
+		"sequential",
 		"WebFetch",
-		"re-read modified files",
-		"Verify relevant ACs",
-		"retry once",
+		"self-check against each ACCEPTANCE_CRITERIA",
 		"stop and post issue comment",
 		"do NOT open PR",
 	}
@@ -296,6 +302,67 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 		if !strings.Contains(result, c) {
 			t.Errorf("task prompt missing %q", c)
 		}
+	}
+
+	// AC-1: pure sequential tasks must NOT contain Agent Team instructions
+	mustNotContain := []string{
+		"Agent Team Delegation",
+		"Parallel group",
+	}
+	for _, c := range mustNotContain {
+		if strings.Contains(result, c) {
+			t.Errorf("sequential-only task prompt should NOT contain %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
+	// AC-2 + AC-3: mixed sequential and parallel tasks
+	spec := testSpec()
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "Add base struct", Paths: []string{"src/EtherCatService.cs"}, DependsOn: nil},
+		{ID: "T2", Description: "Add retry logic", Parallel: true, Paths: []string{"src/RetryPolicy.cs"}, DependsOn: []string{"T1"}},
+		{ID: "T3", Description: "Add retry tests", Parallel: true, Paths: []string{"src/RetryPolicy_test.cs"}, DependsOn: []string{"T1"}},
+		{ID: "T4", Description: "Wire up retry", Paths: []string{"src/EtherCatService.cs"}, DependsOn: []string{"T2", "T3"}},
+	}
+
+	p := CodingParams{
+		IssueID:    "ASE-47",
+		IssueTitle: "EtherCAT reconnect backoff",
+		Spec:       spec,
+		LogPolicy:  "strict",
+		BaseBranch: "dev",
+	}
+
+	result := BuildCodingPrompt(p)
+
+	// Must contain both subagent and Agent Team delegation sections
+	mustContain := []string{
+		"Task Decomposition",
+		"Execution Strategy",
+		"Subagent Delegation",
+		"Agent Team Delegation",
+		"task-runner",
+		"subagent_type",
+		"Task Execution Order",
+		"T1",
+		"T2",
+		"T3",
+		"T4",
+		"Parallel group",
+		"sequential",
+		"teammate",
+		"self-check against each ACCEPTANCE_CRITERIA",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("parallel task prompt missing %q", c)
+		}
+	}
+
+	// Verify the parallel group contains T2, T3
+	if !strings.Contains(result, "Parallel group [T2, T3]") {
+		t.Error("parallel task prompt should group T2 and T3 together")
 	}
 }
 
@@ -310,11 +377,19 @@ func TestBuildCodingPrompt_WithoutTasks_NoTaskWorkflow(t *testing.T) {
 
 	result := BuildCodingPrompt(p)
 
-	if strings.Contains(result, "Execute tasks in order") {
-		t.Error("prompt without tasks should NOT contain 'Execute tasks in order'")
+	// AC-6: no tasks — must NOT contain any delegation or task workflow
+	mustNotContain := []string{
+		"Task Decomposition",
+		"Execution Strategy",
+		"Subagent Delegation",
+		"Agent Team Delegation",
+		"task-runner",
+		"subagent_type",
 	}
-	if strings.Contains(result, "Task Decomposition") {
-		t.Error("prompt without tasks should NOT contain 'Task Decomposition'")
+	for _, c := range mustNotContain {
+		if strings.Contains(result, c) {
+			t.Errorf("prompt without tasks should NOT contain %q", c)
+		}
 	}
 }
 
