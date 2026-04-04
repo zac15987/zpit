@@ -20,7 +20,7 @@ is uncertain or has been inferred rather than explicitly confirmed by the user.
 - Each marker represents a question to ask the user (one at a time, per existing behavior).
 - When the user answers, replace the marker with the resolved content and add decision context
   in APPROACH (e.g., "Chose X because user confirmed Y").
-- Before showing the final issue (step 14), scan all sections for remaining `[UNRESOLVED:` markers.
+- Before showing the final issue (step 15), scan all sections for remaining `[UNRESOLVED:` markers.
   If any remain, ask the user about each one before proceeding.
 - Decisions that were inferred (not explicitly stated by the user) must be marked as `[UNRESOLVED:]`
   during drafting — do not silently assume answers to ambiguous questions.
@@ -37,6 +37,13 @@ is uncertain or has been inferred rather than explicitly confirmed by the user.
 6. If there are multiple implementation approaches, **proactively present a comparison**:
    - List 2-3 viable approaches
    - For each approach, describe: overview, pros, cons, impact scope, and estimated complexity
+   - For each approach, present a **before/after impact assessment**: describe how the system state
+     changes (which files, behaviors, or interfaces shift) so the user can see the delta at a glance
+   - **Mandatory self-check before recommending** — answer these three questions and present
+     the answers to the user:
+     1. "How does the user interact with this feature day-to-day?" (active monitoring vs. fire-and-forget vs. results-only)
+     2. "Who bears the long-term maintenance cost of this approach?"
+     3. "Is a third party actively solving the same problem?" (if yes, state who and what timeline)
    - Give your recommendation and explain why
    - Let the user choose or propose other ideas
 7. **Conventions compliance check**: Read the Conventions section of CLAUDE.md and verify the chosen
@@ -51,8 +58,15 @@ is uncertain or has been inferred rather than explicitly confirmed by the user.
 9. Ask the user clarifying questions (one question at a time)
 10. After the user responds, if anything remains unclear, continue asking
 11. **Keep confirming until the user explicitly says "OK" or "go ahead"**
-12. Produce a structured issue (including the final chosen approach)
-13. Self-validate the Issue Spec format — perform all of the following sub-checks:
+12. **Impact survey for the chosen approach** — before drafting the issue:
+    a. Present a detailed **before/after impact analysis** for the selected approach:
+       list each affected file/module/interface, its current state, and its state after the change.
+    b. Ask the user: "Are there any documentation files that need to be updated alongside this change?"
+    c. Ask the user: "Are there any configuration or parameter files affected by this change?"
+    d. If the user answers yes to either question, incorporate the identified files into SCOPE
+       and add corresponding acceptance criteria.
+13. Produce a structured issue (including the final chosen approach)
+14. Self-validate the Issue Spec format — perform all of the following sub-checks:
     a. **Required sections**: check that all required sections (## CONTEXT, ## APPROACH,
        ## ACCEPTANCE_CRITERIA, ## SCOPE, ## CONSTRAINTS) are present
     b. **AC quality**: re-read each AC for specificity — "If I were the Coding Agent, would I know
@@ -67,8 +81,8 @@ is uncertain or has been inferred rather than explicitly confirmed by the user.
     g. **Forbidden vague words**: scan AC lines for "appropriate", "reasonable", "sufficient",
        "when necessary" (case-insensitive). Replace any found with specific, measurable language.
     h. **SCOPE format**: verify each SCOPE line starts with `[modify]`, `[create]`, or `[delete]`.
-14. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
-15. Push the issue to the Tracker (following `.claude/docs/tracker.md` instructions):
+15. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
+16. Push the issue to the Tracker (following `.claude/docs/tracker.md` instructions):
     a. **Prefer MCP tools** (e.g., gitea MCP, GitHub MCP) — pass the issue body directly as a parameter
     b. If MCP is unavailable, fall back to REST API using the Write tool + `--body-file` pattern:
        1. Use the Write tool to write the issue body to a temp file in the working directory (e.g. `./tmp_issue_body.md`)
@@ -76,7 +90,7 @@ is uncertain or has been inferred rather than explicitly confirmed by the user.
        3. Delete the temp file: `rm ./tmp_issue_body.md`
        (Do NOT use Bash heredoc — it fails on long content with special characters such as backticks, single quotes, and backslash paths.)
     c. Set the status to "pending confirmation" (label: pending)
-16. After successful push, inform the user of the issue URL
+17. After successful push, inform the user of the issue URL
 
 ## Technical Evaluation Rules
 
@@ -90,6 +104,15 @@ Evaluation dimensions include:
 - **Maintainability**: Which approach is easier to understand and modify when revisiting six months later
 - **Performance considerations**: If hardware communication or real-time processing is involved, evaluate performance impact
 - **Log friendliness**: Which approach makes it easier to add meaningful logs
+- **Alignment with actual usage patterns**: The approach's advantages must match the user's real
+  usage mode, not an assumed ideal usage mode. If the user runs the feature as a black box,
+  complexity in manual control adds cost without benefit.
+- **Maintenance cost proportionality**: The approach's complexity must be proportional to the value
+  it actually delivers. A 10x increase in error-handling complexity for a 2x improvement in
+  granularity fails this test.
+- **Build vs. Delegate**: If a third party is actively developing the same capability, prefer
+  delegating unless there is a concrete reason to own it (e.g., timeline mismatch, missing
+  critical feature, unacceptable vendor lock-in).
 
 ## Issue Format
 
