@@ -325,9 +325,11 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	taskRunnerMD := m.state.taskRunnerMD
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	channelEnabled := project.ChannelEnabled
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + gitignore exist (handles resume from previous session)
@@ -367,6 +369,16 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		// Deploy task-runner.md when Issue Spec contains TASKS for subagent delegation.
+		if len(spec.Tasks) > 0 && len(taskRunnerMD) > 0 {
+			trPath := filepath.Join(agentDir, "task-runner.md")
+			if err := os.WriteFile(trPath, taskRunnerMD, 0o644); err != nil {
+				logger.Printf("loop: failed to deploy task-runner.md for issue #%s: %v", issueID, err)
+			} else {
+				logger.Printf("loop: deployed task-runner.md to %s for issue #%s", agentDir, issueID)
+			}
 		}
 
 		agentFile := fmt.Sprintf("coding-%s.md", issueID)

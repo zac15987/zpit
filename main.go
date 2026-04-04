@@ -28,6 +28,9 @@ var clarifierAgentMD []byte
 //go:embed agents/reviewer.md
 var reviewerAgentMD []byte
 
+//go:embed agents/task-runner.md
+var taskRunnerMD []byte
+
 //go:embed docs/agent-guidelines.md
 var agentGuidelinesMD []byte
 
@@ -82,7 +85,7 @@ func runLocalTUI() {
 		defer logFile.Close()
 	}
 
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logFile)
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logFile)
 	p := tea.NewProgram(
 		tui.NewModel(appState),
 		tea.WithAltScreen(),
@@ -110,7 +113,7 @@ func runServe() {
 	logger := log.New(combined, "", log.LstdFlags)
 
 	// AppState also gets the combined writer so all state transitions are logged to both.
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), combined)
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), combined)
 
 	if err := zssh.StartServer(appState, cfg.SSH, logger); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
