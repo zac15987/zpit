@@ -453,3 +453,178 @@ func TestBuildReviewerPrompt_BaseBranch(t *testing.T) {
 		t.Error("reviewer prompt should use custom base branch")
 	}
 }
+
+func testSpecWithCoordinates(ids ...string) *tracker.IssueSpec {
+	spec := testSpec()
+	spec.CoordinatesWith = ids
+	return spec
+}
+
+func TestBuildCodingPrompt_CoordinatesWith_Protocol(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpecWithCoordinates("42", "43"),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	mustContain := []string{
+		"Dependency Coordination Protocol",
+		"#42",
+		"#43",
+		"CHANNEL_ASSUMPTION",
+		"pending artifact from #",
+		"Coordination Review Gate",
+		"list_artifacts",
+		"send_message",
+		"3 cumulative attempts",
+		"Cross-Agent Communication",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("CoordinatesWith protocol prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_CoordinatesWith_ReviewGate(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpecWithCoordinates("42"),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	mustContain := []string{
+		"Coordination Review Gate",
+		"[CHANNEL_ASSUMPTION]",
+		"Do NOT add",
+		"issue comment",
+		"3 cumulative attempts",
+		"Wait for the user",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("CoordinatesWith review gate prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_ChannelEnabled_NoCoordinatesWith(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpec(), // CoordinatesWith is nil
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	mustContain := []string{
+		"Cross-Agent Communication",
+		"publish_artifact",
+		"list_artifacts",
+		"send_message",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("channel-enabled no-coordinates prompt missing %q", c)
+		}
+	}
+
+	mustNotContain := []string{
+		"Dependency Coordination Protocol",
+		"Coordination Review Gate",
+		"CHANNEL_ASSUMPTION",
+	}
+	for _, c := range mustNotContain {
+		if strings.Contains(result, c) {
+			t.Errorf("channel-enabled no-coordinates prompt should NOT contain %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_ChannelDisabled_WithCoordinatesWith(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpecWithCoordinates("42", "43"),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: false,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	mustNotContain := []string{
+		"Cross-Agent Communication",
+		"Dependency Coordination Protocol",
+		"Coordination Review Gate",
+		"publish_artifact",
+		"CHANNEL_ASSUMPTION",
+	}
+	for _, c := range mustNotContain {
+		if strings.Contains(result, c) {
+			t.Errorf("channel-disabled prompt should NOT contain %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_CoordinatesWith_TaskWorkflow(t *testing.T) {
+	spec := testSpecWithCoordinates("42")
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "Add retry logic", Paths: []string{"src/EtherCatService.cs"}, DependsOn: nil},
+		{ID: "T2", Description: "Add retry policy", Paths: []string{"src/RetryPolicy.cs"}, DependsOn: []string{"T1"}},
+	}
+
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           spec,
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	mustContain := []string{
+		"Dependency Coordination Protocol",
+		"Coordination Review Gate",
+		"Task Decomposition",
+		"CHANNEL_ASSUMPTION",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("CoordinatesWith task workflow prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildCodingPrompt_CoordinatesWith_StandardWorkflow_ReviewGate(t *testing.T) {
+	p := CodingParams{
+		IssueID:        "TEST-1",
+		IssueTitle:     "test",
+		Spec:           testSpecWithCoordinates("42"),
+		LogPolicy:      "minimal",
+		BaseBranch:     "dev",
+		ChannelEnabled: true,
+	}
+
+	result := BuildCodingPrompt(p)
+
+	// Standard workflow (no tasks) should also include the review gate
+	if !strings.Contains(result, "Coordination Review Gate") {
+		t.Error("standard workflow with CoordinatesWith should contain Coordination Review Gate")
+	}
+}

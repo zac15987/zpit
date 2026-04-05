@@ -108,7 +108,7 @@ Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via -
 Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
 
-	if len(p.Spec.CoordinatesWith) > 0 {
+	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
 		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))
 	}
 }
@@ -248,7 +248,7 @@ Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via -
 Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
 
-	if len(p.Spec.CoordinatesWith) > 0 {
+	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
 		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))
 	}
 }
