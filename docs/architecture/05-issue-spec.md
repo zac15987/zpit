@@ -65,6 +65,11 @@ dev
 T1: Add retry backoff to ReconnectAsync [modify] src/Services/EtherCatService.cs (depends: none)
 T2: [P] Add alarm code constant [modify] src/Alarms/AlarmManager.cs (depends: none)
 T3: Wire alarm trigger into retry flow [modify] src/Services/EtherCatService.cs (depends: T1, T2)
+
+## COORDINATES_WITH
+<!-- 可選。並行協作對象的 issue 編號 -->
+#42
+#43
 ```
 
 ---
@@ -81,6 +86,7 @@ T3: Wire alarm trigger into retry flow [modify] src/Services/EtherCatService.cs 
 | REFERENCES | 可選 | Coding Agent | 參考資料 |
 | BRANCH | 可選 | Coding Agent + Reviewer | PR target branch（覆蓋專案預設） |
 | TASKS | 可選 | Coding Agent | 大型 issue 的任務分解與執行順序 |
+| COORDINATES_WITH | 可選 | Coding Agent | 並行協作對象（觸發 channel 協調協議） |
 
 **TASKS section 格式規則：**
 - `T{N}:` — 任務 ID（T 加數字）
@@ -88,6 +94,13 @@ T3: Wire alarm trigger into retry flow [modify] src/Services/EtherCatService.cs 
 - `[modify|create|delete] path` — 涉及的檔案（可多個）
 - `(depends: T{M}, ...)` — 相依關係；`(depends: none)` 表示無相依
 - TASKS 中的檔案路徑會與 SCOPE 交叉驗證
+
+**COORDINATES_WITH section 格式規則：**
+- 每行 `#N`，N 為並行協作對象的 issue 編號
+- 非阻塞：Loop 引擎不對 COORDINATES_WITH 做任何等待（與 DEPENDS_ON 的串行阻塞相反）
+- 純 prompt 層信號：存在時觸發 Dependency Coordination Protocol（見 12-channel.md）
+- 與 DEPENDS_ON 可共存——語意不同（DEPENDS_ON = 串行阻塞，COORDINATES_WITH = 並行協調）
+- 驗證：非 `#N` 格式的行產生 warning
 
 **格式執行規則：**
 - Clarifier 產出的 issue body 必須包含所有必填 section
@@ -124,6 +137,7 @@ func ValidateIssueSpec(body string) ValidationResult
 - AC 編號有間隙（例如 AC-1, AC-3 但缺 AC-2）
 - SCOPE 列出的檔案未被任何 AC 提及
 - TASKS 中的檔案路徑未出現在 SCOPE 中
+- COORDINATES_WITH 中非 `#N` 格式的行
 
 **解析函數：**
 
@@ -131,7 +145,7 @@ func ValidateIssueSpec(body string) ValidationResult
 func ParseIssueSpec(body string) (*IssueSpec, error)
 ```
 
-解析 `## SECTION_NAME` 標記，回傳結構化的 `IssueSpec`（含 Context、Approach、AcceptanceCriteria、Scope、Constraints、References、Branch、Tasks）。
+解析 `## SECTION_NAME` 標記，回傳結構化的 `IssueSpec`（含 Context、Approach、AcceptanceCriteria、Scope、Constraints、References、Branch、Tasks、DependsOn、CoordinatesWith）。
 
 ---
 
