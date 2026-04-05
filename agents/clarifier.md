@@ -146,6 +146,10 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 #N
 (Optional section — list issue numbers this issue depends on; omit if no dependencies)
 
+## COORDINATES_WITH
+#N
+(Optional section — list issue numbers of parallel coordination targets; omit if no parallel collaboration)
+
 ## TASKS
 T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 (Optional section — see TASKS generation rules below)
@@ -174,6 +178,18 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 - Only list direct dependencies — do not list transitive dependencies
 - Omit the entire section if the issue has no dependencies
 - Do not create circular dependencies (A depends on B, B depends on A)
+
+**Rules for writing COORDINATES_WITH (## COORDINATES_WITH section):**
+- When two or more issues will run in parallel and share interfaces, types, or schemas, add `## COORDINATES_WITH` to each issue listing its parallel coordination targets
+- Each line: `#N` where N is the issue number of the parallel collaborator (one per line)
+- COORDINATES_WITH is **non-blocking** — the Loop engine does NOT wait for listed issues to complete before starting this issue
+- This is purely a prompt-layer signal: it triggers the Dependency Coordination Protocol in the coding agent, instructing it to use channel tools to coordinate shared artifacts
+- **Key distinction from DEPENDS_ON:**
+  - `DEPENDS_ON` = serial blocking — Loop waits for dependencies to close before starting
+  - `COORDINATES_WITH` = parallel coordination — both issues run simultaneously, agents coordinate via channel
+- Only list direct coordination targets — issues that share interfaces/types with this issue
+- Omit the entire section if the issue has no parallel coordination needs
+- Both DEPENDS_ON and COORDINATES_WITH can coexist on the same issue (different semantics)
 
 **Rules for writing TASKS (## TASKS section):**
 - When SCOPE contains 3 or more entries, generate a `## TASKS` section to decompose the implementation into ordered tasks

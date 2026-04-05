@@ -40,6 +40,7 @@ type IssueSpec struct {
 	Branch             string      // optional: PR target branch (from ## BRANCH section)
 	Tasks              []TaskEntry // optional: task decomposition from ## TASKS section
 	DependsOn          []string    // optional: issue numbers this issue depends on (e.g. "42", "15")
+	CoordinatesWith    []string    // optional: parallel coordination targets (e.g. "42", "15")
 }
 
 // ScopeEntry represents a single file scope line.
@@ -93,6 +94,9 @@ func ValidateIssueSpec(body string) ValidationResult {
 
 	// Check DEPENDS_ON format (warnings only — optional section)
 	checkDependsOnFormat(body, &result)
+
+	// Check COORDINATES_WITH format (warnings only — optional section)
+	checkCoordinatesWithFormat(body, &result)
 
 	return result
 }
@@ -350,6 +354,20 @@ func ParseIssueSpec(body string) (*IssueSpec, error) {
 		}
 	}
 
+	// Parse COORDINATES_WITH entries (optional section)
+	if cwContent, ok := sections["COORDINATES_WITH"]; ok && cwContent != "" {
+		for _, line := range strings.Split(cwContent, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			numStr := strings.TrimPrefix(trimmed, "#")
+			if _, err := strconv.Atoi(numStr); err == nil {
+				spec.CoordinatesWith = append(spec.CoordinatesWith, numStr)
+			}
+		}
+	}
+
 	return spec, nil
 }
 
@@ -568,6 +586,32 @@ func checkDependsOnFormat(body string, result *ValidationResult) {
 		if _, err := strconv.Atoi(numStr); err != nil {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("DEPENDS_ON format warning: line does not match #N format: %s", trimmed))
+		}
+	}
+}
+
+// checkCoordinatesWithFormat warns when COORDINATES_WITH lines don't match the expected #N format.
+func checkCoordinatesWithFormat(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	cwContent, ok := sections["COORDINATES_WITH"]
+	if !ok || cwContent == "" {
+		return
+	}
+
+	for _, line := range strings.Split(cwContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "#") {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("COORDINATES_WITH format warning: line does not match #N format: %s", trimmed))
+			continue
+		}
+		numStr := strings.TrimPrefix(trimmed, "#")
+		if _, err := strconv.Atoi(numStr); err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("COORDINATES_WITH format warning: line does not match #N format: %s", trimmed))
 		}
 	}
 }

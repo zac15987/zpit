@@ -770,3 +770,182 @@ none
 		}
 	}
 }
+
+// --- COORDINATES_WITH parsing tests ---
+
+func TestParseIssueSpec_CoordinatesWith_Basic(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## COORDINATES_WITH
+#42
+#43
+`
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.CoordinatesWith) != 2 {
+		t.Fatalf("CoordinatesWith length = %d, want 2", len(spec.CoordinatesWith))
+	}
+	if spec.CoordinatesWith[0] != "42" {
+		t.Errorf("CoordinatesWith[0] = %q, want %q", spec.CoordinatesWith[0], "42")
+	}
+	if spec.CoordinatesWith[1] != "43" {
+		t.Errorf("CoordinatesWith[1] = %q, want %q", spec.CoordinatesWith[1], "43")
+	}
+}
+
+func TestParseIssueSpec_CoordinatesWith_EmptyLines(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## COORDINATES_WITH
+
+#5
+
+#8
+
+`
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.CoordinatesWith) != 2 {
+		t.Fatalf("CoordinatesWith length = %d, want 2", len(spec.CoordinatesWith))
+	}
+	if spec.CoordinatesWith[0] != "5" || spec.CoordinatesWith[1] != "8" {
+		t.Errorf("CoordinatesWith = %v, want [5 8]", spec.CoordinatesWith)
+	}
+}
+
+func TestParseIssueSpec_CoordinatesWith_IgnoresNonHashLines(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## COORDINATES_WITH
+#10
+some text without hash
+#20
+`
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if len(spec.CoordinatesWith) != 2 {
+		t.Fatalf("CoordinatesWith length = %d, want 2", len(spec.CoordinatesWith))
+	}
+	if spec.CoordinatesWith[0] != "10" || spec.CoordinatesWith[1] != "20" {
+		t.Errorf("CoordinatesWith = %v, want [10 20]", spec.CoordinatesWith)
+	}
+}
+
+func TestParseIssueSpec_CoordinatesWith_Absent(t *testing.T) {
+	spec, err := ParseIssueSpec(fullIssueBody)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.CoordinatesWith != nil {
+		t.Errorf("expected nil CoordinatesWith when ## COORDINATES_WITH absent, got %v", spec.CoordinatesWith)
+	}
+}
+
+func TestValidateIssueSpec_CoordinatesWith_MalformedLines(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## COORDINATES_WITH
+#42
+#abc
+not-a-hash
+#43
+`
+	result := ValidateIssueSpec(body)
+
+	// Should have 2 warnings: "#abc" and "not-a-hash"
+	warnCount := 0
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "COORDINATES_WITH format warning") {
+			warnCount++
+		}
+	}
+	if warnCount != 2 {
+		t.Errorf("expected 2 COORDINATES_WITH format warnings, got %d: %v", warnCount, result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_CoordinatesWith_AllValid_NoWarnings(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: test main.go changes
+
+## SCOPE
+[modify] main.go (reason)
+
+## CONSTRAINTS
+none
+
+## COORDINATES_WITH
+#10
+#20
+`
+	result := ValidateIssueSpec(body)
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "COORDINATES_WITH") {
+			t.Errorf("unexpected COORDINATES_WITH warning: %q", w)
+		}
+	}
+}

@@ -51,7 +51,7 @@ func BuildCodingPrompt(p CodingParams) string {
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
 	if p.ChannelEnabled {
-		b.WriteString(channelToolsSection())
+		b.WriteString(channelToolsSection(p.Spec.CoordinatesWith))
 	}
 
 	if len(p.Spec.Tasks) > 0 {
@@ -107,6 +107,10 @@ Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
+
+	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
+		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))
+	}
 }
 
 // taskGroup represents a batch of tasks to execute together.
@@ -243,6 +247,10 @@ Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
 `, p.IssueID, p.BaseBranch, p.BaseBranch)
+
+	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
+		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))
+	}
 }
 
 // buildSubagentDelegation writes the delegation instructions for sequential tasks.
@@ -271,6 +279,35 @@ func buildTeamDelegation(b *strings.Builder, p CodingParams) {
 	b.WriteString("- After the team finishes, verify all commits exist and are consistent.\n\n")
 }
 
+// coordinationReviewGate returns the review gate text for when CoordinatesWith is non-empty.
+// It instructs the agent to verify all CHANNEL_ASSUMPTION comments are resolved before
+// transitioning to review.
+func coordinationReviewGate(coordinatesWith []string) string {
+	refs := make([]string, len(coordinatesWith))
+	for i, id := range coordinatesWith {
+		refs[i] = "#" + id
+	}
+	issueList := strings.Join(refs, ", ")
+
+	return fmt.Sprintf(`
+## Coordination Review Gate
+
+Before adding the "review" label, you MUST verify all channel assumptions are resolved:
+
+1. Search the entire codebase for `+"`[CHANNEL_ASSUMPTION]`"+` comments
+2. If any remain:
+   a. Call `+"`list_artifacts`"+` to check if the needed artifacts are now available
+   b. Call `+"`send_message`"+` to %s requesting the missing artifacts
+   c. If artifacts are now available, verify and clean up the assumptions
+   d. Repeat up to 3 cumulative attempts total
+3. After 3 attempts, if `+"`[CHANNEL_ASSUMPTION]`"+` comments still remain:
+   - Do NOT add the "review" label
+   - Post an issue comment listing all unresolved assumptions and their locations
+   - Wait for the user to decide how to proceed
+4. Only when ALL `+"`[CHANNEL_ASSUMPTION]`"+` comments have been resolved (deleted) may you add the "review" label
+`, issueList)
+}
+
 func logPolicyText(policy string) string {
 	switch policy {
 	case "strict":
@@ -285,9 +322,11 @@ func logPolicyText(policy string) string {
 }
 
 // channelToolsSection returns the cross-agent communication section for the coding prompt.
-// Only injected when ChannelEnabled is true.
-func channelToolsSection() string {
-	return `
+// Only injected when ChannelEnabled is true. When coordinatesWith is non-empty,
+// appends the Dependency Coordination Protocol with specific issue references.
+func channelToolsSection(coordinatesWith []string) string {
+	var b strings.Builder
+	b.WriteString(`
 
 ## Cross-Agent Communication
 
@@ -312,5 +351,43 @@ for coordinating with other agents working on parallel issues:
 - When you receive a channel notification about an artifact from another agent, review it and adapt your implementation if needed.
 - If you discover a potential conflict with another agent's work, use send_message to coordinate.
 - At the start of implementation, call list_artifacts to see what's already been published.
-`
+`)
+
+	if len(coordinatesWith) > 0 {
+		refs := make([]string, len(coordinatesWith))
+		for i, id := range coordinatesWith {
+			refs[i] = "#" + id
+		}
+		issueList := strings.Join(refs, ", ")
+
+		fmt.Fprintf(&b, `
+### Dependency Coordination Protocol
+
+You are coordinating with parallel agents on issues: %s (from COORDINATES_WITH).
+Follow this protocol throughout your implementation:
+
+**1. Startup Probe:**
+- Call `+"`list_artifacts`"+` to check what's already published
+- Call `+"`list_projects`"+` to discover active agents
+- For each COORDINATES_WITH issue (%s), call `+"`send_message`"+` announcing which interfaces/types you plan to define or consume
+
+**2. Assumption Marking:**
+- When you need an artifact (interface, type, schema) from a coordinating agent but it's not yet available via `+"`list_artifacts`"+`, proceed with your best inference
+- Mark EVERY such inference with a comment: `+"`// [CHANNEL_ASSUMPTION] <description, pending artifact from #N>`"+`
+- Example: `+"`// [CHANNEL_ASSUMPTION] Using inferred InventoryReader interface, pending artifact from #%s`"+`
+- Continue implementation — do NOT block waiting
+
+**3. Verification & Cleanup:**
+- When you receive a channel notification about a new artifact, search your codebase for related `+"`[CHANNEL_ASSUMPTION]`"+` comments
+- Compare the published artifact against your assumption
+- If consistent: delete the `+"`[CHANNEL_ASSUMPTION]`"+` comment
+- If inconsistent: update your implementation to match the published artifact, then delete the comment
+
+**4. Publish Obligation:**
+- After defining any interface, type, or schema that coordinating agents may depend on, immediately call `+"`publish_artifact`"+`
+- Do not wait until implementation is complete — publish as early as possible
+`, issueList, issueList, coordinatesWith[0])
+	}
+
+	return b.String()
 }

@@ -167,3 +167,70 @@ channel_listen = ["_global", "other-proj"]  # 額外訂閱的 project key
 - `channel_listen`：該 project 的 agent 除了自身 project 外，額外訂閱的 key
 - `broker_port`：全域設定，所有 project 共用同一個 broker
 - `zpit_bin`：用於生成 `.mcp.json` 中的 `command` 路徑
+
+---
+
+## 12.8 Dependency Coordination Protocol（依賴協調協議）
+
+當 Issue Spec 包含 `## COORDINATES_WITH` section 時，coding agent 的 prompt 會注入 Dependency Coordination Protocol。
+此協議解決並行 agent 之間的 artifact 依賴問題——在 Claude Code 的 single-turn 執行模型下，agent 無法在執行中途暫停等待外部信號。
+
+### 觸發條件
+
+- `channel_enabled = true`（專案層級）
+- Issue Spec 中存在 `## COORDINATES_WITH` section（列出並行協作對象的 issue 編號）
+- 兩者缺一不觸發（ChannelEnabled=false 時不注入任何 channel section）
+
+### 協議流程
+
+```
+Agent 啟動
+  │
+  ├─ 1. 啟動探查 (Startup Probe)
+  │     ├─ list_artifacts — 檢查已發布的 artifact
+  │     ├─ list_projects — 探索活躍 agent
+  │     └─ send_message → COORDINATES_WITH 中的每個 issue
+  │         （宣告自己計劃定義/消費的 interface）
+  │
+  ├─ 2. 假設標記 (Assumption Marking)
+  │     └─ 需要的 artifact 尚不可用時：
+  │         ├─ 以最佳推測繼續實作
+  │         └─ 標記 // [CHANNEL_ASSUMPTION] <描述, pending artifact from #N>
+  │
+  ├─ 3. 驗證與清理 (Verification & Cleanup)
+  │     └─ 收到 channel notification 時：
+  │         ├─ 搜尋相關 [CHANNEL_ASSUMPTION] comment
+  │         ├─ 比對 artifact
+  │         ├─ 一致 → 刪除 comment
+  │         └─ 不一致 → 修正實作，再刪除 comment
+  │
+  ├─ 4. 發布義務 (Publish Obligation)
+  │     └─ 定義完 interface/type/schema 後立即 publish_artifact
+  │
+  └─ 5. Review Gate（轉 review 前的閘門）
+        ├─ 搜尋所有 [CHANNEL_ASSUMPTION] comment
+        ├─ 若有未解決：list_artifacts + send_message（最多 3 次累計嘗試）
+        ├─ 3 次後仍有未解決 → post issue comment，等待使用者決定
+        └─ 全部解決 → 加 "review" label
+```
+
+### 與 DEPENDS_ON 的區別
+
+| | DEPENDS_ON | COORDINATES_WITH |
+|---|---|---|
+| 層級 | Loop 引擎（基礎設施層） | Prompt（指示層） |
+| 行為 | 串行阻塞——依賴 issue closed 才開始 | 非阻塞——並行執行，channel 協調 |
+| 時機 | Agent 啟動前（Loop 等待） | Agent 執行中（prompt 指引） |
+| 適用場景 | A 的輸出是 B 的前提 | A 和 B 同時跑、共享 interface |
+
+### 設計考量
+
+**為何不用阻塞式 tool？**
+Claude Code 的執行模型是 single-turn request-response。Channel 推送只在 turns 之間（agent idle 時）注入。
+`wait_for_artifact` 之類的阻塞式 MCP tool call 會凍結 agent——mid-turn 暫停在當前架構下不可行。
+因此採用 prompt 層的假設標記 + 事後驗證策略。
+
+**假設標記的容錯性：**
+- 最佳情況：artifact 在 agent 實作期間抵達，agent 收到 notification 後即時驗證
+- 一般情況：artifact 在 review gate 前抵達，3 次嘗試內解決
+- 最差情況：artifact 始終未抵達，agent 停下等待使用者介入（不產出錯誤的 PR）
