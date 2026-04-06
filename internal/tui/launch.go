@@ -66,7 +66,7 @@ func (m Model) launchClaudeCmd() tea.Cmd {
 		// Write .mcp.json for channel communication (Enter launch uses issue_id "0" = lobby).
 		if channelEnabled && brokerAddr != "" {
 			agentName := generateAgentName("claude")
-			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, channelListen); err != nil {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, "claude", channelListen); err != nil {
 				logger.Printf("enter: failed to write .mcp.json for project=%s: %v", project.ID, err)
 			} else {
 				logger.Printf("enter: wrote .mcp.json to %s for project=%s agent=%s", projectPath, project.ID, agentName)
@@ -106,7 +106,7 @@ func (m Model) launchClarifierCmd() tea.Cmd {
 		// Write .mcp.json for channel communication with a fresh AgentName.
 		if channelEnabled && brokerAddr != "" {
 			agentName := generateAgentName("clarifier")
-			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, channelListen); err != nil {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, "clarifier", channelListen); err != nil {
 				logger.Printf("clarifier: failed to write .mcp.json for project=%s: %v", project.ID, err)
 			} else {
 				logger.Printf("clarifier: wrote .mcp.json to %s for project=%s agent=%s", projectPath, project.ID, agentName)
@@ -146,7 +146,7 @@ func (m Model) launchReviewerCmd() tea.Cmd {
 		// Write .mcp.json for channel communication with a fresh AgentName.
 		if channelEnabled && brokerAddr != "" {
 			agentName := generateAgentName("reviewer")
-			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, channelListen); err != nil {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, "reviewer", channelListen); err != nil {
 				logger.Printf("reviewer: failed to write .mcp.json for project=%s: %v", project.ID, err)
 			} else {
 				logger.Printf("reviewer: wrote .mcp.json to %s for project=%s agent=%s", projectPath, project.ID, agentName)
@@ -213,7 +213,7 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 		// Write .mcp.json for channel communication (manual agent uses issue_id "0" = lobby).
 		if channelEnabled && brokerAddr != "" {
 			channelAgentName := generateAgentName(agentName)
-			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelAgentName, channelListen); err != nil {
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelAgentName, agentName, channelListen); err != nil {
 				logger.Printf("%s: failed to write .mcp.json for project=%s: %v", agentName, project.ID, err)
 			} else {
 				logger.Printf("%s: wrote .mcp.json to %s for project=%s agent=%s", agentName, projectPath, project.ID, channelAgentName)
