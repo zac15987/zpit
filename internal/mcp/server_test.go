@@ -143,8 +143,8 @@ func TestServer_ToolsList(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if len(result.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(result.Tools))
 	}
 
 	names := map[string]bool{}
@@ -154,7 +154,7 @@ func TestServer_ToolsList(t *testing.T) {
 			t.Errorf("tool %s: schema type %q, want object", tool.Name, tool.InputSchema.Type)
 		}
 	}
-	for _, expected := range []string{"publish_artifact", "list_artifacts", "send_message", "list_projects"} {
+	for _, expected := range []string{"publish_artifact", "list_artifacts", "send_message", "list_projects", "subscribe_project", "unsubscribe_project", "list_subscriptions"} {
 		if !names[expected] {
 			t.Errorf("missing tool: %s", expected)
 		}
@@ -1102,8 +1102,8 @@ func TestReadConfigFromEnv_NoAgentName(t *testing.T) {
 
 func TestChannelTools(t *testing.T) {
 	tools := channelTools()
-	if len(tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(tools))
 	}
 
 	// Verify each tool has a non-empty description.
@@ -1111,5 +1111,101 @@ func TestChannelTools(t *testing.T) {
 		if tool.Description == "" {
 			t.Errorf("tool %s has empty description", tool.Name)
 		}
+	}
+}
+
+func TestServer_SubscribeUnsubscribeFlow(t *testing.T) {
+	srv, _, pw, stdout := testServer(t)
+
+	// The server's own project "test-proj" is auto-subscribed in Run().
+	// Subscribe to a new project, list, unsubscribe, list again.
+	subscribe := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"subscribe_project","arguments":{"project":"new-proj"}}}`
+	list1 := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_subscriptions","arguments":{}}}`
+	unsubscribe := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"unsubscribe_project","arguments":{"project":"new-proj"}}}`
+	list2 := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_subscriptions","arguments":{}}}`
+
+	go sendAndClose(pw, subscribe, list1, unsubscribe, list2)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) != 4 {
+		t.Fatalf("expected 4 responses, got %d", len(responses))
+	}
+
+	// Response 1: subscribe should succeed.
+	var r1 CallToolResult
+	json.Unmarshal(responses[0].Result, &r1)
+	if r1.IsError {
+		t.Fatalf("subscribe failed: %v", r1.Content)
+	}
+	if !strings.Contains(r1.Content[0].Text, "subscribed to new-proj") {
+		t.Errorf("expected 'subscribed to new-proj', got: %s", r1.Content[0].Text)
+	}
+
+	// Response 2: list should include both test-proj and new-proj.
+	var r2 CallToolResult
+	json.Unmarshal(responses[1].Result, &r2)
+	if !strings.Contains(r2.Content[0].Text, "new-proj") || !strings.Contains(r2.Content[0].Text, "test-proj") {
+		t.Errorf("list should include both projects, got: %s", r2.Content[0].Text)
+	}
+
+	// Response 3: unsubscribe should succeed.
+	var r3 CallToolResult
+	json.Unmarshal(responses[2].Result, &r3)
+	if r3.IsError {
+		t.Fatalf("unsubscribe failed: %v", r3.Content)
+	}
+	if !strings.Contains(r3.Content[0].Text, "unsubscribed from new-proj") {
+		t.Errorf("expected 'unsubscribed from new-proj', got: %s", r3.Content[0].Text)
+	}
+
+	// Response 4: list should only include test-proj now.
+	var r4 CallToolResult
+	json.Unmarshal(responses[3].Result, &r4)
+	if strings.Contains(r4.Content[0].Text, "new-proj") {
+		t.Errorf("list should NOT include new-proj after unsubscribe, got: %s", r4.Content[0].Text)
+	}
+	if !strings.Contains(r4.Content[0].Text, "test-proj") {
+		t.Errorf("list should still include test-proj, got: %s", r4.Content[0].Text)
+	}
+}
+
+func TestServer_SubscribeEdgeCases(t *testing.T) {
+	srv, _, pw, stdout := testServer(t)
+
+	// test-proj is auto-subscribed, so subscribing again should say "already subscribed".
+	subOwn := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"subscribe_project","arguments":{"project":"test-proj"}}}`
+	// Unsubscribing own project should be denied.
+	unsubOwn := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unsubscribe_project","arguments":{"project":"test-proj"}}}`
+	// Unsubscribing a never-subscribed project.
+	unsubNone := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"unsubscribe_project","arguments":{"project":"nonexistent"}}}`
+
+	go sendAndClose(pw, subOwn, unsubOwn, unsubNone)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) != 3 {
+		t.Fatalf("expected 3 responses, got %d", len(responses))
+	}
+
+	// Response 1: "already subscribed to test-proj".
+	var r1 CallToolResult
+	json.Unmarshal(responses[0].Result, &r1)
+	if !strings.Contains(r1.Content[0].Text, "already subscribed") {
+		t.Errorf("expected 'already subscribed', got: %s", r1.Content[0].Text)
+	}
+
+	// Response 2: "cannot unsubscribe from own project".
+	var r2 CallToolResult
+	json.Unmarshal(responses[1].Result, &r2)
+	if !strings.Contains(r2.Content[0].Text, "cannot unsubscribe from own project") {
+		t.Errorf("expected 'cannot unsubscribe from own project', got: %s", r2.Content[0].Text)
+	}
+
+	// Response 3: "not subscribed to nonexistent".
+	var r3 CallToolResult
+	json.Unmarshal(responses[2].Result, &r3)
+	if !strings.Contains(r3.Content[0].Text, "not subscribed") {
+		t.Errorf("expected 'not subscribed', got: %s", r3.Content[0].Text)
 	}
 }
