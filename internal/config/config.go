@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -239,6 +240,176 @@ func (s *SSHConfig) ResolveSSHPaths() error {
 	s.HostKeyPath = expand(s.HostKeyPath)
 	s.AuthorizedKeysPath = expand(s.AuthorizedKeysPath)
 	return nil
+}
+
+// Reload re-reads and parses the config file at the given path.
+// Returns the new config or an error (e.g. TOML syntax error).
+// On error, the caller should keep the old config.
+func Reload(path string) (*Config, error) {
+	return Load(path)
+}
+
+// ConfigDiff describes what changed between two configs.
+type ConfigDiff struct {
+	HotReload       []string // field names that can be applied immediately
+	RestartRequired []string // field names that require a restart
+}
+
+// HasChanges returns true if any fields changed.
+func (d ConfigDiff) HasChanges() bool {
+	return len(d.HotReload) > 0 || len(d.RestartRequired) > 0
+}
+
+// Diff compares old and new Config and classifies changed fields.
+func Diff(old, new *Config) ConfigDiff {
+	var diff ConfigDiff
+
+	// Hot-reloadable fields:
+	if old.Language != new.Language {
+		diff.HotReload = append(diff.HotReload, "language")
+	}
+	if old.Notification != new.Notification {
+		diff.HotReload = append(diff.HotReload, "notification")
+	}
+	if old.Worktree.PollSeconds != new.Worktree.PollSeconds ||
+		old.Worktree.PRPollSeconds != new.Worktree.PRPollSeconds ||
+		old.Worktree.MaxReviewRounds != new.Worktree.MaxReviewRounds {
+		diff.HotReload = append(diff.HotReload, "worktree")
+	}
+	if old.Terminal != new.Terminal {
+		diff.HotReload = append(diff.HotReload, "terminal")
+	}
+	if !projectsChannelEqual(old.Projects, new.Projects) {
+		diff.HotReload = append(diff.HotReload, "channel")
+	}
+	if !projectsMetaEqual(old.Projects, new.Projects) {
+		diff.HotReload = append(diff.HotReload, "project_meta")
+	}
+
+	// Restart-required fields:
+	if old.BrokerPort != new.BrokerPort {
+		diff.RestartRequired = append(diff.RestartRequired, "broker_port")
+	}
+	if old.SSH != new.SSH {
+		diff.RestartRequired = append(diff.RestartRequired, "ssh")
+	}
+	if !providersEqual(old.Providers, new.Providers) {
+		diff.RestartRequired = append(diff.RestartRequired, "providers")
+	}
+	if !projectIDsEqual(old.Projects, new.Projects) {
+		diff.RestartRequired = append(diff.RestartRequired, "projects (added/removed)")
+	}
+	if old.Worktree.BaseDirWindows != new.Worktree.BaseDirWindows ||
+		old.Worktree.BaseDirWSL != new.Worktree.BaseDirWSL ||
+		old.Worktree.DirFormat != new.Worktree.DirFormat ||
+		old.Worktree.MaxPerProject != new.Worktree.MaxPerProject {
+		diff.RestartRequired = append(diff.RestartRequired, "worktree (paths)")
+	}
+
+	return diff
+}
+
+// projectsChannelEqual checks if channel_enabled and channel_listen are
+// identical across matching projects (by ID).
+func projectsChannelEqual(a, b []ProjectConfig) bool {
+	am := projectMap(a)
+	bm := projectMap(b)
+	for id, ap := range am {
+		bp, ok := bm[id]
+		if !ok {
+			continue // structural change handled by projectIDsEqual
+		}
+		if ap.ChannelEnabled != bp.ChannelEnabled {
+			return false
+		}
+		if !stringSliceEqual(ap.ChannelListen, bp.ChannelListen) {
+			return false
+		}
+	}
+	return true
+}
+
+// projectsMetaEqual checks if hook_mode, base_branch, and log_level are
+// identical across matching projects.
+func projectsMetaEqual(a, b []ProjectConfig) bool {
+	am := projectMap(a)
+	bm := projectMap(b)
+	for id, ap := range am {
+		bp, ok := bm[id]
+		if !ok {
+			continue
+		}
+		if ap.HookMode != bp.HookMode ||
+			ap.BaseBranch != bp.BaseBranch ||
+			ap.LogLevel != bp.LogLevel {
+			return false
+		}
+	}
+	return true
+}
+
+// providersEqual performs a deep comparison of two ProvidersConfig values.
+func providersEqual(a, b ProvidersConfig) bool {
+	return providerMapEqual(a.Tracker, b.Tracker) &&
+		providerMapEqual(a.Git, b.Git)
+}
+
+func providerMapEqual(a, b map[string]ProviderEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || av != bv {
+			return false
+		}
+	}
+	return true
+}
+
+// projectIDsEqual checks whether both slices contain the same set of project IDs.
+func projectIDsEqual(a, b []ProjectConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aIDs := make([]string, len(a))
+	bIDs := make([]string, len(b))
+	for i := range a {
+		aIDs[i] = a[i].ID
+	}
+	for i := range b {
+		bIDs[i] = b[i].ID
+	}
+	sort.Strings(aIDs)
+	sort.Strings(bIDs)
+	for i := range aIDs {
+		if aIDs[i] != bIDs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// projectMap builds a lookup from project ID to ProjectConfig.
+func projectMap(projects []ProjectConfig) map[string]ProjectConfig {
+	m := make(map[string]ProjectConfig, len(projects))
+	for _, p := range projects {
+		m[p.ID] = p
+	}
+	return m
+}
+
+// stringSliceEqual checks if two string slices have identical contents.
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func applyDefaults(cfg *Config) {
