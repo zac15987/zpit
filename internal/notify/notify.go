@@ -108,6 +108,14 @@ func (n *Notifier) ShouldNotify(projectID string) bool {
 	return time.Since(last) >= cooldown
 }
 
+// UpdateConfig replaces the notification config with the given new config.
+// Thread-safe: acquires internal mutex.
+func (n *Notifier) UpdateConfig(cfg config.NotificationConfig) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cfg = cfg
+}
+
 // Reset clears the cooldown for a project (call when user responds).
 func (n *Notifier) Reset(projectID string) {
 	n.mu.Lock()
