@@ -114,7 +114,7 @@ var en = map[Key]string{
 	KeyEditConfigOption1:      "[1] Toggle channel",
 	KeyEditConfigOption2:      "[2] Edit channel_listen",
 	KeyEditConfigOption3:      "[3] Open config in editor",
-	KeyEditConfigFooter:       "[1/2/3] Select  [Esc] Back",
+	KeyEditConfigFooter:       "[1/2/3] Select  [r] Reload  [Esc] Back",
 
 	// Channel toggle
 	KeyChannelToggleOn:        "channel: ON (%s)",

@@ -114,7 +114,7 @@ var zhTW = map[Key]string{
 	KeyEditConfigOption1:      "[1] 切換 Channel",
 	KeyEditConfigOption2:      "[2] 編輯 channel_listen",
 	KeyEditConfigOption3:      "[3] 用編輯器開啟設定檔",
-	KeyEditConfigFooter:       "[1/2/3] 選擇  [Esc] 返回",
+	KeyEditConfigFooter:       "[1/2/3] 選擇  [r] 重載  [Esc] 返回",
 
 	// Channel toggle
 	KeyChannelToggleOn:        "channel: 開啟 (%s)",
