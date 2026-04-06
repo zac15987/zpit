@@ -53,9 +53,9 @@ func (m Model) renderEditConfigFooter() string {
 		if m.statusMessage != "" && time.Now().Before(m.statusExpiry) {
 			status = "  " + m.statusMessage
 		}
-		return fmt.Sprintf("\n %s%s", locale.T(locale.KeyEditConfigFooter), status)
+		return fmt.Sprintf("\n %s%s", styledHotkeys(locale.T(locale.KeyEditConfigFooter)), status)
 	case EditConfigListenList:
-		return fmt.Sprintf("\n %s", locale.T(locale.KeyChannelListenFooter))
+		return fmt.Sprintf("\n %s", styledHotkeys(locale.T(locale.KeyChannelListenFooter)))
 	}
 	return ""
 }
@@ -76,9 +76,9 @@ func (m Model) renderEditConfigScrollable() string {
 func (m Model) renderEditConfigMenuContent() string {
 	var b strings.Builder
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %s\n", locale.T(locale.KeyEditConfigOption1)))
-	b.WriteString(fmt.Sprintf("  %s\n", locale.T(locale.KeyEditConfigOption2)))
-	b.WriteString(fmt.Sprintf("  %s\n", locale.T(locale.KeyEditConfigOption3)))
+	b.WriteString(fmt.Sprintf("  %s\n", styledHotkeys(locale.T(locale.KeyEditConfigOption1))))
+	b.WriteString(fmt.Sprintf("  %s\n", styledHotkeys(locale.T(locale.KeyEditConfigOption2))))
+	b.WriteString(fmt.Sprintf("  %s\n", styledHotkeys(locale.T(locale.KeyEditConfigOption3))))
 
 	// Show current channel status for context.
 	for _, p := range m.state.projects {

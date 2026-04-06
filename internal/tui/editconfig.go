@@ -17,6 +17,7 @@ import (
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
+	"github.com/zac15987/zpit/internal/platform"
 )
 
 // handleEditConfigKey dispatches key events to the active sub-view handler.
@@ -102,13 +103,24 @@ func (m Model) handleEditConfigMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf(locale.T(locale.KeyConfigPathHint), cfgPath))
 			return m, nil
 		}
-		// Local mode: launch $EDITOR.
+		// Local mode: launch editor.
 		cfgPath := configPath()
 		if cfgPath == "" {
 			m.setStatus(locale.T(locale.KeyConfigPathNotFound))
 			return m, nil
 		}
 		editor := resolveEditor()
+		if editor == "" {
+			// No $EDITOR/$VISUAL on Windows — open with system default (non-blocking).
+			m.state.logger.Printf("config: opening with system default path=%s", cfgPath)
+			c := exec.Command("cmd", "/c", "start", "", cfgPath)
+			if err := c.Start(); err != nil {
+				m.setStatus(fmt.Sprintf(locale.T(locale.KeyEditorError), err))
+				return m, nil
+			}
+			m.setStatus(fmt.Sprintf(locale.T(locale.KeyConfigPathHint), cfgPath))
+			return m, nil
+		}
 		m.state.logger.Printf("config: launching editor=%s path=%s", editor, cfgPath)
 		m.setStatus(fmt.Sprintf(locale.T(locale.KeyEditorLaunching), editor))
 		c := exec.Command(editor, cfgPath)
@@ -224,13 +236,18 @@ func writeChannelListenCmd(logger interface{ Printf(string, ...interface{}) }, p
 }
 
 // resolveEditor returns the editor command from environment variables.
-// Fallback order: $VISUAL -> $EDITOR -> vim.
+// Fallback order: $VISUAL -> $EDITOR -> vim (Unix) / "" (Windows).
+// Returns "" on Windows when no env var is set, so the caller can use the
+// system default file association instead.
 func resolveEditor() string {
 	if e := os.Getenv("VISUAL"); e != "" {
 		return e
 	}
 	if e := os.Getenv("EDITOR"); e != "" {
 		return e
+	}
+	if platform.IsWindows() {
+		return ""
 	}
 	return "vim"
 }
