@@ -61,7 +61,7 @@ var en = map[Key]string{
 	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
 
 	// Undeploy confirm dialogs
-	KeyUndeployConfirm: "Remove all Zpit-deployed files from this project?\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployConfirm: "Remove all Zpit-deployed files from this project?\n\n.claude/agents/  .claude/docs/  .claude/hooks/\n.mcp.json  settings.json (hooks)  settings.local.json",
 	KeyUndeployButton:  "Undeploy",
 	KeyUndeployDone:    "Undeployed %d item(s) from %s",
 	KeyUndeployNoop:    "No deployed files found (%s)",

@@ -61,7 +61,7 @@ var zhTW = map[Key]string{
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
 
 	// Undeploy confirm dialogs
-	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/\n.mcp.json  settings.json (hooks)  settings.local.json",
 	KeyUndeployButton:  "清除",
 	KeyUndeployDone:    "已清除 %d 個項目（%s）",
 	KeyUndeployNoop:    "無已部署檔案（%s）",

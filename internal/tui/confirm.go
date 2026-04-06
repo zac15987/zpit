@@ -21,6 +21,7 @@ import (
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
+	"github.com/zac15987/zpit/internal/worktree"
 )
 
 // showDeployConfirm displays a huh confirm dialog for deploying the clarifier agent.
@@ -191,17 +192,39 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// undeployFiles removes all Zpit-deployed directories from a project's .claude/ directory.
+// undeployFiles removes all Zpit-deployed artifacts from a project:
+// .claude/{agents,docs,hooks}/ dirs, .mcp.json, settings.local.json,
+// and the "hooks" key from settings.json.
 func undeployFiles(projectPath string) int {
 	claudeDir := filepath.Join(projectPath, ".claude")
 	removed := 0
 
-	for _, dir := range []string{"agents", "docs", "hooks"} {
+	for _, dir := range worktree.ZpitDeployedDirs {
 		target := filepath.Join(claudeDir, dir)
 		if info, err := os.Stat(target); err == nil && info.IsDir() {
 			os.RemoveAll(target)
 			removed++
 		}
+	}
+
+	for _, file := range worktree.ZpitDeployedFiles {
+		target := filepath.Join(projectPath, file)
+		if _, err := os.Stat(target); err == nil {
+			os.Remove(target)
+			removed++
+		}
+	}
+
+	// Remove settings.local.json (worktree overlay, fully Zpit-created).
+	localSettings := filepath.Join(claudeDir, "settings.local.json")
+	if _, err := os.Stat(localSettings); err == nil {
+		os.Remove(localSettings)
+		removed++
+	}
+
+	// Strip Zpit-injected "hooks" key from settings.json (preserves other keys).
+	if worktree.CleanSettingsHooks(projectPath) {
+		removed++
 	}
 
 	return removed
