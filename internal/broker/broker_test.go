@@ -722,3 +722,152 @@ func TestBroker_ArtifactNoAgentName(t *testing.T) {
 		t.Errorf("Content: got %q, want %q", arts[0].Content, "data")
 	}
 }
+
+func TestBroker_SSE_AgentTypeTracking(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Post an artifact so project exists.
+	resp, _ := http.Post(base+"/api/artifacts/proj-typed/1", "application/json", strings.NewReader(`{"type":"x","content":"a"}`))
+	resp.Body.Close()
+
+	// Connect SSE with agent_type=clarifier.
+	sseResp, err := http.Get(base + "/api/events/proj-typed?agent_type=clarifier")
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+
+	// Wait for SSE handler to register.
+	time.Sleep(100 * time.Millisecond)
+
+	// Check list_projects.
+	resp2, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp2.Body).Decode(&projects)
+	resp2.Body.Close()
+
+	var proj *projectInfo
+	for i := range projects {
+		if projects[i].ID == "proj-typed" {
+			proj = &projects[i]
+			break
+		}
+	}
+	if proj == nil {
+		t.Fatal("proj-typed not found in list_projects")
+	}
+	if proj.Agents["clarifier"] != 1 {
+		t.Errorf("expected agents.clarifier=1, got %v", proj.Agents)
+	}
+
+	// Disconnect.
+	sseResp.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Check count decremented.
+	resp3, _ := http.Get(base + "/api/projects")
+	var projects2 []projectInfo
+	json.NewDecoder(resp3.Body).Decode(&projects2)
+	resp3.Body.Close()
+
+	for _, p := range projects2 {
+		if p.ID == "proj-typed" {
+			if p.Agents["clarifier"] != 0 {
+				t.Errorf("after disconnect: expected agents.clarifier=0, got %v", p.Agents)
+			}
+			break
+		}
+	}
+}
+
+func TestBroker_SSE_NoAgentType_DefaultsUnknown(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Connect SSE without agent_type.
+	sseResp, err := http.Get(base + "/api/events/proj-notype")
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp.Body).Decode(&projects)
+	resp.Body.Close()
+
+	var proj *projectInfo
+	for i := range projects {
+		if projects[i].ID == "proj-notype" {
+			proj = &projects[i]
+			break
+		}
+	}
+	if proj == nil {
+		t.Fatal("proj-notype not found")
+	}
+	if proj.Agents["unknown"] != 1 {
+		t.Errorf("expected agents.unknown=1, got %v", proj.Agents)
+	}
+
+	sseResp.Body.Close()
+}
+
+func TestBroker_SSE_MultipleAgentTypes(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Connect 2 clarifiers and 1 coding agent.
+	sse1, _ := http.Get(base + "/api/events/proj-multi?agent_type=clarifier")
+	sse2, _ := http.Get(base + "/api/events/proj-multi?agent_type=clarifier")
+	sse3, _ := http.Get(base + "/api/events/proj-multi?agent_type=coding")
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp.Body).Decode(&projects)
+	resp.Body.Close()
+
+	var proj *projectInfo
+	for i := range projects {
+		if projects[i].ID == "proj-multi" {
+			proj = &projects[i]
+			break
+		}
+	}
+	if proj == nil {
+		t.Fatal("proj-multi not found")
+	}
+	if proj.Agents["clarifier"] != 2 {
+		t.Errorf("expected agents.clarifier=2, got %d", proj.Agents["clarifier"])
+	}
+	if proj.Agents["coding"] != 1 {
+		t.Errorf("expected agents.coding=1, got %d", proj.Agents["coding"])
+	}
+
+	// Disconnect one clarifier.
+	sse1.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	resp2, _ := http.Get(base + "/api/projects")
+	var projects2 []projectInfo
+	json.NewDecoder(resp2.Body).Decode(&projects2)
+	resp2.Body.Close()
+
+	for _, p := range projects2 {
+		if p.ID == "proj-multi" {
+			if p.Agents["clarifier"] != 1 {
+				t.Errorf("after disconnect 1 clarifier: expected agents.clarifier=1, got %d", p.Agents["clarifier"])
+			}
+			if p.Agents["coding"] != 1 {
+				t.Errorf("coding should still be 1, got %d", p.Agents["coding"])
+			}
+			break
+		}
+	}
+
+	sse2.Body.Close()
+	sse3.Body.Close()
+}
