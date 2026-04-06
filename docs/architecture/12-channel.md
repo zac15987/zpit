@@ -69,6 +69,10 @@ type Event struct {
 }
 ```
 
+**Artifact / Message struct** 皆包含 `AgentName string` 欄位（json tag: `agent_name,omitempty`），
+由 MCP server 在 HTTP POST 時帶入。用於在 TUI Channel view 中識別不同 agent 的發言。
+命名格式：手動啟動 `{type}-{4碼hex}`（如 `clarifier-a3f7`），Loop 啟動 `{role}-#{issueID}`（如 `coding-#42`）。
+
 - 以 project key 為分組，每個 project 獨立的 subscriber set
 - `_global` 和跨專案 key 在 EventBus 中是普通的 project key，無特殊邏輯
 
@@ -87,14 +91,15 @@ Server 從環境變數讀取設定：
 | `ZPIT_PROJECT_ID` | 所屬 project ID |
 | `ZPIT_ISSUE_ID` | 處理中的 issue ID |
 | `ZPIT_LISTEN_PROJECTS` | 額外訂閱的 project key（逗號分隔） |
+| `ZPIT_AGENT_NAME` | Agent 顯示名稱（optional，如 `clarifier-a3f7`） |
 
 **提供的 MCP Tools：**
 
 | Tool | 說明 |
 |------|------|
-| `publish_artifact` | 發布 artifact（interface、type、schema 等）到 broker |
+| `publish_artifact` | 發布 artifact 到 broker，HTTP body 帶入 agent_name |
 | `list_artifacts` | 列出指定 project 的所有 artifact |
-| `send_message` | 發送訊息給指定 agent（by issue ID）或廣播 |
+| `send_message` | 發送訊息給指定 agent，HTTP body 帶入 agent_name |
 | `list_projects` | 列出所有活躍 project 及其 agent 連線數 |
 
 **SSE 監聽：**
