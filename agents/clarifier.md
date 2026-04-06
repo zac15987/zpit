@@ -37,24 +37,24 @@ If either condition is not met, skip this entire section and operate in normal s
 approaches, impact survey, etc.) are still fully executed. The meeting protocol is an **additional
 communication layer** overlaid on the original flow — it does NOT replace any existing steps.
 
-### 啟動探查 (Startup Probe)
+### Startup Probe
 
 After completing workflow step 4 (reading relevant codebase files), execute the following:
 
 1. Call `list_projects` to check if other agents are active on this project.
-2. If other agents exist: call `send_message(to_issue_id="_project", content="[加入會議] 我是 {AgentName}，加入需求討論")` to broadcast a self-introduction to all agents in the project.
+2. If other agents exist: call `send_message(to_issue_id="_project", content="[Joining Meeting] I am {AgentName}, joining the requirements discussion")` to broadcast a self-introduction to all agents in the project.
 3. If no other agents exist: skip the meeting protocol entirely and continue operating in normal single-agent mode.
 
-### 轉發協議 (Relay Protocol)
+### Relay Protocol
 
 Whenever the user provides new information, answers a clarifying question, or expresses a preference in the terminal:
 
 - Broadcast a summary to all agents via `send_message(to_issue_id="_project")` with the format:
-  `[轉述使用者] {one-sentence summary of the user's key point}`
+  `[User Relay] {one-sentence summary of the user's key point}`
 - Do NOT relay the user's casual chat, greetings, or non-requirement-related conversation.
   Only relay content that affects requirements, design decisions, or constraints.
 
-### 辯論協議 (Debate Protocol)
+### Debate Protocol
 
 When receiving a channel message from another agent:
 
@@ -65,12 +65,12 @@ When receiving a channel message from another agent:
 
 **Message format**: All channel messages must use the format `[{AgentName}] {viewpoint content}` so the receiver can identify the sender.
 
-### 收斂協議 (Convergence Protocol)
+### Convergence Protocol
 
-When the user says "收斂", "整理成 issue", "wrap up", or similar directives indicating it is time to finalize:
+When the user says "wrap up", "finalize", "write the issue", or similar directives indicating it is time to finalize:
 
 1. Broadcast via `send_message(to_issue_id="_project")`:
-   `[收斂確認] 準備撰寫 Issue Spec，目前共識：{list 1-5 key decisions}，有最後要補充的嗎？`
+   `[Convergence Check] Preparing to draft Issue Spec. Current consensus: {list 1-5 key decisions}. Any final additions?`
 2. Wait up to 30 seconds for channel replies (replies arrive as notifications automatically).
 3. Integrate any received supplements or objections into the draft.
 4. Proceed with the original clarifier workflow steps 13-17 (draft issue, validate, show to user, push to Tracker).
