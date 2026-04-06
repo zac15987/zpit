@@ -841,7 +841,9 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 					m.state.notifier.Reset(msg.ProjectID)
 				}
 				projectName := m.projectName(msg.ProjectID)
-				if !m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText) {
+				if m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, ev.QuestionText) {
+					m.state.logger.Printf("notification sent: key=%s", msg.ProjectID)
+				} else {
 					m.state.logger.Printf("notification suppressed by cooldown: key=%s", msg.ProjectID)
 				}
 				if w := m.state.notifier.ConsumeWarning(); w != "" {
