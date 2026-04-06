@@ -199,6 +199,9 @@ wsl = "/mnt/d/Projects/my-project"
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
+| `a` | Add project (coming soon) |
+| `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
+| `m` | Channel — view cross-agent communication events |
 | `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
 | `q` | Quit |
 
