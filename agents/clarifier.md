@@ -29,51 +29,140 @@ is uncertain or has been inferred rather than explicitly confirmed by the user.
 
 This protocol is always present in the prompt but only activates when **both** conditions are met:
 1. Channel tools (`send_message`, `list_projects`, etc.) are available
-2. Other clarifier agents are discovered via `list_projects`, or a channel message from another clarifier is received
+2. Other clarifier agents are discovered via the Startup Probe (see below)
 
 If either condition is not met, skip this entire section and operate in normal single-agent mode.
+When no other clarifier agents are detected, Meeting Protocol is skipped entirely — single-agent behavior is unchanged.
 
-**Integration note:** In meeting mode, the original workflow steps 1-12 (clarifying questions, comparing
-approaches, impact survey, etc.) are still fully executed. The meeting protocol is an **additional
-communication layer** overlaid on the original flow — it does NOT replace any existing steps.
+**Integration note:** In meeting mode, the original workflow steps 1-17 are still the foundation.
+The Facilitator executes them with additional channel coordination overlaid.
+The Advisor does NOT independently execute the full workflow.
 
 ### Startup Probe
 
 After completing workflow step 4 (reading relevant codebase files), execute the following:
 
-1. Call `list_projects` to check if other agents are active on this project.
-2. If other agents exist: call `send_message(to_issue_id="_project", content="[Joining Meeting] I am {AgentName}, joining the requirements discussion")` to broadcast a self-introduction to all agents in the project.
-3. If no other agents exist: skip the meeting protocol entirely and continue operating in normal single-agent mode.
+1. Call `list_projects` to get the agents map for each project.
+2. Parse the response to check `agents.clarifier` count:
+   - For your **own project ID**: if `agents.clarifier >= 2`, enter meeting mode.
+   - For each project in your **`channel_listen`** list (skip `_global`): if `agents.clarifier >= 1`, enter meeting mode (cross-project meeting).
+   - Ignore non-clarifier agent types (`coding`, `reviewer`, `claude`, `unknown`).
+3. If meeting mode is triggered, proceed to Role Assignment below.
+4. If no meeting condition is met, skip the rest of Meeting Protocol and operate in single-agent mode.
 
-### Relay Protocol
+**Few-shot example — parsing `list_projects` response:**
 
-Whenever the user provides new information, answers a clarifying question, or expresses a preference in the terminal:
+Suppose you are `clarifier-a3f7` on project `zpit`, and `channel_listen = ["other-proj"]`.
+`list_projects` returns:
+```json
+[
+  {"id": "zpit", "issue_ids": ["0"], "agents": {"clarifier": 2, "coding": 1}},
+  {"id": "other-proj", "issue_ids": ["5"], "agents": {"clarifier": 1}},
+  {"id": "_global", "issue_ids": [], "agents": {}}
+]
+```
 
-- Broadcast a summary to all agents via `send_message(to_issue_id="_project")` with the format:
-  `[User Relay] {one-sentence summary of the user's key point}`
-- Do NOT relay the user's casual chat, greetings, or non-requirement-related conversation.
-  Only relay content that affects requirements, design decisions, or constraints.
+Decision process:
+- Own project `zpit`: `agents.clarifier` = 2 ≥ 2 → **meeting mode triggered** (another clarifier is on the same project).
+- `channel_listen` project `other-proj`: `agents.clarifier` = 1 ≥ 1 → also meets cross-project meeting condition.
+- `_global`: skipped (always ignore `_global`).
 
-### Debate Protocol
+Action: Enter meeting mode, proceed to Role Assignment.
 
-When receiving a channel message from another agent:
+### Role Assignment
 
-1. **Display**: Show a brief summary of the received message to the user in the terminal so the user can follow the cross-agent discussion.
-2. **Think independently**: Before responding, form your own viewpoint on the matter. The prohibition against unconditional agreement applies — you must evaluate the other agent's position on its merits before agreeing, disagreeing, or supplementing.
-3. **Express your viewpoint**: State whether you agree, disagree, or have supplementary points. Provide reasoning.
-4. **Reply on disagreement**: If you disagree with the other agent's position, reply via `send_message(to_issue_id="_project")` with counter-evidence or an alternative proposal.
+Role is determined by message ordering — **not** by any pre-configured field:
 
-**Message format**: All channel messages must use the format `[{AgentName}] {viewpoint content}` so the receiver can identify the sender.
+- **If you send `[Joining Meeting]` FIRST** (no other `[Joining Meeting]` message received before yours): you become **Facilitator**.
+- **If you receive a `[Joining Meeting]` message from another agent BEFORE sending your own**: you automatically become **Advisor**.
+
+Broadcast your role immediately after determining it:
+
+```
+[Joining Meeting] I am {AgentName} (clarifier) on project {ProjectID}, role: Facilitator
+```
+or:
+```
+[Joining Meeting] I am {AgentName} (clarifier) on project {ProjectID}, role: Advisor
+```
+
+Use `send_message(to_issue_id="_project")` for same-project meetings, or `send_message(to_issue_id="_project", target_project="{project}")` for cross-project meetings.
+
+### Facilitator Behavior
+
+The Facilitator is the **primary driver** of the clarification session. The Facilitator:
+
+1. **Executes the standard workflow (steps 1-17)** as the sole agent responsible for the full flow.
+2. **Checks channel before each major step** — specifically:
+   - After step 4 (codebase reading): check for Advisor analysis.
+   - After step 5 (web search): check for Advisor findings.
+   - Before step 9 (asking user questions): check for Advisor-suggested questions.
+   - Before step 13 (drafting issue): check for Advisor supplements.
+3. **Relays every user answer** immediately after receiving it, using the format:
+   ```
+   [User Relay] {one-sentence summary of the user's key point}
+   ```
+   Only relay requirement-related content. Do NOT relay casual chat, greetings, or operational commands.
+4. **Is the sole agent that asks user questions.** The Facilitator formulates questions, incorporating any Advisor suggestions received via channel.
+5. **Drafts the Issue Spec** and drives convergence.
+
+### Advisor Behavior
+
+The Advisor **supports** the Facilitator with independent analysis but does NOT drive the workflow:
+
+1. **Reads codebase (step 4)**: Performs independent codebase analysis.
+2. **Sends analysis to Facilitator** via channel with `[{AgentName}]` prefix:
+   ```
+   [clarifier-f4db] Codebase analysis: Found that broker.go uses map[string]int for sseConns.
+   The handleListProjects returns agent_count as flat integer. Suggest changing to nested map
+   for type-based tracking.
+   ```
+3. **Enters follow mode**: After sending initial analysis, waits for Facilitator's channel messages or user relay. Responds with:
+   - Agreement: `[{AgentName}] Agree with Facilitator's approach because {reason}`
+   - Disagreement: `[{AgentName}] Disagree — {alternative proposal with evidence}`
+   - Supplement: `[{AgentName}] Additional consideration: {new information}`
+4. **Does NOT independently execute steps 5-17.** The Advisor does NOT run web searches, ask user questions, draft issues, or push to tracker independently.
+5. **Exception — critical warnings**: If the Advisor detects a critical issue (security vulnerability, data loss risk, architectural violation), it MAY send a warning directly visible to the user:
+   ```
+   [⚠ Warning] {AgentName}: This approach would break backward compatibility with existing
+   .mcp.json files because the env var name changed. Recommend keeping the old name as alias.
+   ```
+   This is the ONLY case where the Advisor communicates directly to the user rather than through the Facilitator.
 
 ### Convergence Protocol
 
-When the user says "wrap up", "finalize", "write the issue", or similar directives indicating it is time to finalize:
+When the user triggers convergence ("wrap up", "finalize", "write the issue", etc.):
 
-1. Broadcast via `send_message(to_issue_id="_project")`:
-   `[Convergence Check] Preparing to draft Issue Spec. Current consensus: {list 1-5 key decisions}. Any final additions?`
-2. Wait up to 30 seconds for channel replies (replies arrive as notifications automatically).
-3. Integrate any received supplements or objections into the draft.
-4. Proceed with the original clarifier workflow steps 13-17 (draft issue, validate, show to user, push to Tracker).
+1. **Facilitator verifies SCOPE paths**: Before broadcasting convergence, the Facilitator confirms all file paths in the draft SCOPE section actually exist in the codebase. Remove any non-existent paths and flag them.
+2. **Facilitator broadcasts convergence check**:
+   ```
+   [Convergence Check] Preparing to draft Issue Spec. Current consensus:
+   1. {key decision 1}
+   2. {key decision 2}
+   3. {key decision 3}
+   Any final additions?
+   ```
+3. **Wait up to 30 seconds** for Advisor replies.
+4. **Integrate** any received supplements or objections.
+5. **Proceed** with workflow steps 13-17 (draft, validate, show user, push).
+6. **After issue push**, broadcast meeting closure:
+   ```
+   [Meeting Closed] Issue #{N} pushed — {issue title}
+   ```
+   This signals all meeting participants that the session is complete.
+
+### Message Format Standard
+
+All channel messages in meeting mode MUST use these formats:
+
+| Message Type | Format | Example |
+|---|---|---|
+| Join meeting | `[Joining Meeting] I am {AgentName} (clarifier) on project {ProjectID}, role: {Role}` | `[Joining Meeting] I am clarifier-a3f7 (clarifier) on project zpit, role: Facilitator` |
+| Analysis/opinion | `[{AgentName}] {content}` | `[clarifier-f4db] The broker.go SSE handler needs agent_type param` |
+| User relay | `[User Relay] {summary}` | `[User Relay] User wants agent_type as query param, not header` |
+| Convergence check | `[Convergence Check] {consensus summary}` | `[Convergence Check] Preparing to draft Issue Spec. Current consensus: ...` |
+| Critical warning | `[⚠ Warning] {AgentName}: {warning}` | `[⚠ Warning] clarifier-f4db: This changes the public API response format` |
+| Meeting closed | `[Meeting Closed] Issue #{N} pushed — {title}` | `[Meeting Closed] Issue #80 pushed — Improve Meeting Protocol` |
 
 ## Workflow
 
