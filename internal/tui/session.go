@@ -189,6 +189,21 @@ func (m Model) handleWatcherReady(msg watcherReadyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.state.logger.Printf("watcher ready: key=%s state=%s", msg.ProjectID, at.State)
+		// If initial state is already Waiting, trigger notification now.
+		// The watcher only monitors new events (offset = current file size),
+		// so if Claude Code entered Waiting before the watcher started,
+		// no new event will arrive to trigger notification via handleAgentEvent.
+		if at.State == watcher.StateWaiting {
+			projectName := m.projectName(msg.ProjectID)
+			if m.state.notifier.NotifyWaiting(msg.ProjectID, projectName, at.LastQuestion) {
+				m.state.logger.Printf("watcher ready: notification sent: key=%s state=Waiting", msg.ProjectID)
+			} else {
+				m.state.logger.Printf("watcher ready: notification suppressed by cooldown: key=%s", msg.ProjectID)
+			}
+			if w := m.state.notifier.ConsumeWarning(); w != "" {
+				m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
+			}
+		}
 		m.state.NotifyAll()
 		m.state.Unlock()
 		return m, watchNextCmd(msg.ProjectID, msg.Watcher)
@@ -442,7 +457,7 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 
 			if _, err := os.Stat(logPath); err == nil {
 				logger.Printf("waitForLog: key=%s file found at attempt %d (sessionID=%s)", projectID, attempt, sessionID)
-				w, err := watcher.New(projectID, logPath)
+				w, err := watcher.New(projectID, logPath, logger)
 				if err != nil {
 					logger.Printf("waitForLog: key=%s watcher creation failed: %v", projectID, err)
 					return WatcherErrorMsg{ProjectID: projectID, Err: err}

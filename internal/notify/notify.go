@@ -66,7 +66,13 @@ func (n *Notifier) NotifyWaiting(projectID, projectName, questionText string) bo
 
 	if n.cfg.WindowsToast {
 		// Fire and forget — don't block TUI on notification delivery.
-		go sendToast(projectName, questionText)
+		go func() {
+			if err := sendToast(projectName, questionText); err != nil {
+				if n.logger != nil {
+					n.logger.Printf("sendToast failed: key=%s err=%v", projectID, err)
+				}
+			}
+		}()
 	}
 
 	if n.cfg.Sound {
@@ -76,7 +82,13 @@ func (n *Notifier) NotifyWaiting(projectID, projectName, questionText string) bo
 				return true
 			}
 		}
-		go playSound(n.cfg.SoundFile)
+		go func() {
+			if err := playSound(n.cfg.SoundFile); err != nil {
+				if n.logger != nil {
+					n.logger.Printf("playSound failed: key=%s err=%v", projectID, err)
+				}
+			}
+		}()
 	}
 
 	return true
