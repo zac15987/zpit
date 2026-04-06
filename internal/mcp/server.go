@@ -106,13 +106,15 @@ func channelTools() []Tool {
 
 // Server is a Channel MCP stdio server that bridges Claude Code agents with the HTTP broker.
 type Server struct {
-	config    ServerConfig
-	logger    *log.Logger
-	stdin     io.Reader
-	stdout    io.Writer
-	stdoutMu  sync.Mutex // protects concurrent writes to stdout
-	client    *http.Client
-	sseCancel context.CancelFunc // cancels the SSE listener goroutine
+	config       ServerConfig
+	logger       *log.Logger
+	stdin        io.Reader
+	stdout       io.Writer
+	stdoutMu     sync.Mutex                   // protects concurrent writes to stdout
+	client       *http.Client
+	sseMu        sync.Mutex                   // protects sseContexts
+	sseContexts  map[string]context.CancelFunc // per-project SSE cancel functions
+	sseParentCtx context.Context               // parent context for SSE goroutines
 }
 
 // instanceIDLen is the number of random bytes used to generate a unique instance ID.
@@ -130,11 +132,12 @@ func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.
 		cfg.InstanceID = fmt.Sprintf("%x", b)
 	}
 	return &Server{
-		config: cfg,
-		logger: logger,
-		stdin:  stdin,
-		stdout: stdout,
-		client: &http.Client{Timeout: 10 * time.Second},
+		config:      cfg,
+		logger:      logger,
+		stdin:       stdin,
+		stdout:      stdout,
+		client:      &http.Client{Timeout: 10 * time.Second},
+		sseContexts: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -145,11 +148,21 @@ func (s *Server) Run() error {
 	s.logger.Println("mcp: server starting")
 	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s agent=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID, s.config.AgentName)
 
-	// Start SSE listeners in background with cancellable context.
+	// Start SSE listeners in background with per-project cancellable contexts.
 	// Subscribe to own project + configured additional projects.
-	ctx, cancel := context.WithCancel(context.Background())
-	s.sseCancel = cancel
-	defer cancel()
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	s.sseParentCtx = parentCtx
+	defer func() {
+		s.sseMu.Lock()
+		for proj, cancel := range s.sseContexts {
+			s.logger.Printf("mcp: cancelling SSE for project=%s", proj)
+			cancel()
+		}
+		s.sseContexts = make(map[string]context.CancelFunc)
+		s.sseMu.Unlock()
+		parentCancel()
+		s.logger.Println("mcp: all SSE contexts cancelled")
+	}()
 
 	seen := map[string]bool{s.config.ProjectID: true}
 	sseProjects := []string{s.config.ProjectID}
@@ -160,9 +173,14 @@ func (s *Server) Run() error {
 			sseProjects = append(sseProjects, p)
 		}
 	}
+	s.sseMu.Lock()
 	for _, proj := range sseProjects {
-		go s.listenSSE(ctx, proj)
+		projCtx, projCancel := context.WithCancel(s.sseParentCtx)
+		s.sseContexts[proj] = projCancel
+		s.logger.Printf("mcp: starting SSE listener for project=%s", proj)
+		go s.listenSSE(projCtx, proj)
 	}
+	s.sseMu.Unlock()
 	if len(sseProjects) > 1 {
 		s.logger.Printf("mcp: subscribing to %d SSE channels: %v", len(sseProjects), sseProjects)
 	}
