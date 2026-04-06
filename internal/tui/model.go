@@ -404,11 +404,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ChannelToggledMsg:
-		// Will be handled in T6.
+		// Channel toggle is handled synchronously in handleEditConfigMenuKey.
+		// This msg type is reserved for future async toggle flows.
 		return m, nil
 
 	case ChannelListenUpdatedMsg:
-		// Will be handled in T6.
+		// Channel listen update is handled synchronously in handleEditConfigListenKey.
+		// This msg type is reserved for future async update flows.
 		return m, nil
 
 	}
