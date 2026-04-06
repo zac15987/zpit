@@ -608,3 +608,117 @@ func TestBroker_Close(t *testing.T) {
 		t.Error("expected error after Close, got nil")
 	}
 }
+
+func TestBroker_ArtifactAgentNameRoundTrip(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// POST an artifact with agent_name.
+	body := `{"type":"interface","content":"type Foo struct{}","agent_name":"clarifier-a3f7"}`
+	resp, err := http.Post(base+"/api/artifacts/proj-an/issue-1", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST status: got %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	// GET artifacts and verify agent_name round-trips.
+	resp2, err := http.Get(base + "/api/artifacts/proj-an")
+	if err != nil {
+		t.Fatalf("GET artifacts: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var arts []Artifact
+	if err := json.NewDecoder(resp2.Body).Decode(&arts); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(arts))
+	}
+	if arts[0].AgentName != "clarifier-a3f7" {
+		t.Errorf("AgentName: got %q, want %q", arts[0].AgentName, "clarifier-a3f7")
+	}
+	if arts[0].Type != "interface" {
+		t.Errorf("Type: got %q, want %q", arts[0].Type, "interface")
+	}
+}
+
+func TestBroker_MessageAgentNameRoundTrip(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// POST a message with agent_name.
+	body := `{"from":"issue-1","content":"hello","agent_name":"reviewer-c41d"}`
+	resp, err := http.Post(base+"/api/messages/proj-mn/issue-2", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST message: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST status: got %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	// GET messages and verify agent_name round-trips.
+	resp2, err := http.Get(base + "/api/messages/proj-mn/issue-2")
+	if err != nil {
+		t.Fatalf("GET messages: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var msgs []Message
+	if err := json.NewDecoder(resp2.Body).Decode(&msgs); err != nil {
+		t.Fatalf("decode messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].AgentName != "reviewer-c41d" {
+		t.Errorf("AgentName: got %q, want %q", msgs[0].AgentName, "reviewer-c41d")
+	}
+	if msgs[0].From != "issue-1" {
+		t.Errorf("From: got %q, want %q", msgs[0].From, "issue-1")
+	}
+}
+
+func TestBroker_ArtifactNoAgentName(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// POST an artifact WITHOUT agent_name (backward compatibility).
+	body := `{"type":"schema","content":"data"}`
+	resp, err := http.Post(base+"/api/artifacts/proj-compat/issue-1", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST status: got %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	// GET artifacts and verify agent_name is empty (zero value, no error).
+	resp2, err := http.Get(base + "/api/artifacts/proj-compat")
+	if err != nil {
+		t.Fatalf("GET artifacts: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var arts []Artifact
+	if err := json.NewDecoder(resp2.Body).Decode(&arts); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(arts))
+	}
+	if arts[0].AgentName != "" {
+		t.Errorf("AgentName: got %q, want empty string", arts[0].AgentName)
+	}
+	if arts[0].Type != "schema" {
+		t.Errorf("Type: got %q, want %q", arts[0].Type, "schema")
+	}
+	if arts[0].Content != "data" {
+		t.Errorf("Content: got %q, want %q", arts[0].Content, "data")
+	}
+}

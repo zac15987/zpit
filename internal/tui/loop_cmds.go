@@ -228,7 +228,8 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 
 		// Write .mcp.json for channel communication if enabled.
 		if channelEnabled && brokerAddr != "" {
-			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin, channelListen); err != nil {
+			loopAgentName := fmt.Sprintf("coding-#%s", issueID)
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin, loopAgentName, channelListen); err != nil {
 				logger.Printf("loop: failed to write .mcp.json for issue #%s: %v", issueID, err)
 			} else {
 				logger.Printf("loop: wrote .mcp.json to %s for issue #%s", wtPath, issueID)
@@ -247,7 +248,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 // writeMCPConfig writes a .mcp.json file to the target directory, configuring
 // the zpit-channel MCP server to connect to the broker.
 // zpitBinOverride is used as the executable path if non-empty; otherwise falls back to os.Executable().
-func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride string, listenProjects []string) error {
+func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride, agentName string, listenProjects []string) error {
 	zpitBin := zpitBinOverride
 	if zpitBin == "" {
 		var err error
@@ -268,6 +269,9 @@ func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride s
 						"ZPIT_BROKER_URL": "http://" + brokerAddr,
 						"ZPIT_PROJECT_ID": projectID,
 						"ZPIT_ISSUE_ID":   issueID,
+					}
+					if agentName != "" {
+						env["ZPIT_AGENT_NAME"] = agentName
 					}
 					if len(listenProjects) > 0 {
 						env["ZPIT_LISTEN_PROJECTS"] = strings.Join(listenProjects, ",")

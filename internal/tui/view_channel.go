@@ -152,8 +152,9 @@ func (m Model) renderChannelFooter() string {
 }
 
 // formatChannelEvent formats a single broker event as a timeline line.
-// Format: {HH:MM:SS}  [source] {icon} #{issueID} {action}: {content_preview}
+// Format: {HH:MM:SS}  [source] [agent_name] {icon} #{issueID} {action}: {content_preview}
 // sourceProject is shown as a prefix tag for cross-project events (empty for own project).
+// agentName is extracted from the payload; shown as [unknown] when absent.
 func formatChannelEvent(ev broker.Event, sourceProject string) string {
 	icon := "📦"
 	if ev.Type == "message" {
@@ -161,7 +162,7 @@ func formatChannelEvent(ev broker.Event, sourceProject string) string {
 	}
 
 	var ts time.Time
-	var issueID, action, content string
+	var issueID, action, content, agentName string
 
 	switch ev.Type {
 	case "artifact":
@@ -171,6 +172,7 @@ func formatChannelEvent(ev broker.Event, sourceProject string) string {
 			issueID = art.IssueID
 			action = art.Type
 			content = art.Content
+			agentName = art.AgentName
 		}
 	case "message":
 		var msg broker.Message
@@ -179,7 +181,12 @@ func formatChannelEvent(ev broker.Event, sourceProject string) string {
 			issueID = msg.From
 			action = fmt.Sprintf("→ #%s", msg.To)
 			content = msg.Content
+			agentName = msg.AgentName
 		}
+	}
+
+	if agentName == "" {
+		agentName = "unknown"
 	}
 
 	timeStr := ts.Format("15:04:05")
@@ -189,10 +196,12 @@ func formatChannelEvent(ev broker.Event, sourceProject string) string {
 	if sourceProject != "" {
 		projectTag = detailStyle.Render(fmt.Sprintf("[%s] ", sourceProject))
 	}
+	agentTag := detailStyle.Render(fmt.Sprintf("[%s] ", agentName))
 
-	return fmt.Sprintf("%s  %s%s #%s %s: %s",
+	return fmt.Sprintf("%s  %s%s%s #%s %s: %s",
 		detailStyle.Render(timeStr),
 		projectTag,
+		agentTag,
 		icon,
 		issueID,
 		detailStyle.Render(action),

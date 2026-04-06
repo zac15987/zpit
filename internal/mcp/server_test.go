@@ -966,6 +966,140 @@ func TestReadConfigFromEnv_NoListenProjects(t *testing.T) {
 	}
 }
 
+// testServerWithAgentName creates a server wired to a real broker, with the
+// given agent name set in ServerConfig. Used to verify agent_name propagation.
+func testServerWithAgentName(t *testing.T, agentName string) (*Server, *broker.Broker, *io.PipeWriter, *bytes.Buffer) {
+	t.Helper()
+	logger := log.New(io.Discard, "", 0)
+	b, err := broker.New(logger, 0)
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	t.Cleanup(func() { b.Close() })
+
+	cfg := ServerConfig{
+		BrokerURL: "http://" + b.Addr(),
+		ProjectID: "test-proj",
+		IssueID:   "42",
+		AgentName: agentName,
+	}
+
+	pr, pw := io.Pipe()
+	var stdout bytes.Buffer
+	srv := NewServer(cfg, logger, pr, &stdout)
+	return srv, b, pw, &stdout
+}
+
+func TestServer_PublishArtifact_IncludesAgentName(t *testing.T) {
+	srv, b, pw, stdout := testServerWithAgentName(t, "clarifier-a3f7")
+
+	req := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"publish_artifact","arguments":{"issue_id":"42","type":"interface","content":"type Foo struct{}"}}}`
+
+	go sendAndClose(pw, req)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) == 0 {
+		t.Fatal("no responses")
+	}
+
+	var result CallToolResult
+	if err := json.Unmarshal(responses[0].Result, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %v", result.Content)
+	}
+
+	// Query broker directly to verify AgentName was stored.
+	resp, err := srv.client.Get("http://" + b.Addr() + "/api/artifacts/test-proj")
+	if err != nil {
+		t.Fatalf("GET artifacts: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var arts []broker.Artifact
+	if err := json.NewDecoder(resp.Body).Decode(&arts); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(arts))
+	}
+	if arts[0].AgentName != "clarifier-a3f7" {
+		t.Errorf("AgentName: got %q, want %q", arts[0].AgentName, "clarifier-a3f7")
+	}
+}
+
+func TestServer_SendMessage_IncludesAgentName(t *testing.T) {
+	srv, b, pw, stdout := testServerWithAgentName(t, "reviewer-c41d")
+
+	req := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send_message","arguments":{"to_issue_id":"43","content":"use Foo interface"}}}`
+
+	go sendAndClose(pw, req)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) == 0 {
+		t.Fatal("no responses")
+	}
+
+	var result CallToolResult
+	if err := json.Unmarshal(responses[0].Result, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %v", result.Content)
+	}
+
+	// Query broker directly to verify AgentName was stored.
+	resp, err := srv.client.Get("http://" + b.Addr() + "/api/messages/test-proj/43")
+	if err != nil {
+		t.Fatalf("GET messages: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var msgs []broker.Message
+	if err := json.NewDecoder(resp.Body).Decode(&msgs); err != nil {
+		t.Fatalf("decode messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].AgentName != "reviewer-c41d" {
+		t.Errorf("AgentName: got %q, want %q", msgs[0].AgentName, "reviewer-c41d")
+	}
+}
+
+func TestReadConfigFromEnv_AgentName(t *testing.T) {
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_NAME", "coding-b2e8")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentName != "coding-b2e8" {
+		t.Errorf("AgentName: got %q, want %q", cfg.AgentName, "coding-b2e8")
+	}
+}
+
+func TestReadConfigFromEnv_NoAgentName(t *testing.T) {
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_NAME", "")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentName != "" {
+		t.Errorf("AgentName: got %q, want empty string", cfg.AgentName)
+	}
+}
+
 func TestChannelTools(t *testing.T) {
 	tools := channelTools()
 	if len(tools) != 4 {
