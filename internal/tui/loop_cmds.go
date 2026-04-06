@@ -228,7 +228,8 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 
 		// Write .mcp.json for channel communication if enabled.
 		if channelEnabled && brokerAddr != "" {
-			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin, channelListen); err != nil {
+			loopAgentName := fmt.Sprintf("coding-#%s", issueID)
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin, loopAgentName, "coding", channelListen); err != nil {
 				logger.Printf("loop: failed to write .mcp.json for issue #%s: %v", issueID, err)
 			} else {
 				logger.Printf("loop: wrote .mcp.json to %s for issue #%s", wtPath, issueID)
@@ -247,7 +248,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 // writeMCPConfig writes a .mcp.json file to the target directory, configuring
 // the zpit-channel MCP server to connect to the broker.
 // zpitBinOverride is used as the executable path if non-empty; otherwise falls back to os.Executable().
-func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride string, listenProjects []string) error {
+func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride, agentName, agentType string, listenProjects []string) error {
 	zpitBin := zpitBinOverride
 	if zpitBin == "" {
 		var err error
@@ -268,6 +269,12 @@ func writeMCPConfig(targetDir, brokerAddr, projectID, issueID, zpitBinOverride s
 						"ZPIT_BROKER_URL": "http://" + brokerAddr,
 						"ZPIT_PROJECT_ID": projectID,
 						"ZPIT_ISSUE_ID":   issueID,
+					}
+					if agentName != "" {
+						env["ZPIT_AGENT_NAME"] = agentName
+					}
+					if agentType != "" {
+						env["ZPIT_AGENT_TYPE"] = agentType
 					}
 					if len(listenProjects) > 0 {
 						env["ZPIT_LISTEN_PROJECTS"] = strings.Join(listenProjects, ",")
@@ -325,9 +332,11 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	taskRunnerMD := m.state.taskRunnerMD
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	channelEnabled := project.ChannelEnabled
+	logger := m.state.logger
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + gitignore exist (handles resume from previous session)
@@ -367,6 +376,16 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		agentDir := filepath.Join(wtPath, ".claude", "agents")
 		if err := os.MkdirAll(agentDir, 0o755); err != nil {
 			return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		}
+
+		// Deploy task-runner.md when Issue Spec contains TASKS for subagent delegation.
+		if len(spec.Tasks) > 0 && len(taskRunnerMD) > 0 {
+			trPath := filepath.Join(agentDir, "task-runner.md")
+			if err := os.WriteFile(trPath, taskRunnerMD, 0o644); err != nil {
+				logger.Printf("loop: failed to deploy task-runner.md for issue #%s: %v", issueID, err)
+			} else {
+				logger.Printf("loop: deployed task-runner.md to %s for issue #%s", agentDir, issueID)
+			}
 		}
 
 		agentFile := fmt.Sprintf("coding-%s.md", issueID)
@@ -462,6 +481,13 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	}
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
 	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
+	logger := m.state.logger
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	agentGuidelines := m.state.agentGuidelinesMD
@@ -477,6 +503,17 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		worktree.EnsureGitignore(wtPath)
 		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
+
+		// Rewrite .mcp.json with reviewer agent type so SSE connection registers as "reviewer"
+		// (the worktree's existing .mcp.json has agent_type=coding from the coding agent).
+		if channelEnabled && brokerAddr != "" {
+			reviewerAgentName := fmt.Sprintf("reviewer-#%s", issueID)
+			if err := writeMCPConfig(wtPath, brokerAddr, projectID, issueID, zpitBin, reviewerAgentName, "reviewer", channelListen); err != nil {
+				logger.Printf("loop-reviewer: failed to rewrite .mcp.json for issue #%s: %v", issueID, err)
+			} else {
+				logger.Printf("loop-reviewer: rewrote .mcp.json to %s for issue #%s agent=%s", wtPath, issueID, reviewerAgentName)
+			}
+		}
 
 		// Fetch issue for reviewer prompt
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

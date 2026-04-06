@@ -1,8 +1,8 @@
 package loop
 
 const (
-	DefaultPollSeconds     = 15 // how often to poll tracker for todo issues (seconds)
-	DefaultPRPollSeconds   = 30 // how often to poll for PR/label changes (seconds)
+	DefaultPollSeconds     = 10 // how often to poll tracker for todo issues (seconds)
+	DefaultPRPollSeconds   = 10 // how often to poll for PR/label changes (seconds)
 	DefaultMaxReviewRounds = 3  // max coding↔review cycles before human intervention
 )
 

@@ -27,7 +27,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 
 ```
 main.go                  # Entry point: subcommand routing, go:embed declarations, config/log init
-agents/                  # Agent templates (clarifier.md, reviewer.md) — embedded via go:embed
+agents/                  # Agent templates (clarifier.md, reviewer.md, task-runner.md) — embedded via go:embed
 hooks/                   # PreToolUse hook scripts — embedded via go:embed, + hook_test.go
 docs/                    # Agent behavioral rules, code quality baseline, LLM failure mode research
 docs/architecture/       # Architecture docs (split by topic) — see docs/architecture/README.md for index
@@ -35,13 +35,13 @@ scripts/                 # Manual hook deployment fallback (setup-hooks.sh)
 testdata/                # Config fixtures + JSONL session fixtures
 internal/
 ├── broker/              # HTTP event broker for cross-agent channel communication
-├── config/              # Config structs, Load(), defaults, BaseDir(), WriteTemplate()
+├── config/              # Config structs, Load(), Reload(), Diff(), defaults, BaseDir(), WriteTemplate()
 ├── locale/              # i18n: SetLanguage(), T(), ResponseInstruction() — en + zh-TW
 ├── loop/                # Loop state machine types: SlotState enum, Slot, LoopState
 ├── mcp/                 # MCP stdio server for agent↔broker communication (zpit serve-channel)
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
 ├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
-├── prompt/              # Prompt assembly: BuildCodingPrompt, BuildReviewerPrompt, BuildRevisionPrompt
+├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
 ├── ssh/                 # Wish SSH server: StartServer(), auth config (pub-key + password)
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
@@ -49,15 +49,22 @@ internal/
 ├── worktree/            # Worktree Manager, Slugify(), DeployHooks(), settings.json merge
 └── tui/                 # Bubble Tea TUI — see "TUI Message Flow" below
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
+    ├── channel.go       # Channel EventBus subscription and event reading
+    ├── confirm.go       # Confirm dialogs, executePendingOp, undeploy
+    ├── editconfig.go    # Edit config sub-menu: channel toggle, listen edit, $EDITOR launch
     ├── keymap.go        # Key bindings definition (Help, Channel, etc.)
-    ├── model.go         # Root Model, Update (key routing + message dispatch), View routing
-    ├── msg.go           # All custom tea.Msg types
+    ├── launch.go        # Terminal launch cmds, slot operations, deploy helpers
     ├── loop_cmds.go     # Loop tea.Cmd functions (poll, create worktree, launch, cleanup)
     ├── loop_handler.go  # Loop message handlers (state machine transitions)
+    ├── model.go         # Root Model, Init, Update (one-line dispatch), View routing, key handlers
+    ├── msg.go           # All custom tea.Msg types
+    ├── session.go       # Session lifecycle, discovery, monitoring, liveness, permission detection
+    ├── tracker_ops.go   # Label check/ensure, issue load/confirm, label check flow
+    ├── validate.go      # Input validation helpers with RLock
     ├── view_channel.go  # Channel event timeline view ([m] key)
+    ├── view_editconfig.go # Edit config sub-menu rendering + channel_listen multi-select
     ├── view_projects.go # Main screen rendering
-    ├── view_status.go   # Issue list sub-view
-    └── validate.go      # Input validation helpers with RLock
+    └── view_status.go   # Issue list sub-view
 ```
 
 ## Architecture
@@ -68,11 +75,12 @@ Agents, hooks, and docs are embedded in the binary and deployed at runtime to ta
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, guidelinesMD, principlesMD, hookScripts)
     → stored in AppState fields
       → DeployHooks() on every agent launch ([c]/[r]/[l])
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
+      → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
 ```
 
 This means changes to `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md` require a rebuild to take effect.
@@ -82,9 +90,9 @@ This means changes to `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md`
 The TUI follows Bubble Tea's Elm architecture with a consistent pattern across all features:
 
 1. **msg.go** — defines all `tea.Msg` types (data carriers, no logic)
-2. **loop_cmds.go** / model.go — `tea.Cmd` functions that perform async work (API calls, file I/O, polling), return messages. These acquire `RLock` for reads.
-3. **loop_handler.go** / model.go `Update()` — message handlers that mutate state and return next commands. These acquire `Lock` for writes + call `NotifyAll`.
-4. **view_projects.go** / view_status.go — pure rendering functions, acquire `RLock` for reads.
+2. **loop_cmds.go** / session.go / launch.go / tracker_ops.go / channel.go — `tea.Cmd` functions that perform async work (API calls, file I/O, polling), return messages. These acquire `RLock` for reads.
+3. **loop_handler.go** / session.go / launch.go / tracker_ops.go / confirm.go / channel.go — message handlers dispatched from model.go `Update()` (one-line dispatch). These acquire `Lock` for writes + call `NotifyAll`.
+4. **view_projects.go** / view_status.go / view_channel.go — pure rendering functions, acquire `RLock` for reads.
 
 Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
 
@@ -121,6 +129,21 @@ zpit serve
 - Action-defer pattern: handlers collect actions under write lock, create cmds after unlock to avoid nested lock acquisition
 - Buffered channel (size 1): coalesces rapid state changes into single notification per subscriber
 
+### Config Hot-Reload
+
+The `[e]` key opens a sub-menu for config editing:
+- `[1]` Toggle channel — instant on/off for `channel_enabled` with broker lazy start
+- `[2]` Edit channel_listen — multi-select list of other projects + `_global`
+- `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
+
+**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_level`.
+
+**Restart-required fields** (status bar warning): `broker_port`, `ssh.*`, `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
+
+Channel quick-toggle uses targeted TOML writing (`internal/config/toml_writer.go`) — locates the matching `[[projects]]` block by `id` and updates only the `channel_enabled` or `channel_listen` line, preserving all other content including comments.
+
+SSH remote mode: `[3]` shows the config file path instead of launching an editor; `[r]` triggers manual reload.
+
 ### Cross-Agent Channel (Broker + MCP)
 
 When `channel_enabled = true` for a project, agents can communicate in real time via a local HTTP broker. Supports same-project, cross-project, and global broadcast communication:
@@ -151,13 +174,17 @@ Agent A (Project X)            Agent B (Project Y)
 
 `_global` and cross-project keys are regular project keys in the EventBus — no special broker logic.
 
-**Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, SSE streaming, and project discovery. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Tracks SSE connection count per project for discovery. Started in `NewAppState()` only if any project has `channel_enabled`.
+**Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, SSE streaming, and project discovery. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Tracks SSE connections per project per agent type for discovery. SSE endpoint accepts optional `?agent_type=X` query parameter. Started in `NewAppState()` only if any project has `channel_enabled`.
 
-**MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes four tools: `publish_artifact`, `list_artifacts`, `send_message`, `list_projects`. Tools accept optional `target_project` parameter for cross-project communication. Spawns one SSE listener goroutine per subscribed project (own + `ListenProjects`), with self-echo filtering via per-instance UUID. Entry point: `zpit serve-channel` subcommand.
+**AgentName**: Each agent gets a human-readable name (`AgentName` field on `Message` and `Artifact` structs, json tag `agent_name`). Format: `{type}-{4hex}` for manual launches (e.g. `clarifier-a3f7`), `{role}-#{issueID}` for loop launches (e.g. `coding-#42`). Generated by TUI at launch time via `crypto/rand`, passed through `ZPIT_AGENT_NAME` env var → `ServerConfig.AgentName` → HTTP POST body → broker storage → SSE → Channel view display as `[agent-name]` tag.
+
+**MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes seven tools: `publish_artifact`, `list_artifacts`, `send_message`, `list_projects`, `subscribe_project`, `unsubscribe_project`, `list_subscriptions`. Tools accept optional `target_project` parameter for cross-project communication. Includes `AgentName` in HTTP POST bodies for `publish_artifact` and `send_message`. Spawns one SSE listener goroutine per subscribed project (own + `ListenProjects`), with self-echo filtering via per-instance UUID. Supports runtime dynamic subscription management via `subscribe_project`/`unsubscribe_project`/`list_subscriptions` tools (per-project context with mutex-protected cancel map). Entry point: `zpit serve-channel` subcommand.
+
+**Meeting Protocol**: When multiple clarifier agents are launched for the same project, they auto-discover each other via `list_projects` (checking `agents.clarifier` count) and enter meeting mode with Facilitator/Advisor roles. The first agent to broadcast `[Joining Meeting]` becomes Facilitator (drives the workflow, asks questions, drafts issues); subsequent agents become Advisors (provide analysis, follow Facilitator's rhythm). See `agents/clarifier.md` Meeting Protocol section for the full role assignment rules and message format.
 
 **TUI integration**: Loop start / manual launch calls `channelSubscribeCmd()` for own project + each `channel_listen` entry → subscribes to EventBus → `channelReadNextCmd()` blocks on channel → `ChannelEventMsg` appended to `AppState.channelEvents[projectID]` → `ViewChannel` merges events from own + listen projects, sorted by timestamp, with `[source]` tag for cross-project events. Loop stop unsubscribes all related channels (own + listen).
 
-**Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server.
+**Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server. Env var `ZPIT_AGENT_NAME` passes the generated agent name to MCP server. Env var `ZPIT_AGENT_TYPE` passes the agent type (e.g. `clarifier`, `coding`, `reviewer`, `claude`) to MCP server for SSE registration.
 
 ### TrackerClient
 
@@ -182,6 +209,24 @@ State transitions are **label-driven** (poll issue labels, not PID monitoring). 
 - Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
 
 States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotCoding` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+
+### Task Execution Model (Subagent + Agent Teams)
+
+When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrator** — it delegates each task to a `task-runner` subagent instead of implementing tasks itself. This provides context isolation between tasks.
+
+**Execution strategy:**
+- **Sequential tasks** (no `[P]`): Delegated one at a time to `task-runner` subagent via the Agent tool. Each subagent runs in its own context window, implements the task, and commits.
+- **Parallel tasks** (`[P]` marked): When a group of `[P]` tasks has all dependencies satisfied, the orchestrator creates an Agent Team with one teammate per task (each using `task-runner` subagent type). Teammates work in parallel.
+- **Mixed**: Groups execute in dependency order — sequential tasks use subagent, parallel groups use Agent Team.
+- **No tasks**: `buildStandardWorkflow()` generates the same prompt as before (no delegation).
+
+**Prompt generation** (`internal/prompt/coding.go`):
+- `groupTasks()` partitions tasks into sequential singletons and parallel batches
+- `buildSubagentDelegation()` generates Agent tool delegation instructions
+- `buildTeamDelegation()` generates Agent Team instructions (only when `[P]` tasks exist)
+- Task Execution Order section sequences the groups correctly
+
+**task-runner subagent** (`agents/task-runner.md`): Restricted tools (`Read, Write, Edit, Bash, Glob, Grep`), reads CLAUDE.md + agent-guidelines on startup, commits with `[ISSUE-ID] T{N}: {description}` format, stays within assigned file scope.
 
 ### Hook-Based Safety System (5 Layers)
 

@@ -79,12 +79,11 @@ Follow `.claude/docs/tracker.md` instructions for label API operations. If a lab
 ## Tracker Operation Notes
 
 Post the Review Report as both a **PR comment** and an **issue comment**, following `.claude/docs/tracker.md` instructions.
-**Prefer MCP tools** to post comments and update labels directly — pass content as a parameter.
-If MCP is unavailable, use the Write tool + `--body-file` pattern:
-1. Use the Write tool to write the report to a temp file in the working directory (e.g. `./tmp_review_report.md`)
-2. Use `gh issue comment --body-file ./tmp_review_report.md` or `curl ... -d @./tmp_review_report.md`
-3. Delete the temp file: `rm ./tmp_review_report.md`
-(Do NOT use Bash heredoc — it fails on long content with special characters such as backticks, single quotes, and backslash paths.)
+Before performing any tracker operation (comment, label, PR), you MUST first read `.claude/docs/tracker.md`.
+Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
+Never embed long text directly in bash commands or MCP parameters.
+Write long content to a temp file first (e.g. `./tmp_review_report.md`), then pass it via `--body-file` or read it back before sending.
+Delete the temp file after use.
 
 ## Revision Review
 

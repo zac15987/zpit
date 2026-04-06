@@ -19,6 +19,7 @@ $textNodes = $template.GetElementsByTagName("text")
 $textNodes.Item(0).AppendChild($template.CreateTextNode("%s - Agent waiting")) | Out-Null
 $textNodes.Item(1).AppendChild($template.CreateTextNode("%s")) | Out-Null
 $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+$toast.Tag = "agent-waiting"
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Zpit").Show($toast)
 `, escapePS(projectName), escapePS(questionText))
 

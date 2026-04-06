@@ -143,8 +143,8 @@ func TestServer_ToolsList(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if len(result.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(result.Tools))
 	}
 
 	names := map[string]bool{}
@@ -154,7 +154,7 @@ func TestServer_ToolsList(t *testing.T) {
 			t.Errorf("tool %s: schema type %q, want object", tool.Name, tool.InputSchema.Type)
 		}
 	}
-	for _, expected := range []string{"publish_artifact", "list_artifacts", "send_message", "list_projects"} {
+	for _, expected := range []string{"publish_artifact", "list_artifacts", "send_message", "list_projects", "subscribe_project", "unsubscribe_project", "list_subscriptions"} {
 		if !names[expected] {
 			t.Errorf("missing tool: %s", expected)
 		}
@@ -966,10 +966,144 @@ func TestReadConfigFromEnv_NoListenProjects(t *testing.T) {
 	}
 }
 
+// testServerWithAgentName creates a server wired to a real broker, with the
+// given agent name set in ServerConfig. Used to verify agent_name propagation.
+func testServerWithAgentName(t *testing.T, agentName string) (*Server, *broker.Broker, *io.PipeWriter, *bytes.Buffer) {
+	t.Helper()
+	logger := log.New(io.Discard, "", 0)
+	b, err := broker.New(logger, 0)
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	t.Cleanup(func() { b.Close() })
+
+	cfg := ServerConfig{
+		BrokerURL: "http://" + b.Addr(),
+		ProjectID: "test-proj",
+		IssueID:   "42",
+		AgentName: agentName,
+	}
+
+	pr, pw := io.Pipe()
+	var stdout bytes.Buffer
+	srv := NewServer(cfg, logger, pr, &stdout)
+	return srv, b, pw, &stdout
+}
+
+func TestServer_PublishArtifact_IncludesAgentName(t *testing.T) {
+	srv, b, pw, stdout := testServerWithAgentName(t, "clarifier-a3f7")
+
+	req := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"publish_artifact","arguments":{"issue_id":"42","type":"interface","content":"type Foo struct{}"}}}`
+
+	go sendAndClose(pw, req)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) == 0 {
+		t.Fatal("no responses")
+	}
+
+	var result CallToolResult
+	if err := json.Unmarshal(responses[0].Result, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %v", result.Content)
+	}
+
+	// Query broker directly to verify AgentName was stored.
+	resp, err := srv.client.Get("http://" + b.Addr() + "/api/artifacts/test-proj")
+	if err != nil {
+		t.Fatalf("GET artifacts: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var arts []broker.Artifact
+	if err := json.NewDecoder(resp.Body).Decode(&arts); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(arts))
+	}
+	if arts[0].AgentName != "clarifier-a3f7" {
+		t.Errorf("AgentName: got %q, want %q", arts[0].AgentName, "clarifier-a3f7")
+	}
+}
+
+func TestServer_SendMessage_IncludesAgentName(t *testing.T) {
+	srv, b, pw, stdout := testServerWithAgentName(t, "reviewer-c41d")
+
+	req := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send_message","arguments":{"to_issue_id":"43","content":"use Foo interface"}}}`
+
+	go sendAndClose(pw, req)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) == 0 {
+		t.Fatal("no responses")
+	}
+
+	var result CallToolResult
+	if err := json.Unmarshal(responses[0].Result, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %v", result.Content)
+	}
+
+	// Query broker directly to verify AgentName was stored.
+	resp, err := srv.client.Get("http://" + b.Addr() + "/api/messages/test-proj/43")
+	if err != nil {
+		t.Fatalf("GET messages: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var msgs []broker.Message
+	if err := json.NewDecoder(resp.Body).Decode(&msgs); err != nil {
+		t.Fatalf("decode messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].AgentName != "reviewer-c41d" {
+		t.Errorf("AgentName: got %q, want %q", msgs[0].AgentName, "reviewer-c41d")
+	}
+}
+
+func TestReadConfigFromEnv_AgentName(t *testing.T) {
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_NAME", "coding-b2e8")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentName != "coding-b2e8" {
+		t.Errorf("AgentName: got %q, want %q", cfg.AgentName, "coding-b2e8")
+	}
+}
+
+func TestReadConfigFromEnv_NoAgentName(t *testing.T) {
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_NAME", "")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentName != "" {
+		t.Errorf("AgentName: got %q, want empty string", cfg.AgentName)
+	}
+}
+
 func TestChannelTools(t *testing.T) {
 	tools := channelTools()
-	if len(tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(tools))
 	}
 
 	// Verify each tool has a non-empty description.
@@ -977,5 +1111,133 @@ func TestChannelTools(t *testing.T) {
 		if tool.Description == "" {
 			t.Errorf("tool %s has empty description", tool.Name)
 		}
+	}
+}
+
+func TestServer_SubscribeUnsubscribeFlow(t *testing.T) {
+	srv, _, pw, stdout := testServer(t)
+
+	// The server's own project "test-proj" is auto-subscribed in Run().
+	// Subscribe to a new project, list, unsubscribe, list again.
+	subscribe := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"subscribe_project","arguments":{"project":"new-proj"}}}`
+	list1 := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_subscriptions","arguments":{}}}`
+	unsubscribe := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"unsubscribe_project","arguments":{"project":"new-proj"}}}`
+	list2 := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_subscriptions","arguments":{}}}`
+
+	go sendAndClose(pw, subscribe, list1, unsubscribe, list2)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) != 4 {
+		t.Fatalf("expected 4 responses, got %d", len(responses))
+	}
+
+	// Response 1: subscribe should succeed.
+	var r1 CallToolResult
+	json.Unmarshal(responses[0].Result, &r1)
+	if r1.IsError {
+		t.Fatalf("subscribe failed: %v", r1.Content)
+	}
+	if !strings.Contains(r1.Content[0].Text, "subscribed to new-proj") {
+		t.Errorf("expected 'subscribed to new-proj', got: %s", r1.Content[0].Text)
+	}
+
+	// Response 2: list should include both test-proj and new-proj.
+	var r2 CallToolResult
+	json.Unmarshal(responses[1].Result, &r2)
+	if !strings.Contains(r2.Content[0].Text, "new-proj") || !strings.Contains(r2.Content[0].Text, "test-proj") {
+		t.Errorf("list should include both projects, got: %s", r2.Content[0].Text)
+	}
+
+	// Response 3: unsubscribe should succeed.
+	var r3 CallToolResult
+	json.Unmarshal(responses[2].Result, &r3)
+	if r3.IsError {
+		t.Fatalf("unsubscribe failed: %v", r3.Content)
+	}
+	if !strings.Contains(r3.Content[0].Text, "unsubscribed from new-proj") {
+		t.Errorf("expected 'unsubscribed from new-proj', got: %s", r3.Content[0].Text)
+	}
+
+	// Response 4: list should only include test-proj now.
+	var r4 CallToolResult
+	json.Unmarshal(responses[3].Result, &r4)
+	if strings.Contains(r4.Content[0].Text, "new-proj") {
+		t.Errorf("list should NOT include new-proj after unsubscribe, got: %s", r4.Content[0].Text)
+	}
+	if !strings.Contains(r4.Content[0].Text, "test-proj") {
+		t.Errorf("list should still include test-proj, got: %s", r4.Content[0].Text)
+	}
+}
+
+func TestServer_SubscribeEdgeCases(t *testing.T) {
+	srv, _, pw, stdout := testServer(t)
+
+	// test-proj is auto-subscribed, so subscribing again should say "already subscribed".
+	subOwn := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"subscribe_project","arguments":{"project":"test-proj"}}}`
+	// Unsubscribing own project should be denied.
+	unsubOwn := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unsubscribe_project","arguments":{"project":"test-proj"}}}`
+	// Unsubscribing a never-subscribed project.
+	unsubNone := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"unsubscribe_project","arguments":{"project":"nonexistent"}}}`
+
+	go sendAndClose(pw, subOwn, unsubOwn, unsubNone)
+	srv.Run()
+
+	responses := parseResponses(t, stdout)
+	if len(responses) != 3 {
+		t.Fatalf("expected 3 responses, got %d", len(responses))
+	}
+
+	// Response 1: "already subscribed to test-proj".
+	var r1 CallToolResult
+	json.Unmarshal(responses[0].Result, &r1)
+	if !strings.Contains(r1.Content[0].Text, "already subscribed") {
+		t.Errorf("expected 'already subscribed', got: %s", r1.Content[0].Text)
+	}
+
+	// Response 2: "cannot unsubscribe from own project".
+	var r2 CallToolResult
+	json.Unmarshal(responses[1].Result, &r2)
+	if !strings.Contains(r2.Content[0].Text, "cannot unsubscribe from own project") {
+		t.Errorf("expected 'cannot unsubscribe from own project', got: %s", r2.Content[0].Text)
+	}
+
+	// Response 3: "not subscribed to nonexistent".
+	var r3 CallToolResult
+	json.Unmarshal(responses[2].Result, &r3)
+	if !strings.Contains(r3.Content[0].Text, "not subscribed") {
+		t.Errorf("expected 'not subscribed', got: %s", r3.Content[0].Text)
+	}
+}
+
+func TestReadConfigFromEnv_AgentType(t *testing.T) {
+	// Test with ZPIT_AGENT_TYPE present.
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_TYPE", "clarifier")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentType != "clarifier" {
+		t.Errorf("AgentType: got %q, want %q", cfg.AgentType, "clarifier")
+	}
+}
+
+func TestReadConfigFromEnv_AgentTypeAbsent(t *testing.T) {
+	// Test without ZPIT_AGENT_TYPE — should succeed with empty string.
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_TYPE", "")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentType != "" {
+		t.Errorf("AgentType should be empty when env is absent, got %q", cfg.AgentType)
 	}
 }

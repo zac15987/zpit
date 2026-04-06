@@ -556,12 +556,12 @@ func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
 	var projects []projectInfo
 	json.NewDecoder(resp2.Body).Decode(&projects)
 	resp2.Body.Close()
-	if len(projects) != 1 || projects[0].AgentCount != 0 {
+	if len(projects) != 1 || len(projects[0].Agents) != 0 {
 		t.Fatalf("before SSE: got %+v", projects)
 	}
 
-	// Connect SSE.
-	sseResp, err := http.Get(base + "/api/events/proj-x")
+	// Connect SSE with agent_type.
+	sseResp, err := http.Get(base + "/api/events/proj-x?agent_type=clarifier")
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
 	var projects2 []projectInfo
 	json.NewDecoder(resp3.Body).Decode(&projects2)
 	resp3.Body.Close()
-	if len(projects2) != 1 || projects2[0].AgentCount != 1 {
+	if len(projects2) != 1 || projects2[0].Agents["clarifier"] != 1 {
 		t.Fatalf("during SSE: got %+v", projects2)
 	}
 
@@ -585,7 +585,7 @@ func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
 	var projects3 []projectInfo
 	json.NewDecoder(resp4.Body).Decode(&projects3)
 	resp4.Body.Close()
-	if len(projects3) != 1 || projects3[0].AgentCount != 0 {
+	if len(projects3) != 1 || len(projects3[0].Agents) != 0 {
 		t.Fatalf("after SSE close: got %+v", projects3)
 	}
 }
@@ -607,4 +607,267 @@ func TestBroker_Close(t *testing.T) {
 	if err == nil {
 		t.Error("expected error after Close, got nil")
 	}
+}
+
+func TestBroker_ArtifactAgentNameRoundTrip(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// POST an artifact with agent_name.
+	body := `{"type":"interface","content":"type Foo struct{}","agent_name":"clarifier-a3f7"}`
+	resp, err := http.Post(base+"/api/artifacts/proj-an/issue-1", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST status: got %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	// GET artifacts and verify agent_name round-trips.
+	resp2, err := http.Get(base + "/api/artifacts/proj-an")
+	if err != nil {
+		t.Fatalf("GET artifacts: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var arts []Artifact
+	if err := json.NewDecoder(resp2.Body).Decode(&arts); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(arts))
+	}
+	if arts[0].AgentName != "clarifier-a3f7" {
+		t.Errorf("AgentName: got %q, want %q", arts[0].AgentName, "clarifier-a3f7")
+	}
+	if arts[0].Type != "interface" {
+		t.Errorf("Type: got %q, want %q", arts[0].Type, "interface")
+	}
+}
+
+func TestBroker_MessageAgentNameRoundTrip(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// POST a message with agent_name.
+	body := `{"from":"issue-1","content":"hello","agent_name":"reviewer-c41d"}`
+	resp, err := http.Post(base+"/api/messages/proj-mn/issue-2", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST message: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST status: got %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	// GET messages and verify agent_name round-trips.
+	resp2, err := http.Get(base + "/api/messages/proj-mn/issue-2")
+	if err != nil {
+		t.Fatalf("GET messages: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var msgs []Message
+	if err := json.NewDecoder(resp2.Body).Decode(&msgs); err != nil {
+		t.Fatalf("decode messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].AgentName != "reviewer-c41d" {
+		t.Errorf("AgentName: got %q, want %q", msgs[0].AgentName, "reviewer-c41d")
+	}
+	if msgs[0].From != "issue-1" {
+		t.Errorf("From: got %q, want %q", msgs[0].From, "issue-1")
+	}
+}
+
+func TestBroker_ArtifactNoAgentName(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// POST an artifact WITHOUT agent_name (backward compatibility).
+	body := `{"type":"schema","content":"data"}`
+	resp, err := http.Post(base+"/api/artifacts/proj-compat/issue-1", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST artifact: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST status: got %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	// GET artifacts and verify agent_name is empty (zero value, no error).
+	resp2, err := http.Get(base + "/api/artifacts/proj-compat")
+	if err != nil {
+		t.Fatalf("GET artifacts: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	var arts []Artifact
+	if err := json.NewDecoder(resp2.Body).Decode(&arts); err != nil {
+		t.Fatalf("decode artifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(arts))
+	}
+	if arts[0].AgentName != "" {
+		t.Errorf("AgentName: got %q, want empty string", arts[0].AgentName)
+	}
+	if arts[0].Type != "schema" {
+		t.Errorf("Type: got %q, want %q", arts[0].Type, "schema")
+	}
+	if arts[0].Content != "data" {
+		t.Errorf("Content: got %q, want %q", arts[0].Content, "data")
+	}
+}
+
+func TestBroker_SSE_AgentTypeTracking(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Post an artifact so project exists.
+	resp, _ := http.Post(base+"/api/artifacts/proj-typed/1", "application/json", strings.NewReader(`{"type":"x","content":"a"}`))
+	resp.Body.Close()
+
+	// Connect SSE with agent_type=clarifier.
+	sseResp, err := http.Get(base + "/api/events/proj-typed?agent_type=clarifier")
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+
+	// Wait for SSE handler to register.
+	time.Sleep(100 * time.Millisecond)
+
+	// Check list_projects.
+	resp2, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp2.Body).Decode(&projects)
+	resp2.Body.Close()
+
+	var proj *projectInfo
+	for i := range projects {
+		if projects[i].ID == "proj-typed" {
+			proj = &projects[i]
+			break
+		}
+	}
+	if proj == nil {
+		t.Fatal("proj-typed not found in list_projects")
+	}
+	if proj.Agents["clarifier"] != 1 {
+		t.Errorf("expected agents.clarifier=1, got %v", proj.Agents)
+	}
+
+	// Disconnect.
+	sseResp.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Check count decremented.
+	resp3, _ := http.Get(base + "/api/projects")
+	var projects2 []projectInfo
+	json.NewDecoder(resp3.Body).Decode(&projects2)
+	resp3.Body.Close()
+
+	for _, p := range projects2 {
+		if p.ID == "proj-typed" {
+			if p.Agents["clarifier"] != 0 {
+				t.Errorf("after disconnect: expected agents.clarifier=0, got %v", p.Agents)
+			}
+			break
+		}
+	}
+}
+
+func TestBroker_SSE_NoAgentType_DefaultsUnknown(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Connect SSE without agent_type.
+	sseResp, err := http.Get(base + "/api/events/proj-notype")
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp.Body).Decode(&projects)
+	resp.Body.Close()
+
+	var proj *projectInfo
+	for i := range projects {
+		if projects[i].ID == "proj-notype" {
+			proj = &projects[i]
+			break
+		}
+	}
+	if proj == nil {
+		t.Fatal("proj-notype not found")
+	}
+	if proj.Agents["unknown"] != 1 {
+		t.Errorf("expected agents.unknown=1, got %v", proj.Agents)
+	}
+
+	sseResp.Body.Close()
+}
+
+func TestBroker_SSE_MultipleAgentTypes(t *testing.T) {
+	b := newTestBroker(t)
+	base := brokerURL(b)
+
+	// Connect 2 clarifiers and 1 coding agent.
+	sse1, _ := http.Get(base + "/api/events/proj-multi?agent_type=clarifier")
+	sse2, _ := http.Get(base + "/api/events/proj-multi?agent_type=clarifier")
+	sse3, _ := http.Get(base + "/api/events/proj-multi?agent_type=coding")
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, _ := http.Get(base + "/api/projects")
+	var projects []projectInfo
+	json.NewDecoder(resp.Body).Decode(&projects)
+	resp.Body.Close()
+
+	var proj *projectInfo
+	for i := range projects {
+		if projects[i].ID == "proj-multi" {
+			proj = &projects[i]
+			break
+		}
+	}
+	if proj == nil {
+		t.Fatal("proj-multi not found")
+	}
+	if proj.Agents["clarifier"] != 2 {
+		t.Errorf("expected agents.clarifier=2, got %d", proj.Agents["clarifier"])
+	}
+	if proj.Agents["coding"] != 1 {
+		t.Errorf("expected agents.coding=1, got %d", proj.Agents["coding"])
+	}
+
+	// Disconnect one clarifier.
+	sse1.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	resp2, _ := http.Get(base + "/api/projects")
+	var projects2 []projectInfo
+	json.NewDecoder(resp2.Body).Decode(&projects2)
+	resp2.Body.Close()
+
+	for _, p := range projects2 {
+		if p.ID == "proj-multi" {
+			if p.Agents["clarifier"] != 1 {
+				t.Errorf("after disconnect 1 clarifier: expected agents.clarifier=1, got %d", p.Agents["clarifier"])
+			}
+			if p.Agents["coding"] != 1 {
+				t.Errorf("coding should still be 1, got %d", p.Agents["coding"])
+			}
+			break
+		}
+	}
+
+	sse2.Body.Close()
+	sse3.Body.Close()
 }

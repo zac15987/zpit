@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Color palette — ANSI 256 color codes.
 var (
@@ -77,3 +81,28 @@ var (
 				BorderForeground(colorError).
 				Padding(1, 2)
 )
+
+// styledHotkeys highlights [key] patterns in s with hotkeyLabelStyle,
+// leaving the rest in hotkeyDescStyle.
+func styledHotkeys(s string) string {
+	var b strings.Builder
+	for {
+		open := strings.IndexByte(s, '[')
+		if open == -1 {
+			b.WriteString(hotkeyDescStyle.Render(s))
+			break
+		}
+		close := strings.IndexByte(s[open:], ']')
+		if close == -1 {
+			b.WriteString(hotkeyDescStyle.Render(s))
+			break
+		}
+		close += open // absolute index
+		if open > 0 {
+			b.WriteString(hotkeyDescStyle.Render(s[:open]))
+		}
+		b.WriteString(hotkeyLabelStyle.Render(s[open : close+1]))
+		s = s[close+1:]
+	}
+	return b.String()
+}

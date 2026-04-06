@@ -61,7 +61,7 @@ var zhTW = map[Key]string{
 	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
 
 	// Undeploy confirm dialogs
-	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/",
+	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/\n.mcp.json  settings.json (hooks)  settings.local.json",
 	KeyUndeployButton:  "清除",
 	KeyUndeployDone:    "已清除 %d 個項目（%s）",
 	KeyUndeployNoop:    "無已部署檔案（%s）",
@@ -81,6 +81,9 @@ var zhTW = map[Key]string{
 	KeyCannotLaunch:   "此狀態無法啟動",
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
 	KeyLoopSlotHelp:   "Enter: 開啟 Claude  o: 開啟資料夾  p: 開啟 issue  \u2191\u2193: 選擇  Tab/Esc: 返回",
+
+	// Sound file warning
+	KeySoundFileNotFound: "找不到音效檔案：%s",
 
 	// Config validation errors
 	// Agent init messages
@@ -105,4 +108,41 @@ var zhTW = map[Key]string{
 	KeyErrTrackerURLEmpty:   "Tracker URL 未設定",
 	KeyErrWorktreeBaseEmpty: "Worktree base directory 未設定",
 	KeyErrWorktreeMissing:   "Worktree 目錄已不存在",
+
+	// Edit config sub-menu
+	KeyEditConfigTitle:        "編輯設定 — %s",
+	KeyEditConfigOption1:      "[1] 切換 Channel",
+	KeyEditConfigOption2:      "[2] 編輯 channel_listen",
+	KeyEditConfigOption3:      "[3] 用編輯器開啟設定檔",
+	KeyEditConfigFooter:       "[1/2/3] 選擇  [r] 重載  [Esc] 返回",
+
+	// Channel toggle
+	KeyChannelToggleOn:        "channel: 開啟 (%s)",
+	KeyChannelToggleOff:       "channel: 關閉 (%s)",
+	KeyChannelBrokerStartFail: "Broker 啟動失敗：%s",
+
+	// Channel listen multi-select
+	KeyChannelListenTitle:     "編輯 channel_listen — %s",
+	KeyChannelListenFooter:    "↑↓ 瀏覽  空白鍵 切換  Enter 確認  Esc 取消",
+	KeyChannelListenUpdated:   "channel_listen 已更新：%s",
+	KeyChannelListenNoChange:  "channel_listen：無變更",
+
+	// Editor launch
+	KeyEditorLaunching:        "開啟 %s...",
+	KeyEditorFallbackVim:      "未設定 $EDITOR，使用 vim",
+
+	// Config reload
+	KeyConfigReloaded:         "設定已重新載入",
+	KeyConfigReloadError:      "設定重載錯誤：%s",
+	KeyConfigRestartRequired:  "以下設定需重啟才能生效：%s",
+	KeyConfigNoChanges:        "設定：未偵測到變更",
+
+	// SSH remote mode
+	KeyConfigPathHint:         "設定檔路徑：%s — 請在外部編輯後按 [r] 重載",
+	KeyConfigReloadManual:     "按 [r] 重新載入設定",
+
+	// Additional edit config strings
+	KeyConfigPathNotFound:     "找不到設定檔路徑",
+	KeyEditorError:            "編輯器錯誤：%s",
+	KeyGlobal:                 "全域",
 }

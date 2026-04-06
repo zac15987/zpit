@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,8 @@ type ServerConfig struct {
 	ProjectID      string   // project identifier
 	IssueID        string   // this agent's issue ID
 	InstanceID     string   // unique per-process ID for self-echo filtering
+	AgentName      string   // human-readable agent name (e.g. "clarifier-a3f7")
+	AgentType      string   // agent type for SSE registration (e.g. "clarifier", "coding", "reviewer", "claude")
 	ListenProjects []string // additional project keys to subscribe SSE (e.g. ["_global", "other-proj"])
 }
 
@@ -49,6 +52,8 @@ func ReadConfigFromEnv() (ServerConfig, error) {
 	if lp := os.Getenv("ZPIT_LISTEN_PROJECTS"); lp != "" {
 		cfg.ListenProjects = strings.Split(lp, ",")
 	}
+	cfg.AgentName = os.Getenv("ZPIT_AGENT_NAME")
+	cfg.AgentType = os.Getenv("ZPIT_AGENT_TYPE")
 	return cfg, nil
 }
 
@@ -94,7 +99,36 @@ func channelTools() []Tool {
 		},
 		{
 			Name:        "list_projects",
-			Description: "List all active projects with their issues and connected agent counts. Use for cross-project discovery.",
+			Description: "List all active projects with their issues and connected agents by type. Returns [{\"id\":\"project-id\",\"issue_ids\":[...],\"agents\":{\"clarifier\":1,\"coding\":2}}]. The 'agents' field is a map of agent_type to count (types with 0 count are omitted). Use for cross-project discovery and meeting mode detection.",
+			InputSchema: JSONSchema{
+				Type: "object",
+			},
+		},
+		{
+			Name:        "subscribe_project",
+			Description: "Subscribe to SSE events from a project. Starts receiving real-time channel notifications from the specified project.",
+			InputSchema: JSONSchema{
+				Type: "object",
+				Properties: map[string]SchemaProperty{
+					"project": {Type: "string", Description: "Project ID to subscribe to"},
+				},
+				Required: []string{"project"},
+			},
+		},
+		{
+			Name:        "unsubscribe_project",
+			Description: "Unsubscribe from a project's SSE events. Stops receiving channel notifications from the specified project. Cannot unsubscribe from own project.",
+			InputSchema: JSONSchema{
+				Type: "object",
+				Properties: map[string]SchemaProperty{
+					"project": {Type: "string", Description: "Project ID to unsubscribe from"},
+				},
+				Required: []string{"project"},
+			},
+		},
+		{
+			Name:        "list_subscriptions",
+			Description: "List all currently subscribed projects for SSE event streaming.",
 			InputSchema: JSONSchema{
 				Type: "object",
 			},
@@ -104,13 +138,15 @@ func channelTools() []Tool {
 
 // Server is a Channel MCP stdio server that bridges Claude Code agents with the HTTP broker.
 type Server struct {
-	config    ServerConfig
-	logger    *log.Logger
-	stdin     io.Reader
-	stdout    io.Writer
-	stdoutMu  sync.Mutex // protects concurrent writes to stdout
-	client    *http.Client
-	sseCancel context.CancelFunc // cancels the SSE listener goroutine
+	config       ServerConfig
+	logger       *log.Logger
+	stdin        io.Reader
+	stdout       io.Writer
+	stdoutMu     sync.Mutex                   // protects concurrent writes to stdout
+	client       *http.Client
+	sseMu        sync.Mutex                   // protects sseContexts
+	sseContexts  map[string]context.CancelFunc // per-project SSE cancel functions
+	sseParentCtx context.Context               // parent context for SSE goroutines
 }
 
 // instanceIDLen is the number of random bytes used to generate a unique instance ID.
@@ -128,11 +164,12 @@ func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.
 		cfg.InstanceID = fmt.Sprintf("%x", b)
 	}
 	return &Server{
-		config: cfg,
-		logger: logger,
-		stdin:  stdin,
-		stdout: stdout,
-		client: &http.Client{Timeout: 10 * time.Second},
+		config:      cfg,
+		logger:      logger,
+		stdin:       stdin,
+		stdout:      stdout,
+		client:      &http.Client{Timeout: 10 * time.Second},
+		sseContexts: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -141,13 +178,23 @@ func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.
 // This method blocks until stdin is closed.
 func (s *Server) Run() error {
 	s.logger.Println("mcp: server starting")
-	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID)
+	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s agent=%s type=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID, s.config.AgentName, s.config.AgentType)
 
-	// Start SSE listeners in background with cancellable context.
+	// Start SSE listeners in background with per-project cancellable contexts.
 	// Subscribe to own project + configured additional projects.
-	ctx, cancel := context.WithCancel(context.Background())
-	s.sseCancel = cancel
-	defer cancel()
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	s.sseParentCtx = parentCtx
+	defer func() {
+		s.sseMu.Lock()
+		for proj, cancel := range s.sseContexts {
+			s.logger.Printf("mcp: cancelling SSE for project=%s", proj)
+			cancel()
+		}
+		s.sseContexts = make(map[string]context.CancelFunc)
+		s.sseMu.Unlock()
+		parentCancel()
+		s.logger.Println("mcp: all SSE contexts cancelled")
+	}()
 
 	seen := map[string]bool{s.config.ProjectID: true}
 	sseProjects := []string{s.config.ProjectID}
@@ -158,9 +205,14 @@ func (s *Server) Run() error {
 			sseProjects = append(sseProjects, p)
 		}
 	}
+	s.sseMu.Lock()
 	for _, proj := range sseProjects {
-		go s.listenSSE(ctx, proj)
+		projCtx, projCancel := context.WithCancel(s.sseParentCtx)
+		s.sseContexts[proj] = projCancel
+		s.logger.Printf("mcp: starting SSE listener for project=%s", proj)
+		go s.listenSSE(projCtx, proj)
 	}
+	s.sseMu.Unlock()
 	if len(sseProjects) > 1 {
 		s.logger.Printf("mcp: subscribing to %d SSE channels: %v", len(sseProjects), sseProjects)
 	}
@@ -287,6 +339,12 @@ func (s *Server) handleToolsCall(req Request) {
 		s.callSendMessage(req.ID, params.Arguments)
 	case "list_projects":
 		s.callListProjects(req.ID)
+	case "subscribe_project":
+		s.callSubscribeProject(req.ID, params.Arguments)
+	case "unsubscribe_project":
+		s.callUnsubscribeProject(req.ID, params.Arguments)
+	case "list_subscriptions":
+		s.callListSubscriptions(req.ID)
 	default:
 		s.logger.Printf("mcp: unknown tool: %s", params.Name)
 		s.writeResponse(newResponse(req.ID, CallToolResult{
@@ -318,7 +376,7 @@ func (s *Server) callPublishArtifact(id json.RawMessage, args json.RawMessage) {
 		project = a.TargetProject
 	}
 	url := fmt.Sprintf("%s/api/artifacts/%s/%s", s.config.BrokerURL, project, a.IssueID)
-	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content, "sender_id": s.config.InstanceID})
+	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content, "sender_id": s.config.InstanceID, "agent_name": s.config.AgentName})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -397,7 +455,7 @@ func (s *Server) callSendMessage(id json.RawMessage, args json.RawMessage) {
 		project = a.TargetProject
 	}
 	url := fmt.Sprintf("%s/api/messages/%s/%s", s.config.BrokerURL, project, a.ToIssueID)
-	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content, "sender_id": s.config.InstanceID})
+	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content, "sender_id": s.config.InstanceID, "agent_name": s.config.AgentName})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -443,6 +501,113 @@ func (s *Server) callListProjects(id json.RawMessage) {
 	}))
 }
 
+// --- Subscription tool implementations ---
+
+type subscriptionArgs struct {
+	Project string `json:"project"`
+}
+
+func (s *Server) callSubscribeProject(id json.RawMessage, args json.RawMessage) {
+	s.logger.Printf("mcp: subscribe_project called")
+	var a subscriptionArgs
+	if err := json.Unmarshal(args, &a); err != nil {
+		s.logger.Printf("mcp: subscribe_project bad args: %v", err)
+		s.writeToolError(id, "invalid arguments: "+err.Error())
+		return
+	}
+	if a.Project == "" {
+		s.logger.Printf("mcp: subscribe_project missing project")
+		s.writeToolError(id, "project is required")
+		return
+	}
+
+	s.sseMu.Lock()
+	if _, exists := s.sseContexts[a.Project]; exists {
+		s.sseMu.Unlock()
+		s.logger.Printf("mcp: subscribe_project already subscribed project=%s", a.Project)
+		s.writeResponse(newResponse(id, CallToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("already subscribed to %s", a.Project)}},
+		}))
+		return
+	}
+	projCtx, projCancel := context.WithCancel(s.sseParentCtx)
+	s.sseContexts[a.Project] = projCancel
+	s.sseMu.Unlock()
+
+	go s.listenSSE(projCtx, a.Project)
+
+	s.logger.Printf("mcp: subscribe_project success project=%s", a.Project)
+	s.writeResponse(newResponse(id, CallToolResult{
+		Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("subscribed to %s", a.Project)}},
+	}))
+}
+
+func (s *Server) callUnsubscribeProject(id json.RawMessage, args json.RawMessage) {
+	s.logger.Printf("mcp: unsubscribe_project called")
+	var a subscriptionArgs
+	if err := json.Unmarshal(args, &a); err != nil {
+		s.logger.Printf("mcp: unsubscribe_project bad args: %v", err)
+		s.writeToolError(id, "invalid arguments: "+err.Error())
+		return
+	}
+	if a.Project == "" {
+		s.logger.Printf("mcp: unsubscribe_project missing project")
+		s.writeToolError(id, "project is required")
+		return
+	}
+
+	if a.Project == s.config.ProjectID {
+		s.logger.Printf("mcp: unsubscribe_project denied own project=%s", a.Project)
+		s.writeResponse(newResponse(id, CallToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "cannot unsubscribe from own project"}},
+		}))
+		return
+	}
+
+	s.sseMu.Lock()
+	cancel, exists := s.sseContexts[a.Project]
+	if !exists {
+		s.sseMu.Unlock()
+		s.logger.Printf("mcp: unsubscribe_project not subscribed project=%s", a.Project)
+		s.writeResponse(newResponse(id, CallToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("not subscribed to %s", a.Project)}},
+		}))
+		return
+	}
+	cancel()
+	delete(s.sseContexts, a.Project)
+	s.sseMu.Unlock()
+
+	s.logger.Printf("mcp: unsubscribe_project success project=%s", a.Project)
+	s.writeResponse(newResponse(id, CallToolResult{
+		Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("unsubscribed from %s", a.Project)}},
+	}))
+}
+
+func (s *Server) callListSubscriptions(id json.RawMessage) {
+	s.logger.Printf("mcp: list_subscriptions called")
+	s.sseMu.Lock()
+	projects := make([]string, 0, len(s.sseContexts))
+	for proj := range s.sseContexts {
+		projects = append(projects, proj)
+	}
+	s.sseMu.Unlock()
+
+	sort.Strings(projects)
+
+	data, err := json.Marshal(projects)
+	if err != nil {
+		s.logger.Printf("mcp: list_subscriptions marshal error: %v", err)
+		s.writeToolError(id, "failed to marshal subscriptions: "+err.Error())
+		return
+	}
+
+	s.logger.Printf("mcp: list_subscriptions returning %d projects", len(projects))
+	s.writeResponse(newResponse(id, CallToolResult{
+		Content: []ContentBlock{{Type: "text", Text: string(data)}},
+	}))
+}
+
 // --- SSE listener ---
 
 // listenSSE connects to the broker's SSE endpoint for the given project and forwards events
@@ -450,6 +615,9 @@ func (s *Server) callListProjects(id json.RawMessage) {
 // Stops when ctx is cancelled.
 func (s *Server) listenSSE(ctx context.Context, project string) {
 	url := fmt.Sprintf("%s/api/events/%s", s.config.BrokerURL, project)
+	if s.config.AgentType != "" {
+		url += "?agent_type=" + s.config.AgentType
+	}
 	s.logger.Printf("mcp: SSE connecting to %s", url)
 
 	for {

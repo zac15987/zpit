@@ -6,8 +6,10 @@ import (
 	"testing"
 )
 
+// --- Existing tests updated for new BuildWindowsArgs signature (profile="", shell="") ---
+
 func TestBuildWindowsArgs_NewTab(t *testing.T) {
-	args := BuildWindowsArgs("My Project", "D:/Projects/Foo", "new_tab", nil)
+	args := BuildWindowsArgs("My Project", "D:/Projects/Foo", "new_tab", "", "", nil)
 	want := []string{"new-tab", "-d", "D:/Projects/Foo", "--title", "My Project", "--", "claude"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
@@ -15,7 +17,7 @@ func TestBuildWindowsArgs_NewTab(t *testing.T) {
 }
 
 func TestBuildWindowsArgs_NewWindow(t *testing.T) {
-	args := BuildWindowsArgs("My Project", "D:/Projects/Foo", "new_window", nil)
+	args := BuildWindowsArgs("My Project", "D:/Projects/Foo", "new_window", "", "", nil)
 	want := []string{"-w", "new", "-d", "D:/Projects/Foo", "--title", "My Project", "--", "claude"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
@@ -23,7 +25,7 @@ func TestBuildWindowsArgs_NewWindow(t *testing.T) {
 }
 
 func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
-	args := BuildWindowsArgs("Test", "/path", "new_tab", []string{"--agent", "clarifier"})
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "clarifier"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
 		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "clarifier"}
 	if !reflect.DeepEqual(args, want) {
@@ -32,7 +34,7 @@ func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
 }
 
 func TestBuildWindowsArgs_AgentModeWithInitMsg(t *testing.T) {
-	args := BuildWindowsArgs("Test", "/path", "new_tab", []string{"--agent", "coding", "init message"})
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "coding", "init message"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
 		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "coding", "init message"}
 	if !reflect.DeepEqual(args, want) {
@@ -42,12 +44,116 @@ func TestBuildWindowsArgs_AgentModeWithInitMsg(t *testing.T) {
 
 func TestBuildWindowsArgs_NoAgentNoWrapper(t *testing.T) {
 	// Without --agent, no wrapper should be added
-	args := BuildWindowsArgs("Test", "/path", "new_tab", []string{"--resume"})
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--resume"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--", "claude", "--resume"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
 }
+
+// --- Profile-related tests ---
+
+func TestBuildWindowsArgs_WithProfile_NewTab(t *testing.T) {
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", nil)
+	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--", "claude"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildWindowsArgs_WithProfile_NewWindow(t *testing.T) {
+	args := BuildWindowsArgs("Test", "/path", "new_window", "PowerShell 7", "pwsh", nil)
+	want := []string{"-w", "new", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--", "claude"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildWindowsArgs_WithProfile_AgentPwsh(t *testing.T) {
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", []string{"--agent", "coding"})
+	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--",
+		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "claude", "--agent", "coding"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildWindowsArgs_WithProfile_AgentPowershell(t *testing.T) {
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "Windows PowerShell", "powershell", []string{"--agent", "coding"})
+	want := []string{"new-tab", "-p", "Windows PowerShell", "-d", "/path", "--title", "Test", "--",
+		"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "claude", "--agent", "coding"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildWindowsArgs_WithProfile_AgentCmd(t *testing.T) {
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "Command Prompt", "cmd", []string{"--agent", "coding"})
+	want := []string{"new-tab", "-p", "Command Prompt", "-d", "/path", "--title", "Test", "--",
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "coding"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildWindowsArgs_WithProfile_NoAgent(t *testing.T) {
+	// Profile set but no agent mode — no wrapper, but -p flag present
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", []string{"--resume"})
+	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--", "claude", "--resume"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildWindowsArgs_EmptyProfile_IdenticalToCurrent(t *testing.T) {
+	// AC-9: When profile is empty, behavior is identical to current.
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "coding"})
+	// Should use cmd wrapper, no -p flag
+	if args[0] != "new-tab" {
+		t.Errorf("expected new-tab, got %s", args[0])
+	}
+	for _, a := range args {
+		if a == "-p" {
+			t.Error("should not have -p flag when profile is empty")
+		}
+	}
+	// Should have cmd wrapper
+	found := false
+	for i, a := range args {
+		if a == "cmd" && i+2 < len(args) && args[i+1] == "/c" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected cmd /c wrapper in args: %v", args)
+	}
+}
+
+// --- buildEnvWrapper tests ---
+
+func TestBuildEnvWrapper(t *testing.T) {
+	tests := []struct {
+		shell string
+		want  []string
+	}{
+		{"cmd", []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}},
+		{"pwsh", []string{"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1"}},
+		{"powershell", []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1"}},
+		{"", []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}},          // empty defaults to cmd
+		{"unknown", []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}},   // unknown defaults to cmd
+	}
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			got := buildEnvWrapper(tt.shell)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("buildEnvWrapper(%q) = %v, want %v", tt.shell, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Existing tmux and utility tests (unchanged) ---
 
 func TestBuildTmuxArgs_NewWindow(t *testing.T) {
 	args := BuildTmuxArgs("ase-inspection", "/mnt/d/Projects/ASE", "new_window", nil)
@@ -141,7 +247,7 @@ func TestBuildClaudeArgs_ChannelNotEnabled(t *testing.T) {
 }
 
 func TestBuildWindowsArgs_WithChannelEnabled(t *testing.T) {
-	args := BuildWindowsArgs("Test", "/path", "new_tab", []string{"--agent", "coding", "--channel-enabled"})
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "coding", "--channel-enabled"})
 	// Should contain the channel flag and not --channel-enabled
 	found := false
 	for _, a := range args {

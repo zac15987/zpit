@@ -75,11 +75,38 @@
 - [x] 所有 loop handlers 加 write lock + NotifyAll，所有 loop cmds 加 read lock
 - [x] View rendering 加 RLock
 
+## Refactoring: model.go 拆分 ✅
+
+> PR #59 | Issue #24
+
+- [x] model.go（2433 行）拆分為 6 檔，降至 860 行
+- [x] 新增 session.go（733 行）：session 生命週期、discovery、monitoring、liveness、permission detection
+- [x] 新增 launch.go（479 行）：terminal launch cmds、slot operations、deploy helpers
+- [x] 新增 tracker_ops.go（242 行）：label check/ensure、issue load/confirm
+- [x] 新增 confirm.go（208 行）：confirm dialogs、executePendingOp、undeploy
+- [x] 新增 channel.go（78 行）：broker EventBus subscription、event reading
+- [x] update() 所有 >5 行 inline handler 轉為 one-line dispatch（`return m.handleXxx(msg)`）
+- [x] 每個新檔案頂部標註 lock protocol doc comment
+- [x] 純 code movement + inline handler extraction，零行為變更
+
+---
+
+## Refactoring: Task 執行模型重構 ✅
+
+> PR #69 | Issue #68
+
+- [x] 新增 `agents/task-runner.md` subagent 定義（tools: Read, Write, Edit, Bash, Glob, Grep）
+- [x] 改寫 `buildTaskWorkflow()` 為 subagent/team delegation prompt 生成
+- [x] 新增 `groupTasks()` 將 tasks 分組為循序 singletons 和平行 batches
+- [x] 新增 `buildSubagentDelegation()` 和 `buildTeamDelegation()` prompt builders
+- [x] `main.go` 新增 `//go:embed agents/task-runner.md`，`AppState` 新增 `taskRunnerMD` 欄位
+- [x] `loopWriteAgentCmd()` 在 spec 含 TASKS 時部署 `task-runner.md` 到 worktree
+- [x] 測試更新：循序 tasks、混合平行 tasks、無 tasks 三種場景
+
 ---
 
 ## M5: 完整體驗（規劃中）
 
-- [ ] Agent 自主判斷 agent teams
 - [ ] 機台 push 回來後自動觸發 review
 - [ ] 最近活動 feed（從 session log 解析）
 - [ ] shared-core 跨專案影響偵測

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sync"
 
@@ -14,6 +15,7 @@ import (
 type Watcher struct {
 	projectID string
 	logPath   string
+	logger    *log.Logger
 	fsWatcher *fsnotify.Watcher
 	offset    int64
 	done      chan struct{}
@@ -22,7 +24,8 @@ type Watcher struct {
 
 // New creates a Watcher for the given project session log.
 // It seeks to the end of the file so only new lines are processed.
-func New(projectID, logPath string) (*Watcher, error) {
+// logger may be nil; when non-nil, parse failures are logged.
+func New(projectID, logPath string, logger *log.Logger) (*Watcher, error) {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("creating fsnotify watcher: %w", err)
@@ -42,6 +45,7 @@ func New(projectID, logPath string) (*Watcher, error) {
 	return &Watcher{
 		projectID: projectID,
 		logPath:   logPath,
+		logger:    logger,
 		fsWatcher: fw,
 		offset:    offset,
 		done:      make(chan struct{}),
@@ -112,6 +116,9 @@ func (w *Watcher) readNewLines() ([]SessionEvent, error) {
 		ev, err := ParseLine(line)
 		if err != nil {
 			// Skip malformed lines instead of failing.
+			if w.logger != nil {
+				w.logger.Printf("watcher: parse line failed at offset %d: %v", w.offset, err)
+			}
 			continue
 		}
 		events = append(events, ev)

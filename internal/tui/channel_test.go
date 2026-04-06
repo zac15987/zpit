@@ -15,7 +15,7 @@ func makeTestAppState() *AppState {
 	cfg := &config.Config{
 		Worktree: config.WorktreeConfig{MaxPerProject: 3},
 	}
-	return NewAppState(cfg, nil, nil, nil, nil, worktree.HookScripts{}, nil)
+	return NewAppState(cfg, nil, nil, nil, nil, nil, worktree.HookScripts{}, nil)
 }
 
 func makeArtifactEvent(issueID, artType, content string) broker.Event {

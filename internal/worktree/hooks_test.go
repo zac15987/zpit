@@ -435,3 +435,90 @@ func readSettingsLocal(t *testing.T, dir string) []byte {
 func containsHook(data []byte, hookName string) bool {
 	return strings.Contains(string(data), hookName)
 }
+
+func TestZpitIgnoreRules_ContainsAllDeployedArtifacts(t *testing.T) {
+	rules := strings.Join(zpitIgnoreRules, "\n")
+
+	for _, d := range ZpitDeployedDirs {
+		pattern := ".claude/" + d + "/"
+		if !strings.Contains(rules, pattern) {
+			t.Errorf("ZpitDeployedDirs entry %q missing from zpitIgnoreRules", d)
+		}
+	}
+	for _, f := range ZpitDeployedFiles {
+		if !strings.Contains(rules, f) {
+			t.Errorf("ZpitDeployedFiles entry %q missing from zpitIgnoreRules", f)
+		}
+	}
+	if !strings.Contains(rules, ".claude/settings.local.json") {
+		t.Error("settings.local.json missing from zpitIgnoreRules")
+	}
+}
+
+func TestCleanSettingsHooks_RemovesHooksKey(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	os.MkdirAll(claudeDir, 0o755)
+
+	settings := `{
+  "hooks": { "PreToolUse": [] },
+  "allowedTools": ["Read"]
+}
+`
+	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0o644)
+
+	if !CleanSettingsHooks(dir) {
+		t.Fatal("expected CleanSettingsHooks to return true")
+	}
+
+	data, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings.json should still exist: %v", err)
+	}
+	if strings.Contains(string(data), "hooks") {
+		t.Errorf("hooks key should be removed:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), "allowedTools") {
+		t.Errorf("other keys should be preserved:\n%s", string(data))
+	}
+}
+
+func TestCleanSettingsHooks_DeletesEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	os.MkdirAll(claudeDir, 0o755)
+
+	settings := `{ "hooks": { "PreToolUse": [] } }
+`
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	os.WriteFile(settingsPath, []byte(settings), 0o644)
+
+	if !CleanSettingsHooks(dir) {
+		t.Fatal("expected CleanSettingsHooks to return true")
+	}
+
+	if _, err := os.Stat(settingsPath); err == nil {
+		t.Error("settings.json should be deleted when empty after hooks removal")
+	}
+}
+
+func TestCleanSettingsHooks_NoHooksKey(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	os.MkdirAll(claudeDir, 0o755)
+
+	settings := `{ "allowedTools": ["Read"] }
+`
+	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0o644)
+
+	if CleanSettingsHooks(dir) {
+		t.Error("expected CleanSettingsHooks to return false when no hooks key")
+	}
+}
+
+func TestCleanSettingsHooks_NoFile(t *testing.T) {
+	dir := t.TempDir()
+	if CleanSettingsHooks(dir) {
+		t.Error("expected CleanSettingsHooks to return false when no settings.json")
+	}
+}

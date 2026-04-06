@@ -12,6 +12,7 @@ type Artifact struct {
 	Type      string    `json:"type"`
 	Content   string    `json:"content"`
 	SenderID  string    `json:"sender_id,omitempty"`
+	AgentName string    `json:"agent_name,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -21,6 +22,7 @@ type Message struct {
 	To        string    `json:"to"`
 	Content   string    `json:"content"`
 	SenderID  string    `json:"sender_id,omitempty"`
+	AgentName string    `json:"agent_name,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

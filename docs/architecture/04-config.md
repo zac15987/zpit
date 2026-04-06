@@ -27,7 +27,8 @@ tmux_mode = "new_window"    # "new_window" | "new_pane"
 tui_alert = true
 windows_toast = true
 sound = true
-re_remind_minutes = 15
+# sound_file = "D:/sounds/notify.mp3"   # 自訂通知音效路徑（支援 WAV/MP3/M4A/OGG）
+re_remind_minutes = 2
 
 # ──────────────────────────────────────────────
 # Worktree 設定
@@ -212,3 +213,50 @@ Zpit 不介入 agent 的工作內容。
 | web | minimal | 只 log 錯誤和關鍵操作 |
 | desktop | standard | Service 方法有進出 log，異常有完整 log |
 | android | standard | 同 desktop |
+
+---
+
+## 4.4 Config Hot-Reload
+
+Zpit 支援在 TUI 運行中重新載入 config.toml。設定欄位分為兩類：
+
+### Hot-Reloadable（即時套用）
+
+| 欄位 | 套用方式 |
+|------|---------|
+| `language` | 呼叫 `locale.SetLanguage()` |
+| `notification.*` | 呼叫 `notifier.UpdateConfig()` |
+| `worktree.poll_seconds` / `pr_poll_seconds` / `max_review_rounds` | 呼叫 `wtManager.UpdateConfig()` |
+| `terminal.*` | 更新 cfg，下次啟動 agent 時生效 |
+| per-project `channel_enabled` | 動態 subscribe/unsubscribe EventBus |
+| per-project `channel_listen` | 動態管理跨專案訂閱 |
+| per-project `hook_mode` / `base_branch` / `log_level` | 更新 cfg，下次操作時生效 |
+
+### Restart-Required（需重啟）
+
+| 欄位 | 原因 |
+|------|------|
+| `broker_port` | Port 已綁定 |
+| `ssh.*` | SSH server 已綁定 |
+| `providers.*` | Tracker client 需重新初始化 |
+| 新增/刪除 `[[projects]]` | 需重建 tracker clients 和 UI 狀態 |
+| `worktree.base_dir_*` / `dir_format` / `max_per_project` | 影響已進行的 worktree 路徑解析 |
+
+### 重載機制
+
+1. **TUI 內建**：按 `[e]` → `[3]` 用 `$EDITOR` 開啟 config.toml，編輯器關閉後自動重載
+2. **手動觸發**：在 `[e]` 子選單中按 `[r]` 手動觸發重載（適用於 SSH 遠端模式）
+3. **解析流程**：`config.Reload()` → `config.Diff()` 分類 → `AppState.ApplyConfig()` 套用 hot-reload 欄位，對 restart-required 欄位在 status bar 顯示提示
+
+### 針對性 TOML 寫入
+
+Channel 快速切換（`[1]` toggle / `[2]` listen edit）使用 `internal/config/toml_writer.go` 進行針對性寫入：
+
+- 以行為單位操作，不做完整的 TOML 序列化
+- 透過 `id` 欄位定位正確的 `[[projects]]` 區塊
+- 僅修改 `channel_enabled` 和 `channel_listen` 行
+- 保留檔案其餘內容（包括註解、空行、格式）
+
+### Broker Lazy Start
+
+若啟動時無任何專案啟用 channel（broker 為 nil），使用者透過 `[1]` toggle 首次啟用某專案的 `channel_enabled` 時，`ToggleChannel()` 會延遲啟動 broker。啟動失敗時在 status bar 顯示錯誤，不更新 `channel_enabled`。

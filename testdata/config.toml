@@ -11,6 +11,8 @@ broker_port = 17731
 [terminal]
 windows_mode = "new_tab"
 tmux_mode = "new_window"
+windows_terminal_profile = "PowerShell 7"
+# windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag and auto shell detection
 
 [ssh]
 port = 2200
@@ -23,7 +25,8 @@ authorized_keys_path = "~/.ssh/authorized_keys"
 tui_alert = true
 windows_toast = true
 sound = true
-re_remind_minutes = 15
+# sound_file = 'C:\Users\Jeff\Music\zelda-navi-listen.mp3'
+re_remind_minutes = 2
 
 [worktree]
 base_dir_windows = "D:/Documents/.worktrees"
@@ -31,8 +34,8 @@ base_dir_wsl = "/mnt/d/Documents/.worktrees"
 dir_format = "{project_id}/{issue_id}--{slug}"
 auto_cleanup = true
 max_per_project = 5
-poll_seconds = 15
-pr_poll_seconds = 30
+poll_seconds = 10
+pr_poll_seconds = 10
 
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
@@ -84,7 +87,8 @@ repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
 shared_core = true
 log_level = "strict"
 base_branch = "dev"
-channel_enabled = false
+channel_enabled = true
+channel_listen = ["_global"]
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
@@ -152,3 +156,23 @@ tags = ["go", "bubbletea"]
 [projects.path]
 windows = "D:/Documents/MyProjects/zpit"
 wsl = "/mnt/d/Documents/MyProjects/zpit"
+
+[[projects]]
+name = "Zplex"
+id = "zplex"
+profile = "desktop"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "zplex"
+git = "github"
+repo = "zac15987/zplex"
+shared_core = false
+log_level = "standard"
+base_branch = "dev"
+channel_enabled = false
+channel_listen = ["_global"]
+tags = ["go", "electron", "xterm"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zplex"
+wsl = "/mnt/d/Documents/MyProjects/zplex"

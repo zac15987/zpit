@@ -76,6 +76,7 @@ You (TUI)                    Claude Code Agents
     │
     ├─ [c] Clarify ──────────► Clarifier agent (new terminal)
     │   requirement              asks questions, creates structured issue
+    │   (press multiple times)   agents auto-discover via agent_type, enter Facilitator/Advisor meeting mode
     │
     ├─ [l] Loop ──────────────► Coding agent (worktree + new terminal)
     │   auto-implement           implements, commits, opens PR
@@ -98,6 +99,7 @@ You (TUI)                    Claude Code Agents
 - **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
 - **Cross-agent channel** — real-time agent-to-agent communication via HTTP broker + MCP; supports same-project, cross-project, and global broadcast messaging
+- **Meeting mode** — multiple clarifier agents auto-discover via `agent_type` tracking, assign Facilitator/Advisor roles, and converge to a structured issue through coordinated channel communication
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
@@ -139,7 +141,8 @@ tmux_mode = "new_window"    # new_window | new_pane
 tui_alert = true
 windows_toast = true
 sound = true
-re_remind_minutes = 15
+# sound_file = "D:/sounds/notify.mp3"  # custom notification sound (WAV/MP3/M4A/OGG)
+re_remind_minutes = 2
 
 [worktree]
 base_dir_windows = "D:/worktrees"
@@ -196,6 +199,9 @@ wsl = "/mnt/d/Projects/my-project"
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
+| `a` | Add project (coming soon) |
+| `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
+| `m` | Channel — view cross-agent communication events |
 | `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
 | `q` | Quit |
 

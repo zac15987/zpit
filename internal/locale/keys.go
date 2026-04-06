@@ -98,6 +98,9 @@ const (
 	KeyInitReview         Key = "init_review"
 	KeyInitRevisionReview Key = "init_revision_review"
 
+	// Sound file warning
+	KeySoundFileNotFound Key = "sound_file_not_found"
+
 	// Config validation errors (error overlay)
 	KeyErrConfigTitle       Key = "err_config_title"
 	KeyErrDismissHint       Key = "err_dismiss_hint"
@@ -106,4 +109,41 @@ const (
 	KeyErrTrackerURLEmpty   Key = "err_tracker_url_empty"
 	KeyErrWorktreeBaseEmpty Key = "err_worktree_base_empty"
 	KeyErrWorktreeMissing   Key = "err_worktree_missing"
+
+	// Edit config sub-menu
+	KeyEditConfigTitle        Key = "edit_config_title"
+	KeyEditConfigOption1      Key = "edit_config_option1"
+	KeyEditConfigOption2      Key = "edit_config_option2"
+	KeyEditConfigOption3      Key = "edit_config_option3"
+	KeyEditConfigFooter       Key = "edit_config_footer"
+
+	// Channel toggle
+	KeyChannelToggleOn        Key = "channel_toggle_on"
+	KeyChannelToggleOff       Key = "channel_toggle_off"
+	KeyChannelBrokerStartFail Key = "channel_broker_start_fail"
+
+	// Channel listen multi-select
+	KeyChannelListenTitle     Key = "channel_listen_title"
+	KeyChannelListenFooter    Key = "channel_listen_footer"
+	KeyChannelListenUpdated   Key = "channel_listen_updated"
+	KeyChannelListenNoChange  Key = "channel_listen_no_change"
+
+	// Editor launch
+	KeyEditorLaunching        Key = "editor_launching"
+	KeyEditorFallbackVim      Key = "editor_fallback_vim"
+
+	// Config reload
+	KeyConfigReloaded         Key = "config_reloaded"
+	KeyConfigReloadError      Key = "config_reload_error"
+	KeyConfigRestartRequired  Key = "config_restart_required"
+	KeyConfigNoChanges        Key = "config_no_changes"
+
+	// SSH remote mode
+	KeyConfigPathHint         Key = "config_path_hint"
+	KeyConfigReloadManual     Key = "config_reload_manual"
+
+	// Additional edit config strings
+	KeyConfigPathNotFound     Key = "config_path_not_found"
+	KeyEditorError            Key = "editor_error"
+	KeyGlobal                 Key = "global"
 )

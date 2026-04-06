@@ -25,6 +25,19 @@ disallowedTools: Edit
 - 需讀取第三方原始碼時使用 WebFetch
 - Write tool 限制為暫存檔（MCP 長文字 workaround）
 
+**會議模式（Meeting Protocol）：**
+
+當 Channel 工具可用（`.mcp.json` 存在 → MCP server 啟動）**且**透過 `list_projects` 的 `agents.clarifier` 計數發現其他 clarifier agent 時，自動啟用會議模式。若任一條件不滿足（無 channel 或無其他 clarifier），行為與單人模式完全相同。
+
+會議模式採用 **Facilitator/Advisor 角色模型**：
+
+- **角色分配**：第一個廣播 `[Joining Meeting]` 的 agent 成為 Facilitator；後續加入者自動成為 Advisor
+- **Facilitator**：驅動完整工作流（步驟 1-17），在關鍵步驟前檢查 channel 獲取 Advisor 分析，是唯一向使用者提問和撰寫 Issue Spec 的 agent，轉發使用者回答給 Advisor
+- **Advisor**：獨立讀取 codebase 並將分析傳送給 Facilitator，進入跟隨模式——回應 Facilitator 的訊息表達同意/異議/補充，不獨立執行步驟 5-17，不直接向使用者提問（`[⚠ Warning]` 緊急警告除外）
+- **收斂**：Facilitator 在收斂前驗證所有 SCOPE 路徑存在，issue 推送後廣播 `[Meeting Closed]`
+
+會議協議疊加在原工作流（步驟 1-17）之上作為 Facilitator 的額外通訊層，Advisor 不獨立執行完整流程。完整協議規格見 `agents/clarifier.md` 的 Meeting Protocol 區段。
+
 完整模板見 `agents/clarifier.md`。
 
 ---
@@ -56,24 +69,51 @@ disallowedTools: Write, Edit
 
 ---
 
-## 6.3 go:embed 部署流程
+## 6.3 Task Runner Subagent (.claude/agents/task-runner.md)
+
+**Deployment:** go:embed 嵌入 Zpit binary。僅在 Issue Spec 含 `## TASKS` 時由 `loopWriteAgentCmd()` 部署到 worktree 的 `.claude/agents/`。
+
+```yaml
+name: task-runner
+description: Single-task execution subagent
+tools: Read, Write, Edit, Bash, Glob, Grep
+```
+
+**核心行為：**
+- 實作**恰好一個** task（由主 coding agent 指派）
+- 啟動時讀取 CLAUDE.md、agent-guidelines.md、code-construction-principles.md
+- 僅修改指派範圍內的檔案；發現需改範圍外檔案時回報主 agent
+- Commit 格式：`[ISSUE-ID] T{N}: {short description}`（使用 `git add` 指定檔案，不用 `-A`）
+- 錯誤處理：嘗試修復一次，仍失敗則回報主 agent
+- 完成後提供摘要：修改檔案、實作內容、commit hash（成功）或錯誤詳情（失敗）
+
+**使用方式：**
+- 循序 task：主 coding agent 透過 Agent tool 的 `subagent_type: "task-runner"` 逐一委派
+- 平行 task（`[P]`）：主 coding agent 建立 Agent Team，每個 teammate 使用 `task-runner` subagent type
+
+完整模板見 `agents/task-runner.md`。
+
+---
+
+## 6.4 go:embed 部署流程
 
 Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, guidelinesMD, principlesMD, hookScripts)
     → stored in AppState fields
       → DeployHooks() on every agent launch ([c]/[r]/[l])
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
+      → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
 ```
 
 變更 `agents/*.md`、`hooks/*.sh` 或 `docs/agent-guidelines.md` 後需要重新 build 才會生效。
 
 ---
 
-## 6.4 Internationalization (i18n)
+## 6.5 Internationalization (i18n)
 
 所有 agent template (.md) 和 prompt builder (.go) 以**英文**撰寫。回應語言由 config 控制：
 
@@ -89,7 +129,7 @@ language = "zh-TW"  # or "en" (default)
 
 ---
 
-## 6.5 CLAUDE.md 模板
+## 6.6 CLAUDE.md 模板
 
 每個目標專案根目錄放一份，agent 實作時會自動讀取。
 以下為建議模板結構（Zpit 不自動產生，由使用者維護）：
