@@ -25,6 +25,19 @@ disallowedTools: Edit
 - 需讀取第三方原始碼時使用 WebFetch
 - Write tool 限制為暫存檔（MCP 長文字 workaround）
 
+**會議模式（Meeting Protocol）：**
+
+當 Channel 工具可用（`.mcp.json` 存在 → MCP server 啟動）**且**透過 `list_projects` 發現其他 clarifier agent 或收到來自其他 clarifier 的 channel 訊息時，自動啟用會議模式。若任一條件不滿足（無 channel 或無其他 agent），行為與單人模式完全相同。
+
+會議協議分為四階段：
+
+- **啟動探查**：完成 codebase 閱讀後呼叫 `list_projects`，若有其他 agent 存在則透過 `send_message` 廣播自我介紹
+- **轉發協議**：使用者每次提供新資訊後，以 `[轉述使用者] {摘要}` 格式廣播至所有 agent，僅轉發需求相關內容
+- **辯論協議**：收到其他 agent 訊息時向使用者顯示摘要並表達自身觀點；意見相左則以 `[{AgentName}] {觀點}` 格式回覆反證或替代方案
+- **收斂協議**：使用者觸發收斂指令後廣播最後確認、等待 30 秒收集補充意見，整合後依原工作流步驟 13-17 撰寫並推送 Issue Spec
+
+會議協議疊加在原工作流（步驟 1-17）之上作為額外通訊層，**不取代**任何既有步驟。完整協議規格見 `agents/clarifier.md` 的 Meeting Protocol 區段。
+
 完整模板見 `agents/clarifier.md`。
 
 ---
