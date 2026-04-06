@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/zac15987/zpit/internal/broker"
+	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -172,3 +173,31 @@ type ChannelSubscribedMsg struct {
 // StateRefreshMsg is sent when shared state changes and the UI needs to re-render.
 // Triggered by the broadcast mechanism when another client mutates shared state.
 type StateRefreshMsg struct{}
+
+// --- Edit config messages ---
+
+// EditorFinishedMsg is sent when the external editor process exits.
+type EditorFinishedMsg struct {
+	Err error
+}
+
+// ConfigReloadedMsg carries the result of reloading config.toml after editor exit.
+type ConfigReloadedMsg struct {
+	NewCfg *config.Config
+	Diff   config.ConfigDiff
+	Err    error
+}
+
+// ChannelToggledMsg carries the result of toggling channel_enabled for a project.
+type ChannelToggledMsg struct {
+	ProjectID string
+	Enabled   bool
+	Err       error
+}
+
+// ChannelListenUpdatedMsg carries the result of updating channel_listen for a project.
+type ChannelListenUpdatedMsg struct {
+	ProjectID string
+	NewListen []string
+	Err       error
+}

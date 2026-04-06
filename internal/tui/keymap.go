@@ -24,6 +24,13 @@ type KeyMap struct {
 	Back        key.Binding
 	Confirm     key.Binding
 	FocusSwitch key.Binding
+
+	// Edit config sub-menu keys
+	Option1 key.Binding
+	Option2 key.Binding
+	Option3 key.Binding
+	Space   key.Binding
+	Reload  key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -49,5 +56,11 @@ func DefaultKeyMap() KeyMap {
 		Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),
 		Confirm:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
 		FocusSwitch: key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "switch focus")),
+
+		Option1: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "option 1")),
+		Option2: key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "option 2")),
+		Option3: key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "option 3")),
+		Space:   key.NewBinding(key.WithKeys(" "), key.WithHelp("Space", "toggle")),
+		Reload:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload")),
 	}
 }

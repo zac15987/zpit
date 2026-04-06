@@ -29,6 +29,12 @@ func NewManager(cfg config.WorktreeConfig) *Manager {
 	return &Manager{cfg: cfg}
 }
 
+// UpdateConfig replaces the worktree config.
+// Not thread-safe — caller must ensure no concurrent Create/Remove calls.
+func (m *Manager) UpdateConfig(cfg config.WorktreeConfig) {
+	m.cfg = cfg
+}
+
 // ResolvePath computes the worktree directory path from config template.
 func (m *Manager) ResolvePath(projectID, issueID, slug string) string {
 	baseDir := platform.ResolvePath(m.cfg.BaseDirWindows, m.cfg.BaseDirWSL)

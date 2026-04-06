@@ -35,7 +35,7 @@ scripts/                 # Manual hook deployment fallback (setup-hooks.sh)
 testdata/                # Config fixtures + JSONL session fixtures
 internal/
 ├── broker/              # HTTP event broker for cross-agent channel communication
-├── config/              # Config structs, Load(), defaults, BaseDir(), WriteTemplate()
+├── config/              # Config structs, Load(), Reload(), Diff(), defaults, BaseDir(), WriteTemplate()
 ├── locale/              # i18n: SetLanguage(), T(), ResponseInstruction() — en + zh-TW
 ├── loop/                # Loop state machine types: SlotState enum, Slot, LoopState
 ├── mcp/                 # MCP stdio server for agent↔broker communication (zpit serve-channel)
@@ -51,6 +51,7 @@ internal/
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
     ├── channel.go       # Channel EventBus subscription and event reading
     ├── confirm.go       # Confirm dialogs, executePendingOp, undeploy
+    ├── editconfig.go    # Edit config sub-menu: channel toggle, listen edit, $EDITOR launch
     ├── keymap.go        # Key bindings definition (Help, Channel, etc.)
     ├── launch.go        # Terminal launch cmds, slot operations, deploy helpers
     ├── loop_cmds.go     # Loop tea.Cmd functions (poll, create worktree, launch, cleanup)
@@ -61,6 +62,7 @@ internal/
     ├── tracker_ops.go   # Label check/ensure, issue load/confirm, label check flow
     ├── validate.go      # Input validation helpers with RLock
     ├── view_channel.go  # Channel event timeline view ([m] key)
+    ├── view_editconfig.go # Edit config sub-menu rendering + channel_listen multi-select
     ├── view_projects.go # Main screen rendering
     └── view_status.go   # Issue list sub-view
 ```
@@ -126,6 +128,21 @@ zpit serve
 - Copy-before-closure pattern: cmd closures never hold references to AppState fields; mutable data copied to locals before lock release
 - Action-defer pattern: handlers collect actions under write lock, create cmds after unlock to avoid nested lock acquisition
 - Buffered channel (size 1): coalesces rapid state changes into single notification per subscriber
+
+### Config Hot-Reload
+
+The `[e]` key opens a sub-menu for config editing:
+- `[1]` Toggle channel — instant on/off for `channel_enabled` with broker lazy start
+- `[2]` Edit channel_listen — multi-select list of other projects + `_global`
+- `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
+
+**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_level`.
+
+**Restart-required fields** (status bar warning): `broker_port`, `ssh.*`, `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
+
+Channel quick-toggle uses targeted TOML writing (`internal/config/toml_writer.go`) — locates the matching `[[projects]]` block by `id` and updates only the `channel_enabled` or `channel_listen` line, preserving all other content including comments.
+
+SSH remote mode: `[3]` shows the config file path instead of launching an editor; `[r]` triggers manual reload.
 
 ### Cross-Agent Channel (Broker + MCP)
 
