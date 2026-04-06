@@ -268,3 +268,109 @@ MCP Server 支援在 runtime 動態增減 SSE 訂閱，讓 agent 在對話中即
 - 初始訂閱（config.toml `channel_listen`）在啟動時自動建立，runtime 動態訂閱為額外擴展
 
 **向後相容：** 初始訂閱行為不變，`channel_listen` 設定仍在啟動時生效。新 tools 僅提供 runtime 的額外控制能力。
+
+---
+
+## 12.10 會議模式（Meeting Protocol）
+
+### 概述
+
+當使用者對同一專案多次按下 `[c]` 啟動多個 clarifier agent 時，這些 agent 可透過 channel 發現彼此並進入**會議模式**——各自代表不同視角進行辯論、交換觀點，最終將需求收斂為結構化的 Issue Spec。
+
+會議模式的核心理念是：多個 clarifier 各自與使用者對話，同時透過 channel 共享彼此蒐集到的需求資訊。透過辯論協議，agent 之間會針對矛盾點交鋒，避免無條件附和，從而產出更完整、更嚴謹的需求規格。
+
+### 觸發條件
+
+會議模式在以下**兩個條件同時成立**時觸發：
+
+1. **Channel tools 可用**：`.mcp.json` 已部署且 MCP server 處於活躍狀態
+2. **發現其他 clarifier agent**：透過 `list_projects` 看到同專案有其他 SSE 連線，或收到來自另一個 clarifier 的 channel 訊息
+
+任一條件不滿足時，clarifier 以**單一 agent 模式**運作——即原本的 clarifier 工作流程，不執行任何會議協議步驟。
+
+### 流程圖
+
+```
+Clarifier A                        Clarifier B
+  │                                  │
+  ├─ 1. 啟動探查                      ├─ 1. 啟動探查
+  │    list_projects                  │    list_projects
+  │    send_message [加入會議]         │    send_message [加入會議]
+  │                                  │
+  ├─ 2. 轉發協議                      │
+  │    使用者發言                      │
+  │    send_message                   │
+  │    [轉述使用者] {摘要}      ───►   │  收到 → 展示 + 回應
+  │                                  │
+  │                                  ├─ 3. 辯論協議
+  │  ◄─── [{AgentName}] {觀點}        │    send_message
+  │  展示 + 回應                       │
+  │                                  │
+  ├─ 4. 收斂協議                      │
+  │    使用者說「收斂」                 │
+  │    send_message                   │
+  │    [收斂確認] {共識}        ───►   │  回覆補充
+  │  ◄─── 補充                        │
+  │    整合 → Issue Spec              │
+  └─────────────────                  └─────────────────
+```
+
+### 四階段詳述
+
+#### 階段 1：啟動探查（Startup Probe）
+
+Agent 在讀取 codebase 後（clarifier 工作流程步驟 4）呼叫 `list_projects`。若同專案存在其他活躍 agent，則透過 `send_message(to_issue_id="_project")` 廣播：
+
+```
+[加入會議] 我是 {AgentName}，加入需求討論
+```
+
+若未發現其他 agent，跳過會議協議，以單一 agent 模式繼續。
+
+#### 階段 2：轉發協議（Relay Protocol）
+
+當使用者提供與需求相關的資訊時，agent 透過 `send_message(to_issue_id="_project")` 廣播：
+
+```
+[轉述使用者] {一句話摘要}
+```
+
+**僅轉發需求相關內容。** 閒聊、操作指令等非需求性對話不轉發。這確保 channel 中的訊息密度保持在有意義的水準。
+
+#### 階段 3：辯論協議（Debate Protocol）
+
+收到其他 agent 的訊息時：
+
+1. 向使用者摘要展示收到的內容
+2. 表達自身觀點——基於已蒐集到的需求資訊做出判斷
+3. 若有不同意見，透過 `send_message` 回覆具體的反駁依據
+
+**禁止無條件同意。** Agent 必須基於自身蒐集的資訊獨立判斷。若確實同意，需說明同意的技術理由。
+
+所有 channel 訊息統一使用格式：`[{AgentName}] {觀點內容}`
+
+#### 階段 4：收斂協議（Convergence Protocol）
+
+使用者透過觸發詞發起收斂（例如「收斂」、「整理成 issue」、「wrap up」）。收到觸發後，agent 廣播：
+
+```
+[收斂確認] 準備撰寫 Issue Spec，目前共識：{關鍵決策摘要}，有最後要補充的嗎？
+```
+
+流程：
+1. 廣播收斂確認訊息
+2. 等待 30 秒，接收其他 agent 的最後補充
+3. 整合所有補充內容
+4. 繼續原本的 clarifier 工作流程步驟 13-17（撰寫 Issue Spec、張貼到 issue tracker）
+
+### 與既有 channel 機制的關係
+
+會議模式完全建立在既有的 MCP tools 之上，**不需要新增任何 tool 或 broker 端點**：
+
+| 使用的 tool | 用途 |
+|---|---|
+| `send_message` | 所有 agent 間通訊（加入會議、轉發、辯論、收斂） |
+| `list_projects` | 啟動探查——發現同專案的其他 agent |
+| `list_artifacts` | 查詢已發布的需求 artifact（如有） |
+
+通訊一律使用專案層級廣播（`to_issue_id="_project"`），確保同專案的所有 clarifier 都能收到訊息。這與 12.5 節描述的跨專案通訊模型一致——會議模式是同專案廣播的具體應用場景。

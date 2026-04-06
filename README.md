@@ -76,6 +76,7 @@ You (TUI)                    Claude Code Agents
     │
     ├─ [c] Clarify ──────────► Clarifier agent (new terminal)
     │   requirement              asks questions, creates structured issue
+    │   (press multiple times)   agents auto-discover via channel, enter meeting mode
     │
     ├─ [l] Loop ──────────────► Coding agent (worktree + new terminal)
     │   auto-implement           implements, commits, opens PR
@@ -98,6 +99,7 @@ You (TUI)                    Claude Code Agents
 - **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
 - **Cross-agent channel** — real-time agent-to-agent communication via HTTP broker + MCP; supports same-project, cross-project, and global broadcast messaging
+- **Meeting mode** — multiple clarifier agents debate requirements via channel, converging to a structured issue
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
