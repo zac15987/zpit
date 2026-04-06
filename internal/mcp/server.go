@@ -22,6 +22,7 @@ type ServerConfig struct {
 	ProjectID      string   // project identifier
 	IssueID        string   // this agent's issue ID
 	InstanceID     string   // unique per-process ID for self-echo filtering
+	AgentName      string   // human-readable agent name (e.g. "clarifier-a3f7")
 	ListenProjects []string // additional project keys to subscribe SSE (e.g. ["_global", "other-proj"])
 }
 
@@ -49,6 +50,7 @@ func ReadConfigFromEnv() (ServerConfig, error) {
 	if lp := os.Getenv("ZPIT_LISTEN_PROJECTS"); lp != "" {
 		cfg.ListenProjects = strings.Split(lp, ",")
 	}
+	cfg.AgentName = os.Getenv("ZPIT_AGENT_NAME")
 	return cfg, nil
 }
 
@@ -141,7 +143,7 @@ func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.
 // This method blocks until stdin is closed.
 func (s *Server) Run() error {
 	s.logger.Println("mcp: server starting")
-	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID)
+	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s agent=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID, s.config.AgentName)
 
 	// Start SSE listeners in background with cancellable context.
 	// Subscribe to own project + configured additional projects.
@@ -318,7 +320,7 @@ func (s *Server) callPublishArtifact(id json.RawMessage, args json.RawMessage) {
 		project = a.TargetProject
 	}
 	url := fmt.Sprintf("%s/api/artifacts/%s/%s", s.config.BrokerURL, project, a.IssueID)
-	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content, "sender_id": s.config.InstanceID})
+	body, _ := json.Marshal(map[string]string{"type": a.Type, "content": a.Content, "sender_id": s.config.InstanceID, "agent_name": s.config.AgentName})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -397,7 +399,7 @@ func (s *Server) callSendMessage(id json.RawMessage, args json.RawMessage) {
 		project = a.TargetProject
 	}
 	url := fmt.Sprintf("%s/api/messages/%s/%s", s.config.BrokerURL, project, a.ToIssueID)
-	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content, "sender_id": s.config.InstanceID})
+	body, _ := json.Marshal(map[string]string{"from": s.config.IssueID, "content": a.Content, "sender_id": s.config.InstanceID, "agent_name": s.config.AgentName})
 
 	resp, err := s.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
