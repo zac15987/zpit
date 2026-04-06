@@ -108,4 +108,36 @@ var en = map[Key]string{
 	KeyErrTrackerURLEmpty:   "Tracker URL is not configured",
 	KeyErrWorktreeBaseEmpty: "Worktree base directory is not configured",
 	KeyErrWorktreeMissing:   "Worktree directory no longer exists",
+
+	// Edit config sub-menu
+	KeyEditConfigTitle:        "Edit Config — %s",
+	KeyEditConfigOption1:      "[1] Toggle channel",
+	KeyEditConfigOption2:      "[2] Edit channel_listen",
+	KeyEditConfigOption3:      "[3] Open config in editor",
+	KeyEditConfigFooter:       "[1/2/3] Select  [Esc] Back",
+
+	// Channel toggle
+	KeyChannelToggleOn:        "channel: ON (%s)",
+	KeyChannelToggleOff:       "channel: OFF (%s)",
+	KeyChannelBrokerStartFail: "Failed to start broker: %s",
+
+	// Channel listen multi-select
+	KeyChannelListenTitle:     "Edit channel_listen — %s",
+	KeyChannelListenFooter:    "↑↓ Navigate  Space Toggle  Enter Confirm  Esc Cancel",
+	KeyChannelListenUpdated:   "channel_listen updated: %s",
+	KeyChannelListenNoChange:  "channel_listen: no changes",
+
+	// Editor launch
+	KeyEditorLaunching:        "Opening %s...",
+	KeyEditorFallbackVim:      "No $EDITOR set, using vim",
+
+	// Config reload
+	KeyConfigReloaded:         "Config reloaded",
+	KeyConfigReloadError:      "Config reload error: %s",
+	KeyConfigRestartRequired:  "Restart required for: %s",
+	KeyConfigNoChanges:        "Config: no changes detected",
+
+	// SSH remote mode
+	KeyConfigPathHint:         "Config path: %s — edit externally, press [r] to reload",
+	KeyConfigReloadManual:     "Press [r] to reload config",
 }

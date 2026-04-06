@@ -108,4 +108,36 @@ var zhTW = map[Key]string{
 	KeyErrTrackerURLEmpty:   "Tracker URL 未設定",
 	KeyErrWorktreeBaseEmpty: "Worktree base directory 未設定",
 	KeyErrWorktreeMissing:   "Worktree 目錄已不存在",
+
+	// Edit config sub-menu
+	KeyEditConfigTitle:        "編輯設定 — %s",
+	KeyEditConfigOption1:      "[1] 切換 Channel",
+	KeyEditConfigOption2:      "[2] 編輯 channel_listen",
+	KeyEditConfigOption3:      "[3] 用編輯器開啟設定檔",
+	KeyEditConfigFooter:       "[1/2/3] 選擇  [Esc] 返回",
+
+	// Channel toggle
+	KeyChannelToggleOn:        "channel: 開啟 (%s)",
+	KeyChannelToggleOff:       "channel: 關閉 (%s)",
+	KeyChannelBrokerStartFail: "Broker 啟動失敗：%s",
+
+	// Channel listen multi-select
+	KeyChannelListenTitle:     "編輯 channel_listen — %s",
+	KeyChannelListenFooter:    "↑↓ 瀏覽  空白鍵 切換  Enter 確認  Esc 取消",
+	KeyChannelListenUpdated:   "channel_listen 已更新：%s",
+	KeyChannelListenNoChange:  "channel_listen：無變更",
+
+	// Editor launch
+	KeyEditorLaunching:        "開啟 %s...",
+	KeyEditorFallbackVim:      "未設定 $EDITOR，使用 vim",
+
+	// Config reload
+	KeyConfigReloaded:         "設定已重新載入",
+	KeyConfigReloadError:      "設定重載錯誤：%s",
+	KeyConfigRestartRequired:  "以下設定需重啟才能生效：%s",
+	KeyConfigNoChanges:        "設定：未偵測到變更",
+
+	// SSH remote mode
+	KeyConfigPathHint:         "設定檔路徑：%s — 請在外部編輯後按 [r] 重載",
+	KeyConfigReloadManual:     "按 [r] 重新載入設定",
 }
