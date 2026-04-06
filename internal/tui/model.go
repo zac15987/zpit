@@ -31,7 +31,23 @@ const (
 	ViewProjects View = iota
 	ViewStatus
 	ViewChannel
+	ViewEditConfig
 )
+
+// EditConfigSub represents the sub-view within the edit config screen.
+type EditConfigSub int
+
+const (
+	EditConfigMenu       EditConfigSub = iota // main 3-option menu
+	EditConfigListenList                       // channel_listen multi-select
+)
+
+// editConfigListenItem represents one row in the channel_listen multi-select.
+type editConfigListenItem struct {
+	Key     string // project ID or "_global"
+	Name    string // display name
+	Checked bool
+}
 
 // FocusedPanel indicates which panel has keyboard focus in ViewProjects.
 type FocusedPanel int
@@ -93,6 +109,12 @@ type Model struct {
 
 	// Channel view state
 	channelProjectID string
+
+	// Edit config sub-menu state
+	editConfigProjectID    string                // project being edited
+	editConfigSub          EditConfigSub         // current sub-view
+	editConfigListenCursor int                   // cursor for channel_listen list
+	editConfigListenItems  []editConfigListenItem // items in multi-select
 
 	// Error overlay (dismissible with Esc/Enter)
 	errorOverlay string
@@ -203,6 +225,10 @@ func (m *Model) syncViewportContent() {
 		header = m.renderChannelHeader()
 		footer = m.renderChannelFooter()
 		m.viewport.SetContent(m.renderChannelScrollable())
+	case ViewEditConfig:
+		header = m.renderEditConfigHeader()
+		footer = m.renderEditConfigFooter()
+		m.viewport.SetContent(m.renderEditConfigScrollable())
 	}
 	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
@@ -368,6 +394,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Edit config messages
+	case EditorFinishedMsg:
+		// Will be handled in T7.
+		return m, nil
+
+	case ConfigReloadedMsg:
+		// Will be handled in T7.
+		return m, nil
+
+	case ChannelToggledMsg:
+		// Will be handled in T6.
+		return m, nil
+
+	case ChannelListenUpdatedMsg:
+		// Will be handled in T6.
+		return m, nil
+
 	}
 
 	return m, nil
@@ -385,6 +428,8 @@ func (m Model) View() string {
 		bg = m.viewStatus()
 	case ViewChannel:
 		bg = m.viewChannel()
+	case ViewEditConfig:
+		bg = m.viewEditConfig()
 	default:
 		bg = "Unknown view"
 	}
@@ -458,6 +503,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleStatusKey(msg)
 	case ViewChannel:
 		return m.handleChannelKey(msg)
+	case ViewEditConfig:
+		return m.handleEditConfigKey(msg)
 	}
 	return m, nil
 }
@@ -623,7 +670,15 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus(locale.T(locale.KeyAddProjectStub))
 
 	case key.Matches(msg, m.keys.EditConfig):
-		m.setStatus(locale.T(locale.KeyEditConfigStub))
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		m.currentView = ViewEditConfig
+		m.editConfigProjectID = p.ID
+		m.editConfigSub = EditConfigMenu
+		m.viewport.GotoTop()
+		return m, nil
 
 	case key.Matches(msg, m.keys.Help):
 		m.setStatus(locale.T(locale.KeyHelpStub))
