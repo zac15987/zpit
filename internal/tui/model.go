@@ -396,12 +396,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Edit config messages
 	case EditorFinishedMsg:
-		// Will be handled in T7.
-		return m, nil
+		return m.handleEditorFinished(msg)
 
 	case ConfigReloadedMsg:
-		// Will be handled in T7.
-		return m, nil
+		return m.handleConfigReloaded(msg)
 
 	case ChannelToggledMsg:
 		// Channel toggle is handled synchronously in handleEditConfigMenuKey.
