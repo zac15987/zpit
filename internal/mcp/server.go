@@ -24,6 +24,7 @@ type ServerConfig struct {
 	IssueID        string   // this agent's issue ID
 	InstanceID     string   // unique per-process ID for self-echo filtering
 	AgentName      string   // human-readable agent name (e.g. "clarifier-a3f7")
+	AgentType      string   // agent type for SSE registration (e.g. "clarifier", "coding", "reviewer", "claude")
 	ListenProjects []string // additional project keys to subscribe SSE (e.g. ["_global", "other-proj"])
 }
 
@@ -52,6 +53,7 @@ func ReadConfigFromEnv() (ServerConfig, error) {
 		cfg.ListenProjects = strings.Split(lp, ",")
 	}
 	cfg.AgentName = os.Getenv("ZPIT_AGENT_NAME")
+	cfg.AgentType = os.Getenv("ZPIT_AGENT_TYPE")
 	return cfg, nil
 }
 
@@ -97,7 +99,7 @@ func channelTools() []Tool {
 		},
 		{
 			Name:        "list_projects",
-			Description: "List all active projects with their issues and connected agent counts. Use for cross-project discovery.",
+			Description: "List all active projects with their issues and connected agents by type. Returns [{\"id\":\"project-id\",\"issue_ids\":[...],\"agents\":{\"clarifier\":1,\"coding\":2}}]. The 'agents' field is a map of agent_type to count (types with 0 count are omitted). Use for cross-project discovery and meeting mode detection.",
 			InputSchema: JSONSchema{
 				Type: "object",
 			},
@@ -176,7 +178,7 @@ func NewServer(cfg ServerConfig, logger *log.Logger, stdin io.Reader, stdout io.
 // This method blocks until stdin is closed.
 func (s *Server) Run() error {
 	s.logger.Println("mcp: server starting")
-	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s agent=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID, s.config.AgentName)
+	s.logger.Printf("mcp: broker=%s project=%s issue=%s instance=%s agent=%s type=%s", s.config.BrokerURL, s.config.ProjectID, s.config.IssueID, s.config.InstanceID, s.config.AgentName, s.config.AgentType)
 
 	// Start SSE listeners in background with per-project cancellable contexts.
 	// Subscribe to own project + configured additional projects.
@@ -613,6 +615,9 @@ func (s *Server) callListSubscriptions(id json.RawMessage) {
 // Stops when ctx is cancelled.
 func (s *Server) listenSSE(ctx context.Context, project string) {
 	url := fmt.Sprintf("%s/api/events/%s", s.config.BrokerURL, project)
+	if s.config.AgentType != "" {
+		url += "?agent_type=" + s.config.AgentType
+	}
 	s.logger.Printf("mcp: SSE connecting to %s", url)
 
 	for {

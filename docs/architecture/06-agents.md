@@ -27,16 +27,16 @@ disallowedTools: Edit
 
 **會議模式（Meeting Protocol）：**
 
-當 Channel 工具可用（`.mcp.json` 存在 → MCP server 啟動）**且**透過 `list_projects` 發現其他 clarifier agent 或收到來自其他 clarifier 的 channel 訊息時，自動啟用會議模式。若任一條件不滿足（無 channel 或無其他 agent），行為與單人模式完全相同。
+當 Channel 工具可用（`.mcp.json` 存在 → MCP server 啟動）**且**透過 `list_projects` 的 `agents.clarifier` 計數發現其他 clarifier agent 時，自動啟用會議模式。若任一條件不滿足（無 channel 或無其他 clarifier），行為與單人模式完全相同。
 
-會議協議分為四階段：
+會議模式採用 **Facilitator/Advisor 角色模型**：
 
-- **啟動探查**：完成 codebase 閱讀後呼叫 `list_projects`，若有其他 agent 存在則透過 `send_message` 廣播自我介紹
-- **轉發協議**：使用者每次提供新資訊後，以 `[轉述使用者] {摘要}` 格式廣播至所有 agent，僅轉發需求相關內容
-- **辯論協議**：收到其他 agent 訊息時向使用者顯示摘要並表達自身觀點；意見相左則以 `[{AgentName}] {觀點}` 格式回覆反證或替代方案
-- **收斂協議**：使用者觸發收斂指令後廣播最後確認、等待 30 秒收集補充意見，整合後依原工作流步驟 13-17 撰寫並推送 Issue Spec
+- **角色分配**：第一個廣播 `[Joining Meeting]` 的 agent 成為 Facilitator；後續加入者自動成為 Advisor
+- **Facilitator**：驅動完整工作流（步驟 1-17），在關鍵步驟前檢查 channel 獲取 Advisor 分析，是唯一向使用者提問和撰寫 Issue Spec 的 agent，轉發使用者回答給 Advisor
+- **Advisor**：獨立讀取 codebase 並將分析傳送給 Facilitator，進入跟隨模式——回應 Facilitator 的訊息表達同意/異議/補充，不獨立執行步驟 5-17，不直接向使用者提問（`[⚠ Warning]` 緊急警告除外）
+- **收斂**：Facilitator 在收斂前驗證所有 SCOPE 路徑存在，issue 推送後廣播 `[Meeting Closed]`
 
-會議協議疊加在原工作流（步驟 1-17）之上作為額外通訊層，**不取代**任何既有步驟。完整協議規格見 `agents/clarifier.md` 的 Meeting Protocol 區段。
+會議協議疊加在原工作流（步驟 1-17）之上作為 Facilitator 的額外通訊層，Advisor 不獨立執行完整流程。完整協議規格見 `agents/clarifier.md` 的 Meeting Protocol 區段。
 
 完整模板見 `agents/clarifier.md`。
 

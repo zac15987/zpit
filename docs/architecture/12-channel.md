@@ -52,7 +52,7 @@ Agent A (Project X, Issue #3)       Agent B (Project Y, Issue #7)
 - 綁定 `127.0.0.1:<broker_port>`（預設 17731），僅限本機存取
 - In-memory 儲存（artifacts、messages），不持久化
 - Non-blocking publish：使用 buffered channel，滿時丟棄（避免慢 subscriber 拖住 broker）
-- SSE 連線計數：per-project 追蹤活躍 SSE 連線數，供 `/api/projects` 回傳
+- SSE 連線計數：per-project per-agent-type 追蹤活躍 SSE 連線數（`?agent_type=X` query parameter），供 `/api/projects` 回傳 `agents` map
 - 在 `NewAppState()` 中啟動，僅當任一 project 有 `channel_enabled = true`
 
 **EventBus：**
@@ -92,6 +92,7 @@ Server 從環境變數讀取設定：
 | `ZPIT_ISSUE_ID` | 處理中的 issue ID |
 | `ZPIT_LISTEN_PROJECTS` | 額外訂閱的 project key（逗號分隔） |
 | `ZPIT_AGENT_NAME` | Agent 顯示名稱（optional，如 `clarifier-a3f7`） |
+| `ZPIT_AGENT_TYPE` | Agent 類型（optional，如 `clarifier`、`coding`、`reviewer`、`claude`） |
 
 **提供的 MCP Tools：**
 
@@ -100,7 +101,7 @@ Server 從環境變數讀取設定：
 | `publish_artifact` | 發布 artifact 到 broker，HTTP body 帶入 agent_name |
 | `list_artifacts` | 列出指定 project 的所有 artifact |
 | `send_message` | 發送訊息給指定 agent，HTTP body 帶入 agent_name |
-| `list_projects` | 列出所有活躍 project 及其 agent 連線數 |
+| `list_projects` | 列出所有活躍 project 及其各類型 agent 連線數（`agents` map） |
 | `subscribe_project` | 動態訂閱指定 project 的 SSE 事件串流 |
 | `unsubscribe_project` | 取消訂閱指定 project 的 SSE 事件串流（不可取消訂閱自身 project） |
 | `list_subscriptions` | 列出目前所有已訂閱 SSE 的 project key |
@@ -275,102 +276,70 @@ MCP Server 支援在 runtime 動態增減 SSE 訂閱，讓 agent 在對話中即
 
 ### 概述
 
-當使用者對同一專案多次按下 `[c]` 啟動多個 clarifier agent 時，這些 agent 可透過 channel 發現彼此並進入**會議模式**——各自代表不同視角進行辯論、交換觀點，最終將需求收斂為結構化的 Issue Spec。
+當使用者對同一專案多次按下 `[c]` 啟動多個 clarifier agent 時，這些 agent 透過 `list_projects` 的 `agents.clarifier` 計數發現彼此，並以 **Facilitator/Advisor 角色模型** 進入會議模式。
 
-會議模式的核心理念是：多個 clarifier 各自與使用者對話，同時透過 channel 共享彼此蒐集到的需求資訊。透過辯論協議，agent 之間會針對矛盾點交鋒，避免無條件附和，從而產出更完整、更嚴謹的需求規格。
+- **Facilitator**：第一個廣播 `[Joining Meeting]` 的 agent，負責驅動完整工作流程、向使用者提問、轉發使用者回答、撰寫 Issue Spec。
+- **Advisor**：後續加入的 agent，負責獨立分析 codebase 並將發現傳送給 Facilitator，進入跟隨模式回應 Facilitator 的訊息。Advisor 不獨立執行工作流步驟 5-17，也不直接向使用者提問（除了 `[⚠ Warning]` 緊急警告例外）。
 
 ### 觸發條件
 
 會議模式在以下**兩個條件同時成立**時觸發：
 
 1. **Channel tools 可用**：`.mcp.json` 已部署且 MCP server 處於活躍狀態
-2. **發現其他 clarifier agent**：透過 `list_projects` 看到同專案有其他 SSE 連線，或收到來自另一個 clarifier 的 channel 訊息
+2. **發現其他 clarifier agent**：透過 `list_projects` 回傳的 `agents.clarifier` 計數判斷——自身專案 `agents.clarifier >= 2`，或 `channel_listen` 中的專案 `agents.clarifier >= 1`
 
-任一條件不滿足時，clarifier 以**單一 agent 模式**運作——即原本的 clarifier 工作流程，不執行任何會議協議步驟。
+任一條件不滿足時，clarifier 以單一 agent 模式運作。
 
 ### 流程圖
 
 ```
-Clarifier A                        Clarifier B
-  │                                  │
-  ├─ 1. 啟動探查                      ├─ 1. 啟動探查
-  │    list_projects                  │    list_projects
-  │    send_message [加入會議]         │    send_message [加入會議]
-  │                                  │
-  ├─ 2. 轉發協議                      │
-  │    使用者發言                      │
-  │    send_message                   │
-  │    [轉述使用者] {摘要}      ───►   │  收到 → 展示 + 回應
-  │                                  │
-  │                                  ├─ 3. 辯論協議
-  │  ◄─── [{AgentName}] {觀點}        │    send_message
-  │  展示 + 回應                       │
-  │                                  │
-  ├─ 4. 收斂協議                      │
-  │    使用者說「收斂」                 │
-  │    send_message                   │
-  │    [收斂確認] {共識}        ───►   │  回覆補充
-  │  ◄─── 補充                        │
-  │    整合 → Issue Spec              │
-  └─────────────────                  └─────────────────
+Clarifier A (Facilitator)              Clarifier B (Advisor)
+  │                                      │
+  ├─ 1. 啟動探查                          ├─ 1. 啟動探查
+  │    list_projects                      │    list_projects
+  │    → agents.clarifier >= 2            │    → agents.clarifier >= 2
+  │    send_message [Joining Meeting]     │    收到 A 的 [Joining Meeting]
+  │    role: Facilitator            ───►  │    → 自動成為 Advisor
+  │                                      │    send_message [Joining Meeting]
+  │                                      │    role: Advisor
+  │                                      │
+  │                                      ├─ 2. Codebase 分析
+  │                                      │    讀取相關程式碼
+  │  ◄─── [{AgentName}] {分析結果}        │    send_message 分析
+  │  整合 Advisor 分析                     │
+  │                                      │
+  ├─ 3. 向使用者提問                       │
+  │    （唯一向使用者提問的 agent）          │
+  │    send_message [User Relay]    ───►  │  收到 → 回應同意/異議/補充
+  │  ◄─── [{AgentName}] {回應}            │
+  │                                      │
+  ├─ 4. 收斂                              │
+  │    [Convergence Check]          ───►  │  回覆最後補充
+  │  ◄─── 補充                            │
+  │    驗證 SCOPE 路徑                     │
+  │    撰寫 Issue Spec                    │
+  │    推送到 Tracker                     │
+  │    [Meeting Closed]             ───►  │  會議結束
+  └─────────────────                      └─────────────────
 ```
 
-### 四階段詳述
+### 訊息格式
 
-#### 階段 1：啟動探查（Startup Probe）
-
-Agent 在讀取 codebase 後（clarifier 工作流程步驟 4）呼叫 `list_projects`。若同專案存在其他活躍 agent，則透過 `send_message(to_issue_id="_project")` 廣播：
-
-```
-[加入會議] 我是 {AgentName}，加入需求討論
-```
-
-若未發現其他 agent，跳過會議協議，以單一 agent 模式繼續。
-
-#### 階段 2：轉發協議（Relay Protocol）
-
-當使用者提供與需求相關的資訊時，agent 透過 `send_message(to_issue_id="_project")` 廣播：
-
-```
-[轉述使用者] {一句話摘要}
-```
-
-**僅轉發需求相關內容。** 閒聊、操作指令等非需求性對話不轉發。這確保 channel 中的訊息密度保持在有意義的水準。
-
-#### 階段 3：辯論協議（Debate Protocol）
-
-收到其他 agent 的訊息時：
-
-1. 向使用者摘要展示收到的內容
-2. 表達自身觀點——基於已蒐集到的需求資訊做出判斷
-3. 若有不同意見，透過 `send_message` 回覆具體的反駁依據
-
-**禁止無條件同意。** Agent 必須基於自身蒐集的資訊獨立判斷。若確實同意，需說明同意的技術理由。
-
-所有 channel 訊息統一使用格式：`[{AgentName}] {觀點內容}`
-
-#### 階段 4：收斂協議（Convergence Protocol）
-
-使用者透過觸發詞發起收斂（例如「收斂」、「整理成 issue」、「wrap up」）。收到觸發後，agent 廣播：
-
-```
-[收斂確認] 準備撰寫 Issue Spec，目前共識：{關鍵決策摘要}，有最後要補充的嗎？
-```
-
-流程：
-1. 廣播收斂確認訊息
-2. 等待 30 秒，接收其他 agent 的最後補充
-3. 整合所有補充內容
-4. 繼續原本的 clarifier 工作流程步驟 13-17（撰寫 Issue Spec、張貼到 issue tracker）
+| 類型 | 格式 | 範例 |
+|---|---|---|
+| 加入會議 | `[Joining Meeting] I am {AgentName} (clarifier) on project {ProjectID}, role: {Role}` | `[Joining Meeting] I am clarifier-a3f7 (clarifier) on project zpit, role: Facilitator` |
+| 分析/觀點 | `[{AgentName}] {content}` | `[clarifier-f4db] broker.go 的 sseConns 需改為巢狀 map` |
+| 使用者轉發 | `[User Relay] {summary}` | `[User Relay] 使用者希望 agent_type 作為 query param` |
+| 收斂確認 | `[Convergence Check] {consensus}` | `[Convergence Check] 目前共識：1. 使用 query param... 2. ...` |
+| 緊急警告 | `[⚠ Warning] {AgentName}: {warning}` | `[⚠ Warning] clarifier-f4db: 此變更會破壞向後相容性` |
+| 會議結束 | `[Meeting Closed] Issue #{N} pushed — {title}` | `[Meeting Closed] Issue #80 pushed — Improve Meeting Protocol` |
 
 ### 與既有 channel 機制的關係
 
-會議模式完全建立在既有的 MCP tools 之上，**不需要新增任何 tool 或 broker 端點**：
+會議模式完全建立在既有的 MCP tools 之上，利用 `agent_type` 基礎設施進行角色發現：
 
-| 使用的 tool | 用途 |
+| 使用的機制 | 用途 |
 |---|---|
-| `send_message` | 所有 agent 間通訊（加入會議、轉發、辯論、收斂） |
-| `list_projects` | 啟動探查——發現同專案的其他 agent |
-| `list_artifacts` | 查詢已發布的需求 artifact（如有） |
-
-通訊一律使用專案層級廣播（`to_issue_id="_project"`），確保同專案的所有 clarifier 都能收到訊息。這與 12.5 節描述的跨專案通訊模型一致——會議模式是同專案廣播的具體應用場景。
+| `list_projects` 的 `agents.clarifier` | 啟動探查——發現同專案或跨專案的其他 clarifier |
+| `send_message` | 所有 agent 間通訊（加入會議、分析、轉發、收斂、警告、結束） |
+| `ZPIT_AGENT_TYPE` + SSE `?agent_type=` | 讓 broker 區分 agent 類型，提供精確的 clarifier 計數 |

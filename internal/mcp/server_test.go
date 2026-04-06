@@ -1209,3 +1209,35 @@ func TestServer_SubscribeEdgeCases(t *testing.T) {
 		t.Errorf("expected 'not subscribed', got: %s", r3.Content[0].Text)
 	}
 }
+
+func TestReadConfigFromEnv_AgentType(t *testing.T) {
+	// Test with ZPIT_AGENT_TYPE present.
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_TYPE", "clarifier")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentType != "clarifier" {
+		t.Errorf("AgentType: got %q, want %q", cfg.AgentType, "clarifier")
+	}
+}
+
+func TestReadConfigFromEnv_AgentTypeAbsent(t *testing.T) {
+	// Test without ZPIT_AGENT_TYPE — should succeed with empty string.
+	t.Setenv("ZPIT_BROKER_URL", "http://localhost:9999")
+	t.Setenv("ZPIT_PROJECT_ID", "proj1")
+	t.Setenv("ZPIT_ISSUE_ID", "42")
+	t.Setenv("ZPIT_AGENT_TYPE", "")
+
+	cfg, err := ReadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AgentType != "" {
+		t.Errorf("AgentType should be empty when env is absent, got %q", cfg.AgentType)
+	}
+}
