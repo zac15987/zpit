@@ -104,13 +104,18 @@ func (m Model) renderEditConfigListenContent() string {
 	for i, item := range m.editConfigListenItems {
 		cursor := "  "
 		if i == m.editConfigListenCursor {
-			cursor = " >"
+			cursor = hotkeyLabelStyle.Render(" >")
 		}
-		check := "[ ]"
+		check := detailStyle.Render("[ ]")
 		if item.Checked {
-			check = "[x]"
+			check = hotkeyLabelStyle.Render("[x]")
 		}
-		b.WriteString(fmt.Sprintf("%s %s %s (%s)\n", cursor, check, item.Name, item.Key))
+		name := normalStyle.Render(item.Name)
+		key := detailStyle.Render(fmt.Sprintf("(%s)", item.Key))
+		if i == m.editConfigListenCursor {
+			name = selectedStyle.Render(item.Name)
+		}
+		b.WriteString(fmt.Sprintf("%s %s %s %s\n", cursor, check, name, key))
 	}
 	return b.String()
 }
