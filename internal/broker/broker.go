@@ -21,7 +21,7 @@ type Broker struct {
 	mu        sync.RWMutex
 	artifacts map[string][]Artifact // project → artifacts
 	messages  map[string][]Message  // project → messages
-	sseConns  map[string]int        // project → active SSE connection count
+	sseConns  map[string]map[string]int // project → agent_type → count
 
 	bus      *eventBus
 	listener net.Listener
@@ -47,7 +47,7 @@ func New(logger *log.Logger, port int) (*Broker, error) {
 	b := &Broker{
 		artifacts: make(map[string][]Artifact),
 		messages:  make(map[string][]Message),
-		sseConns:  make(map[string]int),
+		sseConns:  make(map[string]map[string]int),
 		bus:       newEventBus(),
 		listener:  ln,
 		logger:    logger,
@@ -230,7 +230,11 @@ func (b *Broker) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 // then streams new events as they arrive.
 func (b *Broker) handleSSE(w http.ResponseWriter, r *http.Request) {
 	project := r.PathValue("project")
-	b.logger.Printf("broker: SSE connect project=%s", project)
+	agentType := r.URL.Query().Get("agent_type")
+	if agentType == "" {
+		agentType = "unknown"
+	}
+	b.logger.Printf("broker: SSE connect project=%s agent_type=%s", project, agentType)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -259,17 +263,24 @@ func (b *Broker) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	b.logger.Printf("broker: SSE sent %d initial artifacts for project=%s", len(existing), project)
 
-	// Track active SSE connection count for discovery endpoint.
+	// Track active SSE connection count per agent type for discovery endpoint.
 	b.mu.Lock()
-	b.sseConns[project]++
+	if b.sseConns[project] == nil {
+		b.sseConns[project] = make(map[string]int)
+	}
+	b.sseConns[project][agentType]++
 	b.mu.Unlock()
 	defer func() {
 		b.mu.Lock()
-		b.sseConns[project]--
-		if b.sseConns[project] == 0 {
+		b.sseConns[project][agentType]--
+		if b.sseConns[project][agentType] == 0 {
+			delete(b.sseConns[project], agentType)
+		}
+		if len(b.sseConns[project]) == 0 {
 			delete(b.sseConns, project)
 		}
 		b.mu.Unlock()
+		b.logger.Printf("broker: SSE disconnect project=%s agent_type=%s", project, agentType)
 	}()
 
 	// Subscribe to new events.
@@ -280,7 +291,6 @@ func (b *Broker) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
-			b.logger.Printf("broker: SSE disconnect project=%s", project)
 			return
 		case event, ok := <-ch:
 			if !ok {
@@ -297,9 +307,9 @@ func (b *Broker) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 // projectInfo describes an active project for the discovery endpoint.
 type projectInfo struct {
-	ID         string   `json:"id"`
-	IssueIDs   []string `json:"issue_ids"`
-	AgentCount int      `json:"agent_count"`
+	ID       string         `json:"id"`
+	IssueIDs []string       `json:"issue_ids"`
+	Agents   map[string]int `json:"agents"`
 }
 
 func (b *Broker) handleListProjects(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +320,7 @@ func (b *Broker) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	type projectSnapshot struct {
 		artifacts []Artifact
 		messages  []Message
-		sseCount  int
+		sseTypes  map[string]int
 	}
 	// Collect unique project keys.
 	projects := make(map[string]struct{})
@@ -328,7 +338,17 @@ func (b *Broker) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		snapshots[p] = projectSnapshot{
 			artifacts: b.artifacts[p],
 			messages:  b.messages[p],
-			sseCount:  b.sseConns[p],
+			sseTypes: func() map[string]int {
+				inner := b.sseConns[p]
+				if inner == nil {
+					return nil
+				}
+				cp := make(map[string]int, len(inner))
+				for k, v := range inner {
+					cp[k] = v
+				}
+				return cp
+			}(),
 		}
 	}
 	b.mu.RUnlock()
@@ -353,10 +373,14 @@ func (b *Broker) handleListProjects(w http.ResponseWriter, r *http.Request) {
 			issueIDs = append(issueIDs, id)
 		}
 		sort.Strings(issueIDs)
+		agents := snap.sseTypes
+		if agents == nil {
+			agents = map[string]int{}
+		}
 		result = append(result, projectInfo{
-			ID:         p,
-			IssueIDs:   issueIDs,
-			AgentCount: snap.sseCount,
+			ID:       p,
+			IssueIDs: issueIDs,
+			Agents:   agents,
 		})
 	}
 

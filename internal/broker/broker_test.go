@@ -556,12 +556,12 @@ func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
 	var projects []projectInfo
 	json.NewDecoder(resp2.Body).Decode(&projects)
 	resp2.Body.Close()
-	if len(projects) != 1 || projects[0].AgentCount != 0 {
+	if len(projects) != 1 || len(projects[0].Agents) != 0 {
 		t.Fatalf("before SSE: got %+v", projects)
 	}
 
-	// Connect SSE.
-	sseResp, err := http.Get(base + "/api/events/proj-x")
+	// Connect SSE with agent_type.
+	sseResp, err := http.Get(base + "/api/events/proj-x?agent_type=clarifier")
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
 	var projects2 []projectInfo
 	json.NewDecoder(resp3.Body).Decode(&projects2)
 	resp3.Body.Close()
-	if len(projects2) != 1 || projects2[0].AgentCount != 1 {
+	if len(projects2) != 1 || projects2[0].Agents["clarifier"] != 1 {
 		t.Fatalf("during SSE: got %+v", projects2)
 	}
 
@@ -585,7 +585,7 @@ func TestBroker_ListProjects_SSEAgentCount(t *testing.T) {
 	var projects3 []projectInfo
 	json.NewDecoder(resp4.Body).Decode(&projects3)
 	resp4.Body.Close()
-	if len(projects3) != 1 || projects3[0].AgentCount != 0 {
+	if len(projects3) != 1 || len(projects3[0].Agents) != 0 {
 		t.Fatalf("after SSE close: got %+v", projects3)
 	}
 }
