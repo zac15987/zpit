@@ -157,6 +157,15 @@ Project Y / Issue #7 的 agent 需要該 interface：
 - 跨專案事件標記 `[source]` tag
 - Viewport 支援滾動瀏覽
 
+**TUI 即時 Toggle（[e] 子選單）：**
+- `[1]` Toggle channel：切換 `channel_enabled` on/off，即時 subscribe/unsubscribe EventBus
+  - OFF → ON：若 broker 為 nil，自動 lazy start；然後訂閱 own project + `channel_listen` 項目
+  - ON → OFF：取消訂閱 own project 的 EventBus channel
+  - 結果同步寫回 config.toml（針對性 TOML 寫入，不影響其他內容）
+- `[2]` Edit channel_listen：多選清單顯示所有其他專案 + `_global`
+  - 確認後即時更新 in-memory config 並寫回 config.toml
+  - 新增的 listen 項目立即 subscribe，移除的不做 unsubscribe（下次重啟時清理）
+
 ---
 
 ## 12.7 設定
@@ -176,6 +185,8 @@ channel_listen = ["_global", "other-proj"]  # 額外訂閱的 project key
 - `channel_listen`：該 project 的 agent 除了自身 project 外，額外訂閱的 key
 - `broker_port`：全域設定，所有 project 共用同一個 broker
 - `zpit_bin`：用於生成 `.mcp.json` 中的 `command` 路徑
+
+`channel_enabled` 和 `channel_listen` 可在 TUI 中透過 `[e]` 子選單即時切換，無需重啟。其他 channel 相關設定（如 `broker_port`）需要重啟才能生效。
 
 ---
 
