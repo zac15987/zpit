@@ -98,7 +98,6 @@ func (m Model) renderEditConfigMenuContent() string {
 }
 
 // renderEditConfigListenContent renders the channel_listen multi-select list.
-// Stub for now — T6 will implement full multi-select rendering.
 func (m Model) renderEditConfigListenContent() string {
 	var b strings.Builder
 	b.WriteString("\n")

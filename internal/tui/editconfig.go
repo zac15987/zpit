@@ -81,7 +81,7 @@ func (m Model) handleEditConfigMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Insert _global at the beginning.
 		globalItem := editConfigListenItem{
 			Key:     "_global",
-			Name:    "Global",
+			Name:    locale.T(locale.KeyGlobal),
 			Checked: stringSliceContains(currentListen, "_global"),
 		}
 		items = append([]editConfigListenItem{globalItem}, items...)
@@ -105,7 +105,7 @@ func (m Model) handleEditConfigMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Local mode: launch $EDITOR.
 		cfgPath := configPath()
 		if cfgPath == "" {
-			m.setStatus("config path not found")
+			m.setStatus(locale.T(locale.KeyConfigPathNotFound))
 			return m, nil
 		}
 		editor := resolveEditor()
@@ -162,17 +162,9 @@ func (m Model) handleEditConfigListenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		projectID := m.editConfigProjectID
 		m.editConfigSub = EditConfigMenu
 
-		// Update in-memory config under write lock.
-		m.state.Lock()
-		for i := range m.state.projects {
-			if m.state.projects[i].ID == projectID {
-				m.state.projects[i].ChannelListen = newListen
-				m.state.cfg.Projects[i].ChannelListen = newListen
-				break
-			}
-		}
-		m.state.NotifyAll()
-		m.state.Unlock()
+		// Update in-memory config and manage EventBus subscriptions.
+		// UpdateChannelListen acquires its own lock — caller must not hold locks.
+		subCmds := m.state.UpdateChannelListen(projectID, newListen)
 
 		if len(newListen) > 0 {
 			m.setStatus(fmt.Sprintf(locale.T(locale.KeyChannelListenUpdated), strings.Join(newListen, ", ")))
@@ -180,8 +172,9 @@ func (m Model) handleEditConfigListenKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(locale.T(locale.KeyChannelListenNoChange))
 		}
 
-		// Persist to config.toml asynchronously.
-		return m, writeChannelListenCmd(m.state.logger, projectID, newListen)
+		// Persist to config.toml asynchronously, batched with any subscribe cmds.
+		cmds := append(subCmds, writeChannelListenCmd(m.state.logger, projectID, newListen))
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
 }
@@ -271,7 +264,7 @@ func (m Model) reloadConfigCmd() tea.Cmd {
 func (m Model) handleEditorFinished(msg EditorFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
 		m.state.logger.Printf("config: editor exited with error: %v", msg.Err)
-		m.setStatus(fmt.Sprintf("Editor error: %s", msg.Err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyEditorError), msg.Err))
 		return m, nil
 	}
 	// Editor closed successfully — reload config.

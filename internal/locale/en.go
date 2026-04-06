@@ -140,4 +140,9 @@ var en = map[Key]string{
 	// SSH remote mode
 	KeyConfigPathHint:         "Config path: %s — edit externally, press [r] to reload",
 	KeyConfigReloadManual:     "Press [r] to reload config",
+
+	// Additional edit config strings
+	KeyConfigPathNotFound:     "Config path not found",
+	KeyEditorError:            "Editor error: %s",
+	KeyGlobal:                 "Global",
 }

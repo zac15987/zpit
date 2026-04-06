@@ -140,4 +140,9 @@ var zhTW = map[Key]string{
 	// SSH remote mode
 	KeyConfigPathHint:         "設定檔路徑：%s — 請在外部編輯後按 [r] 重載",
 	KeyConfigReloadManual:     "按 [r] 重新載入設定",
+
+	// Additional edit config strings
+	KeyConfigPathNotFound:     "找不到設定檔路徑",
+	KeyEditorError:            "編輯器錯誤：%s",
+	KeyGlobal:                 "全域",
 }

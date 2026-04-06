@@ -212,6 +212,8 @@ func NewAppState(
 // Acquires write lock. Caller must NOT hold any locks.
 // Returns a list of tea.Cmd to execute after the call (channel subscribe/unsubscribe).
 func (s *AppState) ApplyConfig(newCfg *config.Config, diff config.ConfigDiff) []tea.Cmd {
+	s.logger.Printf("config: ApplyConfig entry hot=%v restart=%v", diff.HotReload, diff.RestartRequired)
+
 	// Apply locale change outside lock (locale has its own sync).
 	for _, field := range diff.HotReload {
 		if field == "language" {
@@ -374,6 +376,7 @@ func (s *AppState) ApplyConfig(newCfg *config.Config, diff config.ConfigDiff) []
 	s.NotifyAll()
 	s.mu.Unlock()
 
+	s.logger.Printf("config: ApplyConfig exit cmds=%d", len(cmds))
 	return cmds
 }
 
@@ -382,6 +385,7 @@ func (s *AppState) ApplyConfig(newCfg *config.Config, diff config.ConfigDiff) []
 // Returns (newEnabled bool, subscribeCmds []tea.Cmd, err error).
 // Acquires write lock. Caller must NOT hold any locks.
 func (s *AppState) ToggleChannel(projectID string) (bool, []tea.Cmd, error) {
+	s.logger.Printf("channel: ToggleChannel entry project=%s", projectID)
 	s.mu.Lock()
 
 	// Find project index.
@@ -461,5 +465,90 @@ func (s *AppState) ToggleChannel(projectID string) (bool, []tea.Cmd, error) {
 	s.NotifyAll()
 	s.mu.Unlock()
 
+	s.logger.Printf("channel: ToggleChannel exit project=%s enabled=%v cmds=%d", projectID, newEnabled, len(cmds))
 	return newEnabled, cmds, nil
+}
+
+// UpdateChannelListen updates channel_listen for a specific project.
+// Compares old vs new listen sets and manages EventBus subscriptions accordingly:
+// new items are subscribed, removed items are unsubscribed.
+// Returns tea.Cmds for newly subscribed channels.
+// Acquires write lock. Caller must NOT hold any locks.
+func (s *AppState) UpdateChannelListen(projectID string, newListen []string) []tea.Cmd {
+	s.logger.Printf("channel: UpdateChannelListen entry project=%s newListen=%v", projectID, newListen)
+
+	s.mu.Lock()
+
+	// Find project and get old listen list.
+	projIdx := -1
+	var oldListen []string
+	var channelEnabled bool
+	for i, p := range s.projects {
+		if p.ID == projectID {
+			projIdx = i
+			oldListen = p.ChannelListen
+			channelEnabled = p.ChannelEnabled
+			break
+		}
+	}
+	if projIdx == -1 {
+		s.mu.Unlock()
+		s.logger.Printf("channel: UpdateChannelListen project not found: %s", projectID)
+		return nil
+	}
+
+	// Update in-memory config.
+	s.projects[projIdx].ChannelListen = newListen
+	s.cfg.Projects[projIdx].ChannelListen = newListen
+
+	var cmds []tea.Cmd
+
+	// Only manage subscriptions if channel is enabled and broker is available.
+	if channelEnabled && s.broker != nil {
+		oldSet := make(map[string]bool, len(oldListen))
+		for _, lp := range oldListen {
+			oldSet[lp] = true
+		}
+		newSet := make(map[string]bool, len(newListen))
+		for _, lp := range newListen {
+			newSet[lp] = true
+		}
+
+		// Subscribe new listen items.
+		for _, lp := range newListen {
+			if !oldSet[lp] {
+				if _, subscribed := s.channelSubs[lp]; !subscribed {
+					listenProject := lp
+					bus := s.broker.Events()
+					ch := bus.Subscribe(listenProject)
+					s.channelSubs[listenProject] = ch
+					s.logger.Printf("channel: subscribed project=%s (listen added)", listenProject)
+					cmds = append(cmds, func() tea.Msg {
+						event, ok := <-ch
+						if !ok {
+							return ChannelSubscribedMsg{ProjectID: listenProject, Err: errChannelClosed}
+						}
+						return ChannelEventMsg{ProjectID: listenProject, Event: event}
+					})
+				}
+			}
+		}
+
+		// Unsubscribe removed listen items.
+		for _, lp := range oldListen {
+			if !newSet[lp] {
+				if ch, subscribed := s.channelSubs[lp]; subscribed {
+					delete(s.channelSubs, lp)
+					s.broker.Events().Unsubscribe(lp, ch)
+					s.logger.Printf("channel: unsubscribed project=%s (listen removed)", lp)
+				}
+			}
+		}
+	}
+
+	s.NotifyAll()
+	s.mu.Unlock()
+
+	s.logger.Printf("channel: UpdateChannelListen exit project=%s cmds=%d", projectID, len(cmds))
+	return cmds
 }

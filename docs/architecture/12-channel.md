@@ -164,7 +164,7 @@ Project Y / Issue #7 的 agent 需要該 interface：
   - 結果同步寫回 config.toml（針對性 TOML 寫入，不影響其他內容）
 - `[2]` Edit channel_listen：多選清單顯示所有其他專案 + `_global`
   - 確認後即時更新 in-memory config 並寫回 config.toml
-  - 新增的 listen 項目立即 subscribe，移除的不做 unsubscribe（下次重啟時清理）
+  - 新增的 listen 項目立即 subscribe EventBus，移除的立即 unsubscribe
 
 ---
 

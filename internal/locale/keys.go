@@ -141,4 +141,9 @@ const (
 	// SSH remote mode
 	KeyConfigPathHint         Key = "config_path_hint"
 	KeyConfigReloadManual     Key = "config_reload_manual"
+
+	// Additional edit config strings
+	KeyConfigPathNotFound     Key = "config_path_not_found"
+	KeyEditorError            Key = "editor_error"
+	KeyGlobal                 Key = "global"
 )
