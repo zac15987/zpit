@@ -89,7 +89,9 @@ func (m Model) renderEditConfigMenuContent() string {
 				b.WriteString("\n  channel_enabled = false")
 			}
 			if len(p.ChannelListen) > 0 {
-				b.WriteString(fmt.Sprintf("\n  channel_listen = %v", p.ChannelListen))
+				line := fmt.Sprintf("  channel_listen = [%s]", strings.Join(p.ChannelListen, " "))
+				wrapped := lipgloss.NewStyle().Width(m.width - 2).Render(line)
+				b.WriteString("\n" + wrapped)
 			}
 			break
 		}
