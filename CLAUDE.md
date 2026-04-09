@@ -208,7 +208,7 @@ State transitions are **label-driven** (poll issue labels, not PID monitoring). 
 - Coding agent sets `review` → reviewer starts
 - Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
 
-States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotCoding` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
 
 ### Task Execution Model (Subagent + Agent Teams)
 
@@ -233,7 +233,7 @@ When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrat
 1. **agent-guidelines.md** (soft — deployed to `.claude/docs/`, agents read on startup)
 2. **--allowedTools per agent role** (medium — Claude Code enforced)
 3. **PreToolUse hooks** (hard — enforced even with `--bypass-all-permissions`):
-   - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
+   - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/agents/`, `.claude/settings`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
    - `git-guard.sh` — push whitelist (only `feat/*`), blocks merge/rebase/branch-delete
    - `notify-permission.sh` — not safety; writes signal file for TUI permission detection
