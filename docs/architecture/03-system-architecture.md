@@ -57,6 +57,7 @@
 │  ├── .claude/agents/clarifier.md                                    │
 │  ├── .claude/agents/reviewer.md                                     │
 │  ├── .claude/agents/task-runner.md  (deployed when TASKS exist)     │
+│  ├── .claude/agents/efficiency.md   (deployed by [f] key)           │
 │  ├── .claude/docs/agent-guidelines.md                               │
 │  ├── .claude/docs/code-construction-principles.md                   │
 │  ├── .claude/docs/tracker.md                                        │

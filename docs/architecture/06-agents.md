@@ -95,15 +95,46 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 
 ---
 
-## 6.4 go:embed 部署流程
+## 6.4 Efficiency Agent (.claude/agents/efficiency.md)
+
+**Deployment:** go:embed 嵌入 Zpit binary，透過 `[f]` 快捷鍵部署。使用 `deployAndLaunchAgentLite`（不部署 hooks、不設定 ZPIT_AGENT=1）。
+
+```yaml
+name: efficiency
+description: Lightweight fast-track agent for rapid iteration
+```
+
+**核心行為：**
+- 輕量快速迭代 agent — 無 Issue Spec、無 tracker 整合、無 worktree、無 hooks
+- 啟動時讀取 CLAUDE.md + agent-guidelines.md + code-construction-principles.md
+- Plan-before-act 工作流：呈現修改計畫（檔案 + 變更 + 預期行為），等使用者確認才編輯
+- 實作後 self-review：重讀修改檔案、比對計畫、依 code-construction-principles 評估品質
+- Conventional commit 格式（feat:/fix:/refactor:/chore:/docs:/test:/style:/perf:）
+- Plan mode 紀律：plan mode 禁止編輯檔案
+
+**部署語義差異（vs. clarifier/reviewer）：**
+
+| 項目 | clarifier/reviewer | efficiency |
+|------|-------------------|------------|
+| 部署函式 | `deployAndLaunchAgent` | `deployAndLaunchAgentLite` |
+| Hooks | ✅ DeployHooksToProject | ❌ 不部署 |
+| ZPIT_AGENT=1 | ✅ 設定 | ❌ 不設定 |
+| Tracker 整合 | ✅ label check | ❌ 無 |
+| Worktree | ✅ (Loop 模式) | ❌ 直接在專案目錄 |
+
+完整模板見 `agents/efficiency.md`。
+
+---
+
+## 6.5 go:embed 部署流程
 
 Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts)
     → stored in AppState fields
-      → DeployHooks() on every agent launch ([c]/[r]/[l])
+      → DeployHooks() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
@@ -113,7 +144,7 @@ main.go (go:embed vars)
 
 ---
 
-## 6.5 Internationalization (i18n)
+## 6.6 Internationalization (i18n)
 
 所有 agent template (.md) 和 prompt builder (.go) 以**英文**撰寫。回應語言由 config 控制：
 
@@ -129,7 +160,7 @@ language = "zh-TW"  # or "en" (default)
 
 ---
 
-## 6.6 CLAUDE.md 模板
+## 6.7 CLAUDE.md 模板
 
 每個目標專案根目錄放一份，agent 實作時會自動讀取。
 以下為建議模板結構（Zpit 不自動產生，由使用者維護）：

@@ -88,6 +88,7 @@ You (TUI)                    Claude Code Agents
     │
     ├─ [s] Status ────────────► shows issue list from tracker
     ├─ [r] Review ────────────► launches reviewer on demand
+    ├─ [f] Efficiency ────────► lightweight agent (no hooks, no tracker, self-review)
     └─ [Enter] ───────────────► launches Claude Code directly
 ```
 
@@ -195,6 +196,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `c` | Clarify — open clarifier agent to create structured issue |
 | `l` | Loop — toggle automated coding + review cycle |
 | `r` | Review — launch reviewer agent |
+| `f` | Efficiency — lightweight agent (no hooks, no tracker, self-review) |
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
