@@ -33,7 +33,6 @@ FILE_PATH=$(realpath -m "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
 DENY_PATTERNS=(
   '\.claude/agents/'
   '\.claude/settings'
-  'CLAUDE\.md$'
   '\.git/'
   '\.env'
 )
