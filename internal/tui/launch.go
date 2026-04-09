@@ -332,7 +332,8 @@ func (m Model) deployAndLaunchAgentLite() tea.Cmd {
 		}
 
 		// (e) NO DeployHooksToProject call
-		// (f) NO ZPIT_AGENT=1 environment variable
+		// (f) NO ZPIT_AGENT=1 — launcher skips env injection for "efficiency" agent
+		//     (see needsAgentEnv in terminal/launcher.go)
 
 		// (g) Launch with --agent efficiency
 		args := []string{"--agent", "efficiency"}
