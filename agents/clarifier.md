@@ -46,7 +46,7 @@ After completing workflow step 4 (reading relevant codebase files), execute the 
 2. Parse the response to check `agents.clarifier` count:
    - For your **own project ID**: if `agents.clarifier >= 2`, enter meeting mode.
    - For each project in your **`channel_listen`** list (skip `_global`): if `agents.clarifier >= 1`, enter meeting mode (cross-project meeting).
-   - Ignore non-clarifier agent types (`coding`, `reviewer`, `claude`, `unknown`).
+   - Ignore non-clarifier agent types (`coding`, `reviewer`, `efficiency`, `claude`, `unknown`).
 3. If meeting mode is triggered, proceed to Role Assignment below.
 4. If no meeting condition is met, skip the rest of Meeting Protocol and operate in single-agent mode.
 

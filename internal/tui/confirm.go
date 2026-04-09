@@ -60,6 +60,24 @@ func (m *Model) showReviewerDeployConfirm() {
 	}
 }
 
+// showEfficiencyDeployConfirm displays a huh confirm dialog for deploying the efficiency agent.
+func (m *Model) showEfficiencyDeployConfirm() {
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(locale.T(locale.KeyEfficiencyNotDeployed)).
+				Affirmative(locale.T(locale.KeyDeployAndLaunch)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(50)
+	m.confirmAction = func() tea.Cmd {
+		return m.deployAndLaunchAgentLite()
+	}
+}
+
 // showUndeployConfirm displays a huh confirm dialog for removing deployed files.
 func (m *Model) showUndeployConfirm(project config.ProjectConfig) {
 	confirmed := new(bool)

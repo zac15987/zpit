@@ -12,7 +12,8 @@ var en = map[Key]string{
 	KeyLaunchClaude:   "Launch Claude Code",
 	KeyClarifyReq:     "Clarify requirement",
 	KeyLoopAutoImpl:   "Loop auto-implement",
-	KeyReviewChanges:  "Review changes",
+	KeyReviewChanges:   "Review changes",
+	KeyEfficiencyAgent: "Efficiency agent",
 	KeyStatusOverview: "Status overview",
 	KeyOpenFolder:     "Open project folder",
 	KeyOpenTracker:    "Open Issue Tracker",
@@ -58,7 +59,8 @@ var en = map[Key]string{
 	KeyClarifierNotDeployed: "Clarifier agent not deployed to this project. Deploy?",
 	KeyDeployAndLaunch:      "Deploy & Launch",
 	KeyCancel:               "Cancel",
-	KeyReviewerNotDeployed:  "Reviewer agent not deployed to this project. Deploy?",
+	KeyReviewerNotDeployed:   "Reviewer agent not deployed to this project. Deploy?",
+	KeyEfficiencyNotDeployed: "Efficiency agent not deployed to this project. Deploy?",
 
 	// Undeploy confirm dialogs
 	KeyUndeployConfirm: "Remove all Zpit-deployed files from this project?\n\n.claude/agents/  .claude/docs/  .claude/hooks/\n.mcp.json  settings.json (hooks)  settings.local.json",
