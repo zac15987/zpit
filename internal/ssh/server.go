@@ -25,19 +25,54 @@ import (
 
 const shutdownTimeout = 30 * time.Second
 
-// StartServer creates and runs a Wish SSH server with the given AppState.
-// It blocks until SIGINT/SIGTERM is received, then shuts down gracefully.
-func StartServer(appState *tui.AppState, sshCfg config.SSHConfig, logger *log.Logger) error {
+// ServerHandle provides a handle to a running SSH server for lifecycle management.
+type ServerHandle struct {
+	srv         *ssh.Server
+	errCh       chan error
+	logger      *log.Logger
+	listenAddr  string   // actual listen address for banner printing
+	hostKeyPath string   // host key path for banner printing
+	authMethods []string // enabled auth method names for banner printing
+}
+
+// Wait blocks until the server encounters a fatal error or shuts down cleanly.
+// Returns nil on clean shutdown.
+func (h *ServerHandle) Wait() error {
+	return <-h.errCh
+}
+
+// ErrCh returns the error channel for non-blocking reads.
+// The channel receives at most one error, then closes.
+func (h *ServerHandle) ErrCh() <-chan error {
+	return h.errCh
+}
+
+// Shutdown gracefully shuts down the SSH server with the standard 30s timeout.
+func (h *ServerHandle) Shutdown() error {
+	h.logger.Println("ssh server: shutting down (30s timeout)")
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := h.srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("SSH server shutdown: %w", err)
+	}
+	h.logger.Println("ssh server: stopped")
+	return nil
+}
+
+// StartServerAsync creates and starts the SSH server without blocking.
+// It returns a ServerHandle once the server is actively listening,
+// or an error if setup fails. The caller manages lifecycle via the handle.
+func StartServerAsync(appState *tui.AppState, sshCfg config.SSHConfig, logger *log.Logger) (*ServerHandle, error) {
 	logger.Println("ssh server: starting")
 
 	if err := sshCfg.ResolveSSHPaths(); err != nil {
-		return fmt.Errorf("resolving SSH paths: %w", err)
+		return nil, fmt.Errorf("resolving SSH paths: %w", err)
 	}
 
 	// Ensure host key directory exists.
 	if dir := hostKeyDir(sshCfg.HostKeyPath); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("creating host key directory: %w", err)
+			return nil, fmt.Errorf("creating host key directory: %w", err)
 		}
 	}
 
@@ -56,37 +91,66 @@ func StartServer(appState *tui.AppState, sshCfg config.SSHConfig, logger *log.Lo
 	// Configure authentication methods.
 	ac := configureAuth(sshCfg, logger)
 	if !ac.pubKey && !ac.password {
-		return errors.New("no SSH auth methods available: configure authorized_keys or password_env")
+		return nil, errors.New("no SSH auth methods available: configure authorized_keys or password_env")
 	}
 	opts = ac.applyTo(opts)
 
 	srv, err := wish.NewServer(opts...)
 	if err != nil {
-		return fmt.Errorf("creating SSH server: %w", err)
+		return nil, fmt.Errorf("creating SSH server: %w", err)
 	}
 
-	// Print startup info.
-	printStartupInfo(addr, sshCfg, ac, logger)
+	// Log startup info (logger only — no stdout).
+	logStartupInfo(addr, sshCfg, ac, logger)
 
 	// Run server-init (session scan, .gitignore, provider check).
 	tui.RunServerInit(appState)
 	logger.Println("ssh server: server-init complete")
 
-	// Start server in a goroutine.
+	// Bind listener explicitly so the port is ready before we return.
+	// Same pattern as broker.go:41-67.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("ssh server: listen on %s: %w", addr, err)
+	}
+	logger.Printf("ssh server: listening on %s", ln.Addr().String())
+
+	// Start serving in background.
 	errCh := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)
 	}()
+
+	return &ServerHandle{
+		srv:         srv,
+		errCh:       errCh,
+		logger:      logger,
+		listenAddr:  ln.Addr().String(),
+		hostKeyPath: sshCfg.HostKeyPath,
+		authMethods: authMethodNames(ac),
+	}, nil
+}
+
+// StartServer creates and runs a Wish SSH server with the given AppState.
+// It blocks until SIGINT/SIGTERM is received, then shuts down gracefully.
+func StartServer(appState *tui.AppState, sshCfg config.SSHConfig, logger *log.Logger) error {
+	handle, err := StartServerAsync(appState, sshCfg, logger)
+	if err != nil {
+		return err
+	}
+
+	// Print user-facing banner to stdout (only for headless "zpit serve" mode).
+	printBanner(handle.listenAddr, handle.hostKeyPath, handle.authMethods)
 
 	// Wait for shutdown signal.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
-	case err := <-errCh:
+	case err := <-handle.errCh:
 		if err != nil {
 			return fmt.Errorf("SSH server error: %w", err)
 		}
@@ -94,16 +158,7 @@ func StartServer(appState *tui.AppState, sshCfg config.SSHConfig, logger *log.Lo
 		logger.Printf("ssh server: received %s, shutting down", sig)
 	}
 
-	// Graceful shutdown.
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-
-	logger.Println("ssh server: shutting down (30s timeout)")
-	if err := srv.Shutdown(ctx); err != nil {
-		return fmt.Errorf("SSH server shutdown: %w", err)
-	}
-	logger.Println("ssh server: stopped")
-	return nil
+	return handle.Shutdown()
 }
 
 // teaHandler returns a wish bubbletea.Handler that creates a new Model per SSH session.
@@ -164,10 +219,15 @@ func configureAuth(sshCfg config.SSHConfig, logger *log.Logger) authConfig {
 	return ac
 }
 
-func printStartupInfo(addr string, sshCfg config.SSHConfig, ac authConfig, logger *log.Logger) {
+// logStartupInfo logs server configuration to the logger (no stdout).
+func logStartupInfo(addr string, sshCfg config.SSHConfig, ac authConfig, logger *log.Logger) {
 	logger.Printf("ssh server: listening on %s", addr)
 	logger.Printf("ssh server: host key path: %s", sshCfg.HostKeyPath)
+	logger.Printf("ssh server: auth methods: %v", authMethodNames(ac))
+}
 
+// authMethodNames returns the enabled auth method names from an authConfig.
+func authMethodNames(ac authConfig) []string {
 	var methods []string
 	if ac.pubKey {
 		methods = append(methods, "public_key")
@@ -175,11 +235,14 @@ func printStartupInfo(addr string, sshCfg config.SSHConfig, ac authConfig, logge
 	if ac.password {
 		methods = append(methods, "password")
 	}
-	logger.Printf("ssh server: auth methods: %v", methods)
+	return methods
+}
 
-	// Also print to stdout for the user.
+// printBanner prints the user-facing startup banner to stdout.
+// Called only by StartServer (headless "zpit serve" mode).
+func printBanner(addr, hostKeyPath string, methods []string) {
 	fmt.Printf("Zpit SSH server listening on %s\n", addr)
-	fmt.Printf("  Host key: %s\n", sshCfg.HostKeyPath)
+	fmt.Printf("  Host key: %s\n", hostKeyPath)
 	fmt.Printf("  Auth: %v\n", methods)
 	fmt.Println("  Press Ctrl+C to stop.")
 }

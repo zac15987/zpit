@@ -88,6 +88,11 @@ func TestLoad(t *testing.T) {
 		t.Errorf("Projects[0].BaseBranch = %q, want %q", first.BaseBranch, "dev")
 	}
 
+	// SSH
+	if !cfg.SSH.AutoServe {
+		t.Error("SSH.AutoServe should be true")
+	}
+
 	// Profiles
 	if len(cfg.Profiles) != 4 {
 		t.Fatalf("Profiles = %d, want 4", len(cfg.Profiles))

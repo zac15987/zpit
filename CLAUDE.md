@@ -17,7 +17,7 @@ go test ./internal/...   # Run a specific package's tests
 go test -run TestName    # Run a single test
 make test-hooks          # Run hook tests (requires bash)
 make test-all            # Run all tests including hooks
-go run .                 # Run local TUI (reads ~/.zpit/config.toml)
+go run .                 # Run local TUI (or auto-serve if ssh.auto_serve=true)
 go run . serve           # Start headless SSH server (Wish)
 go run . connect         # SSH connect to local server (convenience wrapper)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
@@ -42,7 +42,7 @@ internal/
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
 ├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
 ├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
-├── ssh/                 # Wish SSH server: StartServer(), auth config (pub-key + password)
+├── ssh/                 # Wish SSH server: StartServerAsync(), ServerHandle, StartServer(), auth config
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
 ├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
@@ -112,7 +112,7 @@ The TUI monitors Claude Code sessions via JSONL log files:
 `AppState` (`internal/tui/appstate.go`) holds all shared mutable state. Multiple `tea.Program` instances share one `*AppState`:
 
 ```
-zpit serve
+zpit serve  (or zpit with auto_serve=true)
   └─ AppState (one instance)
        ├─ cfg, env, clients, broker   (read-only after init — no locks needed)
        ├─ activeTerminals, loops,    (mutable — protected by sync.RWMutex)
@@ -122,6 +122,8 @@ zpit serve
             ├─ SSH Client B → Model { state: *AppState, isRemote: true }
             └─ Local TUI    → Model { state: *AppState, isRemote: false }
 ```
+
+**Auto-serve mode** (`ssh.auto_serve = true`): When `zpit` is run without subcommand and `auto_serve` is enabled, it automatically starts the SSH server in-process via `StartServerAsync()`, then connects to itself via `ssh localhost -p <port>`. The user sees the same TUI but over SSH — allowing seamless mobile access. When the local SSH session ends, the server shuts down automatically. Implementation: `runAutoServe()` in `main.go`, which uses `ServerHandle` from `internal/ssh/server.go` for lifecycle management.
 
 **Concurrency model:**
 - Two independent mutexes: `mu` (RWMutex) for state, `subMu` (Mutex) for subscribers — avoids deadlock when `NotifyAll` is called while `mu` is held
@@ -138,7 +140,7 @@ The `[e]` key opens a sub-menu for config editing:
 
 **Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_level`.
 
-**Restart-required fields** (status bar warning): `broker_port`, `ssh.*`, `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
+**Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
 
 Channel quick-toggle uses targeted TOML writing (`internal/config/toml_writer.go`) — locates the matching `[[projects]]` block by `id` and updates only the `channel_enabled` or `channel_listen` line, preserving all other content including comments.
 

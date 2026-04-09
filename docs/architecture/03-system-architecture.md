@@ -1,7 +1,7 @@
 # 3. 系統架構（調度模式）
 
 > **運行模式：**
-> - `zpit` — 本機 TUI（直接操作）
+> - `zpit` — 本機 TUI（直接操作）；若 `ssh.auto_serve = true` 則自動啟動 SSH server 並透過 SSH 連入
 > - `zpit serve` — 無頭 SSH daemon（Wish），多個 SSH 客戶端共享同一 AppState
 > - `zpit connect` — SSH 連線便利包裝
 
