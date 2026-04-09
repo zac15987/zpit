@@ -11,8 +11,9 @@ type KeyMap struct {
 	Enter   key.Binding
 	Clarify key.Binding
 	Loop    key.Binding
-	Review  key.Binding
-	Status  key.Binding
+	Review     key.Binding
+	Efficiency key.Binding
+	Status     key.Binding
 	Open    key.Binding
 	Tracker    key.Binding
 	Add        key.Binding
@@ -43,8 +44,9 @@ func DefaultKeyMap() KeyMap {
 		Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "launch Claude Code")),
 		Clarify: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "clarify")),
 		Loop:    key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "loop")),
-		Review:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review")),
-		Status:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "status")),
+		Review:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review")),
+		Efficiency: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "efficiency")),
+		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "status")),
 		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open folder")),
 		Tracker:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "tracker")),
 		Add:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add project")),

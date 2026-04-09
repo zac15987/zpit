@@ -3,6 +3,8 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -625,6 +627,24 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.startWithLabelCheck(PendingReview, *p, tracker.RequiredLabels)
+
+	case key.Matches(msg, m.keys.Efficiency):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[f]", *p, valPath) {
+			return m, nil
+		}
+		agentPath := filepath.Join(
+			platform.ResolvePath(p.Path.Windows, p.Path.WSL),
+			".claude", "agents", "efficiency.md",
+		)
+		if _, err := os.Stat(agentPath); err != nil {
+			m.showEfficiencyDeployConfirm()
+			return m, m.confirmForm.Init()
+		}
+		return m, m.launchEfficiencyCmd()
 
 	case key.Matches(msg, m.keys.Undeploy):
 		p := m.selectedProject()
