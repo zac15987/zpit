@@ -14,6 +14,7 @@ AppState (shared, one instance)
   ├── hookScripts                             (read-only)
   ├── activeTerminals                         (mutable)
   ├── loops, wtManager                        (mutable)
+  ├── channelEvents, channelSubs              (mutable)
   ├── lastLivenessCheck                       (mutable)
   ├── lastPermissionCheck                     (mutable)
   └── lastSessionScan                         (mutable)
@@ -127,6 +128,8 @@ AppState
   ├── mu (sync.RWMutex)     ← 保護 mutable fields
   │     ├── activeTerminals
   │     ├── loops
+  │     ├── channelEvents
+  │     ├── channelSubs
   │     ├── lastLivenessCheck
   │     ├── lastPermissionCheck
   │     └── lastSessionScan

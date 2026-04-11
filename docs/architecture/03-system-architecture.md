@@ -61,6 +61,7 @@
 │  ├── .claude/docs/agent-guidelines.md                               │
 │  ├── .claude/docs/code-construction-principles.md                   │
 │  ├── .claude/docs/tracker.md                                        │
+│  ├── .mcp.json                              (channel MCP config)    │
 │  └── CLAUDE.md                                                      │
 │                                                                     │
 └────────────────────────────────┬────────────────────────────────────┘

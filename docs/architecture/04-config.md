@@ -19,6 +19,7 @@ Zpit 的所有資料統一在 `~/.zpit/` 下：
 [terminal]
 windows_mode = "new_tab"    # "new_tab" | "new_window"
 tmux_mode = "new_window"    # "new_window" | "new_pane"
+# windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag
 
 # ──────────────────────────────────────────────
 # 通知設定
@@ -40,8 +41,8 @@ dir_format = "{project_id}/{issue_id}--{slug}"   # 預設
 auto_cleanup = true           # PR merge 後自動清理
 max_per_project = 5           # 每個專案最大同時 worktree 數量
 max_review_rounds = 3         # coding↔review 最大循環次數
-poll_seconds = 15             # todo issue polling 間隔（秒）
-pr_poll_seconds = 30          # PR/label 狀態 polling 間隔（秒）
+poll_seconds = 10             # todo issue polling 間隔（秒）
+pr_poll_seconds = 10          # PR/label 狀態 polling 間隔（秒）
 
 # ──────────────────────────────────────────────
 # SSH Server（zpit serve）
@@ -156,6 +157,7 @@ type TrackerClient interface {
     ListIssues(ctx context.Context, repo string) ([]Issue, error)
     GetIssue(ctx context.Context, repo string, id string) (*Issue, error)
     UpdateLabels(ctx context.Context, repo string, id string, add, remove []string) error
+    CloseIssue(ctx context.Context, repo string, id string) error
     GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error)
     FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error)
     ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error)

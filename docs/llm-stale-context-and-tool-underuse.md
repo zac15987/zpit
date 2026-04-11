@@ -105,7 +105,7 @@ The LLM generates answers from parametric knowledge (training data) or conversat
 
 ### Gaps to Address
 
-1. **No re-verification mandate**: Agents are not instructed to re-read files before editing or re-check git state before git operations. They rely on conversation memory.
+1. ~~**No re-verification mandate**~~: **Resolved.** `docs/agent-guidelines.md` now includes a Re-verification Protocol (run `git status` before git ops, re-read files after 5+ tool calls, re-read modified files after changes). Also reflected in `task-runner.md` and `efficiency.md`.
 
 2. **No web search mandate for coding/revision agents**: Only the clarifier has a mandatory WebSearch rule. Coding and revision agents may implement against outdated API knowledge without checking.
 

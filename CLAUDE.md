@@ -28,14 +28,15 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 ```
 main.go                  # Entry point: subcommand routing, go:embed declarations, config/log init
 agents/                  # Agent templates (clarifier.md, reviewer.md, task-runner.md, efficiency.md) — embedded via go:embed
-hooks/                   # PreToolUse hook scripts — embedded via go:embed, + hook_test.go
-docs/                    # Agent behavioral rules, code quality baseline, LLM failure mode research
+build.cmd, build.sh      # Fetch-pull-build-install convenience scripts
+hooks/                   # PreToolUse hook scripts + env/exit wrappers — embedded via go:embed, + hooks_test.go
+docs/                    # Agent behavioral rules, code quality baseline, known issues, release planning, research notes
 docs/architecture/       # Architecture docs (split by topic) — see docs/architecture/README.md for index
 scripts/                 # Manual hook deployment fallback (setup-hooks.sh)
 testdata/                # Config fixtures + JSONL session fixtures
 internal/
 ├── broker/              # HTTP event broker for cross-agent channel communication
-├── config/              # Config structs, Load(), Reload(), Diff(), defaults, BaseDir(), WriteTemplate()
+├── config/              # Config structs, Load(), Reload(), Diff(), defaults, BaseDir(), WriteTemplate(), DefaultConfigPath()
 ├── locale/              # i18n: SetLanguage(), T(), ResponseInstruction() — en + zh-TW
 ├── loop/                # Loop state machine types: SlotState enum, Slot, LoopState
 ├── mcp/                 # MCP stdio server for agent↔broker communication (zpit serve-channel)
@@ -46,7 +47,7 @@ internal/
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
 ├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
-├── worktree/            # Worktree Manager, Slugify(), DeployHooks(), settings.json merge
+├── worktree/            # Worktree Manager, Slugify(), DeployHooksToProject(), DeployHooksToWorktree(), settings.json merge
 └── tui/                 # Bubble Tea TUI — see "TUI Message Flow" below
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
     ├── channel.go       # Channel EventBus subscription and event reading
@@ -58,6 +59,7 @@ internal/
     ├── loop_handler.go  # Loop message handlers (state machine transitions)
     ├── model.go         # Root Model, Init, Update (one-line dispatch), View routing, key handlers
     ├── msg.go           # All custom tea.Msg types
+    ├── styles.go        # Color palette and lipgloss style definitions used across all views
     ├── session.go       # Session lifecycle, discovery, monitoring, liveness, permission detection
     ├── tracker_ops.go   # Label check/ensure, issue load/confirm, label check flow
     ├── validate.go      # Input validation helpers with RLock
@@ -75,9 +77,9 @@ Agents, hooks, and docs are embedded in the binary and deployed at runtime to ta
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts, logWriter)
     → stored in AppState fields
-      → DeployHooks() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
+      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
@@ -94,9 +96,9 @@ The TUI follows Bubble Tea's Elm architecture with a consistent pattern across a
 3. **loop_handler.go** / session.go / launch.go / tracker_ops.go / confirm.go / channel.go — message handlers dispatched from model.go `Update()` (one-line dispatch). These acquire `Lock` for writes + call `NotifyAll`.
 4. **view_projects.go** / view_status.go / view_channel.go — pure rendering functions, acquire `RLock` for reads.
 
-Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
+Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler writes agent file → `LoopAgentWrittenMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
 
-**Focus panel system**: The main view (`ViewProjects`) has three focusable panels controlled by `FocusedPanel` enum (`FocusProjects` → `FocusTerminals` → `FocusLoopSlots`). Tab cycles through panels that have content (terminals panel skipped if no active terminals, loop panel skipped if no loop slots). Each panel has its own cursor (`cursor` for projects, `termCursor` for terminals, `loopSlotCursor` for loop slots). The `x` key kills the selected terminal when `FocusTerminals` is active (with confirm dialog, force-kills the process). `FocusedPanel` is per-Model (per-connection UI state), not shared in AppState.
+**Focus panel system**: The main view (`ViewProjects`) has three focusable panels controlled by `FocusedPanel` enum (`FocusProjects` → `FocusTerminals` → `FocusLoopSlots`). Tab cycles through panels that have content (terminals panel skipped if no active terminals, loop panel skipped if no loop slots). Each panel has its own cursor (`cursor` for projects, `termCursor` for terminals, `loopCursor` for loop slots). The `x` key kills the selected terminal when `FocusTerminals` is active (with confirm dialog, force-kills the process). `FocusedPanel` is per-Model (per-connection UI state), not shared in AppState.
 
 ### Session Log Monitoring
 
@@ -158,10 +160,12 @@ Agent A (Project X)            Agent B (Project Y)
        ↓ HTTP POST                     ↓ HTTP POST
      ┌──────────────────────────────────────────┐
      │ Broker (HTTP on 127.0.0.1:broker_port)   │
-     │ ├─ /api/artifacts/{project}/{issue}      │
-     │ ├─ /api/messages/{project}/{to}          │
-     │ ├─ /api/events/{project} (SSE)           │
-     │ └─ /api/projects (discovery)             │
+     │ ├─ POST /api/artifacts/{project}/{issue_id} │
+     │ ├─ GET  /api/artifacts/{project}           │
+     │ ├─ POST /api/messages/{project}/{to}       │
+     │ ├─ GET  /api/messages/{project}/{issue_id} │
+     │ ├─ GET  /api/events/{project} (SSE)        │
+     │ └─ GET  /api/projects (discovery)          │
      └──────────────────────────────────────────┘
        ↓ EventBus (in-memory pub/sub, keyed by project)
      TUI: AppState.channelEvents → ViewChannel ([m] key)
@@ -262,10 +266,10 @@ See `testdata/config.toml` for a working example and `README.md` for full config
 - **Per-issue branch control**: Issue Spec `## BRANCH` specifies PR target branch (optional, falls back to project `base_branch`)
 - **Git model**: `main` ← `dev` ← feature branches
 - **Commit messages**: `[ISSUE-ID] short description`
-- **Issue status flow**: pending_confirm → todo → in_progress → ai_review → waiting_review → done
+- **Issue status flow**: pending_confirm → todo → in_progress → ai_review → waiting_review → needs_verify → done
 - **Loop label flow**: todo → wip → review → ai-review (PASS) / needs-changes (auto-retry)
 - **Hook exit codes**: 0 = allow, 2 = block (stderr fed back to Claude), never use exit 1
 - **Agent docs**: `docs/agent-guidelines.md` (behavioral rules), `docs/code-construction-principles.md` (quality baseline)
 - **Logging**: Use `m.state.logger` for all state transitions and lifecycle events (not `setStatus`, which is TUI-only). Include identifiers (key, PID, state, issue ID, role, round). In goroutine closures, capture `logger := m.state.logger` before use. Do not log ticks or renders.
 - **i18n**: All user-facing strings in TUI views must go through `locale.T()`. Never hardcode display text — define a key in `internal/locale/keys.go`, add translations in `en.go` and `zh_tw.go`.
-- **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `channelEvents`, `channelSubs`, `lastLivenessCheck`, `lastPermissionCheck`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.
+- **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `channelEvents`, `channelSubs`, `lastLivenessCheck`, `lastPermissionCheck`, `lastSessionScan`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.

@@ -15,7 +15,9 @@ cleanup error: removing worktree: git worktree remove --force <path>:
 error: failed to delete '<path>': Permission denied: exit status 255
 ```
 
-Cleanup 失敗後 `CloseIssue` 被跳過，issue 未被 Zpit 關閉（但若 PR body 含 `Closes #N` 則 GitHub auto-close 仍會生效）。
+Worktree 目錄因 Windows file lock 無法刪除，殘留在磁碟上。
+
+> **已修正（部分）：** `CloseIssue` 不再因 cleanup 失敗而被跳過。`loopCleanupCmd` 現在無論 `Remove()` 結果如何都會執行 `CloseIssue`（Fix Direction #3 已實作）。但 worktree 目錄的 Permission denied 問題在 Windows 上仍存在。
 
 ### Root Cause
 
@@ -45,11 +47,11 @@ git -C <repo-path> worktree remove --force <worktree-path>
 ### Potential Fix Directions
 
 1. **Wait for agent process exit before cleanup** — 在 `loopCleanupCmd` 中，確認 agent session PID 已結束後再呼叫 `Remove()`。需注意 PID reuse 的 race condition。
-2. **Deferred cleanup queue** — cleanup 失敗時將 worktree path 加入 retry queue，下一輪 poll 時重試，而非直接回傳 error 阻斷 `CloseIssue`。
-3. **Separate CloseIssue from Remove** — 即使 `Remove()` 失敗，仍然執行 `CloseIssue`，worktree 清除降級為 best-effort。
+2. **Deferred cleanup queue** — cleanup 失敗時將 worktree path 加入 retry queue，下一輪 poll 時重試。
+3. ~~**Separate CloseIssue from Remove**~~ — **已實作。** `loopCleanupCmd` 現在無論 `Remove()` 結果如何都會執行 `CloseIssue`，worktree 清除降級為 best-effort。
 
 ### Related
 
 - Issue #36: `git branch -d` → `-D` fix（已合併，與此問題無關但在同次 cleanup 中觸發）
-- `internal/worktree/manager.go` line 106-113: `removeDirRetry` fallback 邏輯
-- `internal/tui/loop_cmds.go` `loopCleanupCmd`: cleanup 失敗時跳過 `CloseIssue`
+- `internal/worktree/manager.go`: `removeDirRetry` fallback 邏輯
+- `internal/tui/loop_cmds.go` `loopCleanupCmd`: cleanup 失敗時仍執行 `CloseIssue`
