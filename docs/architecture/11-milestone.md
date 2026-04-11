@@ -105,6 +105,29 @@
 
 ---
 
+## M4d: Cross-Agent Channel 通訊
+
+> 已完成
+
+- [x] HTTP broker (`internal/broker/`) — REST endpoints for artifacts + messages, SSE streaming, project discovery
+- [x] MCP stdio server (`internal/mcp/`) — 7 tools: publish_artifact, list_artifacts, send_message, list_projects, subscribe_project, unsubscribe_project, list_subscriptions
+- [x] Channel view in TUI (`[m]` key) — cross-project event timeline
+- [x] Dynamic subscription management (subscribe/unsubscribe at runtime)
+- [x] Meeting Protocol for clarifier agents (Facilitator/Advisor roles)
+- [x] AgentName tracking (`{type}-{4hex}` for manual, `{role}-#{issueID}` for loop)
+- [x] Self-echo filtering via per-instance UUID
+
+## M4e: Terminal Focus Panel + Exit Wrappers
+
+> 已完成
+
+- [x] Three-panel focus system (Projects → Terminals → LoopSlots) with Tab cycling
+- [x] `[x]` key to kill selected terminal (confirm dialog, force-kill process)
+- [x] `zpit-exit.cmd` / `zpit-exit.ps1` exit wrappers for auto-closing WT tabs
+- [x] WindowSizeMsg on confirm dialog init for immediate button rendering
+
+---
+
 ## M5: 完整體驗（規劃中）
 
 - [ ] 機台 push 回來後自動觸發 review

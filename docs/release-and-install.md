@@ -1,4 +1,6 @@
-# Release & Install Guide
+# Release & Install Guide (PLANNED — NOT YET IMPLEMENTED)
+
+> **Note:** This document describes the planned release pipeline. None of the described artifacts (`.goreleaser.yaml`, release workflows, install scripts) exist yet. Currently Zpit is built from source via `go build`.
 
 Release and installation strategy for Zpit. Install target: `~/.local/bin` (same location as Claude Code).
 

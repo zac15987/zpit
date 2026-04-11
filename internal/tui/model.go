@@ -56,6 +56,7 @@ type FocusedPanel int
 
 const (
 	FocusProjects  FocusedPanel = iota
+	FocusTerminals
 	FocusLoopSlots
 )
 
@@ -132,6 +133,7 @@ type Model struct {
 	// Focus panel state (loop slot selection)
 	focusedPanel   FocusedPanel
 	loopCursor     int
+	termCursor     int
 	focusProjectID string
 
 	// Viewport for scrollable content
@@ -354,6 +356,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case IssueConfirmedMsg:
 		return m.handleIssueConfirmed(msg)
 
+	case KillTerminalMsg:
+		return m.handleKillTerminal(msg)
+
 	// Loop engine messages
 	case LoopPollMsg:
 		return m.handleLoopPoll(msg)
@@ -517,6 +522,11 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFocusSwitch()
 	}
 
+	// If focused on terminals, delegate key handling.
+	if m.focusedPanel == FocusTerminals {
+		return m.handleTerminalsKey(msg)
+	}
+
 	// If focused on loop slots, delegate key handling.
 	if m.focusedPanel == FocusLoopSlots {
 		return m.handleLoopSlotsKey(msg)
@@ -642,7 +652,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		)
 		if _, err := os.Stat(agentPath); err != nil {
 			m.showEfficiencyDeployConfirm()
-			return m, m.confirmForm.Init()
+			return m, m.initConfirmForm()
 		}
 		return m, m.launchEfficiencyCmd()
 
@@ -655,7 +665,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.showUndeployConfirm(*p)
-		return m, m.confirmForm.Init()
+		return m, m.initConfirmForm()
 
 	case key.Matches(msg, m.keys.Status):
 		p := m.selectedProject()
@@ -944,6 +954,34 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 	if w != nil {
 		return m, watchNextCmd(msg.ProjectID, w)
 	}
+	return m, nil
+}
+
+func (m Model) handleKillTerminal(msg KillTerminalMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyKillFailed), msg.Err))
+		return m, nil
+	}
+
+	m.state.Lock()
+	at, ok := m.state.activeTerminals[msg.TrackingKey]
+	var pid int
+	if ok {
+		pid = at.SessionPID
+		if at.Watcher != nil {
+			at.Watcher.Stop()
+		}
+		at.State = watcher.StateEnded
+		at.StateChangedAt = time.Now()
+		m.state.NotifyAll()
+	}
+	m.state.Unlock()
+
+	if ok {
+		displayName := m.projectName(msg.TrackingKey)
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyKillTerminal), displayName, pid))
+	}
+
 	return m, nil
 }
 

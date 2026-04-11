@@ -58,6 +58,12 @@ var zpitEnvCMD []byte
 //go:embed hooks/zpit-env.ps1
 var zpitEnvPS1 []byte
 
+//go:embed hooks/zpit-exit.cmd
+var zpitExitCMD []byte
+
+//go:embed hooks/zpit-exit.ps1
+var zpitExitPS1 []byte
+
 //go:embed hooks/notify-permission.sh
 var notifyPermissionSH []byte
 
@@ -327,6 +333,8 @@ func buildHookScripts() worktree.HookScripts {
 		GitGuard:         gitGuardSH,
 		EnvWrapper:       zpitEnvCMD,
 		EnvWrapperPS1:    zpitEnvPS1,
+		ExitWrapper:      zpitExitCMD,
+		ExitWrapperPS1:   zpitExitPS1,
 		NotifyPermission: notifyPermissionSH,
 	}
 }

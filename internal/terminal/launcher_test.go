@@ -10,7 +10,8 @@ import (
 
 func TestBuildWindowsArgs_NewTab(t *testing.T) {
 	args := BuildWindowsArgs("My Project", "D:/Projects/Foo", "new_tab", "", "", nil)
-	want := []string{"new-tab", "-d", "D:/Projects/Foo", "--title", "My Project", "--", "claude"}
+	want := []string{"new-tab", "-d", "D:/Projects/Foo", "--title", "My Project", "--",
+		"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd", "claude"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -18,7 +19,8 @@ func TestBuildWindowsArgs_NewTab(t *testing.T) {
 
 func TestBuildWindowsArgs_NewWindow(t *testing.T) {
 	args := BuildWindowsArgs("My Project", "D:/Projects/Foo", "new_window", "", "", nil)
-	want := []string{"-w", "new", "-d", "D:/Projects/Foo", "--title", "My Project", "--", "claude"}
+	want := []string{"-w", "new", "-d", "D:/Projects/Foo", "--title", "My Project", "--",
+		"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd", "claude"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -42,10 +44,11 @@ func TestBuildWindowsArgs_AgentModeWithInitMsg(t *testing.T) {
 	}
 }
 
-func TestBuildWindowsArgs_NoAgentNoWrapper(t *testing.T) {
-	// Without --agent, no wrapper should be added
+func TestBuildWindowsArgs_NoAgentCleanExit(t *testing.T) {
+	// Without --agent, clean exit wrapper should be used (not env wrapper)
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--resume"})
-	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--", "claude", "--resume"}
+	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
+		"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd", "claude", "--resume"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -55,7 +58,8 @@ func TestBuildWindowsArgs_NoAgentNoWrapper(t *testing.T) {
 
 func TestBuildWindowsArgs_WithProfile_NewTab(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", nil)
-	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--", "claude"}
+	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--",
+		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-exit.ps1", "claude"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -63,7 +67,8 @@ func TestBuildWindowsArgs_WithProfile_NewTab(t *testing.T) {
 
 func TestBuildWindowsArgs_WithProfile_NewWindow(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_window", "PowerShell 7", "pwsh", nil)
-	want := []string{"-w", "new", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--", "claude"}
+	want := []string{"-w", "new", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--",
+		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-exit.ps1", "claude"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -97,9 +102,10 @@ func TestBuildWindowsArgs_WithProfile_AgentCmd(t *testing.T) {
 }
 
 func TestBuildWindowsArgs_WithProfile_NoAgent(t *testing.T) {
-	// Profile set but no agent mode — no wrapper, but -p flag present
+	// Profile set but no agent mode — clean exit wrapper with pwsh, -p flag present
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", []string{"--resume"})
-	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--", "claude", "--resume"}
+	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--",
+		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-exit.ps1", "claude", "--resume"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -148,6 +154,29 @@ func TestBuildEnvWrapper(t *testing.T) {
 			got := buildEnvWrapper(tt.shell)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("buildEnvWrapper(%q) = %v, want %v", tt.shell, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- buildCleanExitWrapper tests ---
+
+func TestBuildCleanExitWrapper(t *testing.T) {
+	tests := []struct {
+		shell string
+		want  []string
+	}{
+		{"cmd", []string{"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd"}},
+		{"pwsh", []string{"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-exit.ps1"}},
+		{"powershell", []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-exit.ps1"}},
+		{"", []string{"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd"}},          // empty defaults to cmd
+		{"unknown", []string{"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd"}},   // unknown defaults to cmd
+	}
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			got := buildCleanExitWrapper(tt.shell)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("buildCleanExitWrapper(%q) = %v, want %v", tt.shell, got, tt.want)
 			}
 		})
 	}
@@ -324,15 +353,16 @@ func TestNeedsAgentEnv(t *testing.T) {
 	}
 }
 
-func TestBuildWindowsArgs_EfficiencyNoWrapper(t *testing.T) {
+func TestBuildWindowsArgs_EfficiencyCleanExit(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "efficiency"})
-	// Efficiency agent should NOT have the env wrapper (cmd /c zpit-env.cmd)
-	for i, a := range args {
-		if a == "cmd" && i+2 < len(args) && args[i+1] == "/c" {
+	// Efficiency agent should use clean exit wrapper (zpit-exit), NOT env wrapper (zpit-env)
+	for _, a := range args {
+		if a == ".claude\\hooks\\zpit-env.cmd" || a == ".claude\\hooks\\zpit-env.ps1" {
 			t.Errorf("efficiency agent should not have env wrapper, got: %v", args)
 		}
 	}
-	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--", "claude", "--agent", "efficiency"}
+	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
+		"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd", "claude", "--agent", "efficiency"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}

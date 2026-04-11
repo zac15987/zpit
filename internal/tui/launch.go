@@ -29,6 +29,7 @@ import (
 	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
+	"github.com/zac15987/zpit/internal/watcher"
 	"github.com/zac15987/zpit/internal/worktree"
 )
 
@@ -586,21 +587,130 @@ func injectLangInstruction(md []byte) []byte {
 // --- Focus panel: loop slot selection ---
 
 func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
-	if m.focusedPanel == FocusLoopSlots {
+	// Determine which panels are available.
+	m.state.RLock()
+	hasTerminals := len(m.state.activeTerminals) > 0
+	m.state.RUnlock()
+
+	project := m.state.projects[m.cursor]
+	m.state.RLock()
+	slotKeys := m.sortedSlotKeys(project.ID)
+	m.state.RUnlock()
+	hasSlots := len(slotKeys) > 0
+
+	// Build ordered list of available panels: Projects -> Terminals -> LoopSlots.
+	panels := []FocusedPanel{FocusProjects}
+	if hasTerminals {
+		panels = append(panels, FocusTerminals)
+	}
+	if hasSlots {
+		panels = append(panels, FocusLoopSlots)
+	}
+
+	// If only Projects panel is available, do nothing.
+	if len(panels) <= 1 {
+		return m, nil
+	}
+
+	// Find current panel index and advance to next.
+	current := 0
+	for i, p := range panels {
+		if p == m.focusedPanel {
+			current = i
+			break
+		}
+	}
+	next := panels[(current+1)%len(panels)]
+
+	m.focusedPanel = next
+	switch next {
+	case FocusTerminals:
+		m.termCursor = 0
+	case FocusLoopSlots:
+		m.focusProjectID = project.ID
+		m.loopCursor = 0
+	}
+	return m, nil
+}
+
+// --- Focus panel: terminal selection ---
+
+func (m Model) handleTerminalsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	termKeys := m.sortedTerminalKeys()
+	if len(termKeys) == 0 {
 		m.focusedPanel = FocusProjects
 		return m, nil
 	}
-	project := m.state.projects[m.cursor]
-	m.state.RLock()
-	keys := m.sortedSlotKeys(project.ID)
-	m.state.RUnlock()
-	if len(keys) == 0 {
-		return m, nil
+	if m.termCursor >= len(termKeys) {
+		m.termCursor = len(termKeys) - 1
 	}
-	m.focusedPanel = FocusLoopSlots
-	m.focusProjectID = project.ID
-	m.loopCursor = 0
+
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.focusedPanel = FocusProjects
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		if m.termCursor > 0 {
+			m.termCursor--
+		}
+
+	case key.Matches(msg, m.keys.Down):
+		if m.termCursor < len(termKeys)-1 {
+			m.termCursor++
+		}
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.viewport.PageUp()
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.viewport.PageDown()
+
+	case key.Matches(msg, m.keys.Kill):
+		trackingKey := termKeys[m.termCursor]
+		m.state.RLock()
+		at, ok := m.state.activeTerminals[trackingKey]
+		if !ok {
+			m.state.RUnlock()
+			return m, nil
+		}
+		pid := at.SessionPID
+		state := at.State
+		displayName := m.projectName(trackingKey)
+		m.state.RUnlock()
+
+		if pid == 0 {
+			m.setStatus(locale.T(locale.KeyTerminalNoPID))
+			return m, nil
+		}
+		if state == watcher.StateEnded {
+			m.setStatus(locale.T(locale.KeyTerminalAlreadyEnded))
+			return m, nil
+		}
+		m.showKillTerminalConfirm(trackingKey, displayName, pid)
+		return m, m.initConfirmForm()
+	}
+
 	return m, nil
+}
+
+// sortedTerminalKeys returns sorted activeTerminals keys.
+// Caller must NOT hold any lock (acquires RLock internally).
+func (m Model) sortedTerminalKeys() []string {
+	m.state.RLock()
+	defer m.state.RUnlock()
+	return m.sortedTerminalKeysLocked()
+}
+
+// sortedTerminalKeysLocked returns sorted activeTerminals keys.
+// Caller must already hold at least RLock.
+func (m Model) sortedTerminalKeysLocked() []string {
+	keys := make([]string, 0, len(m.state.activeTerminals))
+	for k := range m.state.activeTerminals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -85,6 +85,17 @@ const (
 	KeyNoWorktreePath Key = "no_worktree_path"
 	KeyLoopSlotHelp   Key = "loop_slot_help"
 
+	// Terminal focus panel
+	KeyKillTerminal         Key = "kill_terminal"
+	KeyKillTerminalConfirm  Key = "kill_terminal_confirm"
+	KeyKillFailed           Key = "kill_failed"
+	KeyKillButton           Key = "kill_button"
+	KeyTerminalNoPID        Key = "terminal_no_pid"
+	KeyTerminalAlreadyEnded Key = "terminal_already_ended"
+	KeySwitchPanel          Key = "switch_panel"
+	KeyTerminalHelp         Key = "terminal_help"
+	KeyCloseTerminal        Key = "close_terminal"
+
 	// Channel view
 	KeyChannelTitle          Key = "channel_title"
 	KeyChannelNoActivity     Key = "channel_no_activity"

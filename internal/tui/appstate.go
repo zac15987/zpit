@@ -23,11 +23,11 @@ import (
 // Multiple tea.Program instances (local TUI + SSH remote) share a single *AppState pointer,
 // ensuring active terminals, loop progress, and agent states remain consistent.
 //
-// Mutable fields protected by mu: activeTerminals, loops, lastLivenessCheck, lastPermissionCheck, lastSessionScan.
+// Mutable fields protected by mu: activeTerminals, loops, channelEvents, channelSubs, lastLivenessCheck, lastPermissionCheck, lastSessionScan.
 // Read-only fields (safe without locks): cfg, env, projects, clients, embedded MDs, hookScripts, wtManager.
 type AppState struct {
 	// mu protects mutable shared fields: activeTerminals, loops,
-	// lastLivenessCheck, lastPermissionCheck, lastSessionScan.
+	// channelEvents, channelSubs, lastLivenessCheck, lastPermissionCheck, lastSessionScan.
 	mu sync.RWMutex
 
 	// subMu protects the subscribers map independently of mu,

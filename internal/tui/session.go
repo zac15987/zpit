@@ -475,6 +475,34 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 	}
 }
 
+// killTerminalCmd terminates the given PID with exit code 0 (via KillWithZeroExit).
+// On Windows, also kills the parent shell (cmd/powershell/pwsh) to close the WT tab.
+// Exit code 0 is critical: WT's closeOnExit "graceful" (default) only closes on exit 0.
+// Must NOT be called while holding a lock.
+func (m Model) killTerminalCmd(trackingKey, displayName string, pid int) tea.Cmd {
+	logger := m.state.logger
+	return func() tea.Msg {
+		logger.Printf("terminal kill: key=%s pid=%d", trackingKey, pid)
+
+		// Find parent shell BEFORE killing (process must exist for snapshot lookup).
+		parentPID, parentName := terminal.FindParentShell(pid)
+
+		if err := terminal.KillWithZeroExit(pid); err != nil {
+			logger.Printf("terminal kill: failed key=%s pid=%d err=%v", trackingKey, pid, err)
+			return KillTerminalMsg{TrackingKey: trackingKey, Err: fmt.Errorf("kill process %d: %w", pid, err)}
+		}
+		logger.Printf("terminal kill: success key=%s pid=%d", trackingKey, pid)
+
+		// Kill parent shell to close the WT tab.
+		if parentPID > 0 {
+			logger.Printf("terminal kill: closing WT tab parent=%s pid=%d", parentName, parentPID)
+			terminal.KillProcess(parentPID)
+		}
+
+		return KillTerminalMsg{TrackingKey: trackingKey, Err: nil}
+	}
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return TickMsg(t)

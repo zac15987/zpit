@@ -201,3 +201,11 @@ type ChannelListenUpdatedMsg struct {
 	NewListen []string
 	Err       error
 }
+
+// --- Terminal kill messages ---
+
+// KillTerminalMsg carries the result of killing a terminal process.
+type KillTerminalMsg struct {
+	TrackingKey string
+	Err         error
+}

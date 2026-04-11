@@ -25,15 +25,16 @@
 ║  🌐  個人品牌網頁                   [u] Undeploy 部署檔案           ║
 ║     Astro    │ 5 todo │ 0 進行中                                  ║
 ║                                    ──────────────────────          ║
-║  🖥️  報警管理工具                   [a] 新增專案                    ║
-║     WPF      │ 0 todo │ 0 進行中   [e] 編輯設定 (子選單)            ║
+║  🖥️  報警管理工具                   [x] 關閉終端                    ║
+║     WPF      │ 0 todo │ 0 進行中   [a] 新增專案                    ║
+║                                    [e] 編輯設定 (子選單)            ║
 ║                                    [?] 說明                       ║
 ║ ›📱  Android 監控 App               [q] 離開                       ║
 ║     Kotlin   │ 2 todo │ 0 進行中                                  ║
 ║                                                                    ║
 ╠══════════════════════════════════════════════════════════════════════╣
-║  活躍終端                                                          ║
-║  [1] ASE 檢測  │ 🟢 實作中: EtherCAT reconnect backoff │ 02:15    ║
+║  活躍終端 (Tab 切換至此區域，↑↓ 選擇，x 關閉終端)                  ║
+║ ›[1] ASE 檢測  │ 🟢 實作中: EtherCAT reconnect backoff │ 02:15    ║
 ║      切換: tmux select-window -t ase-inspection                    ║
 ║  [2] 個人網頁  │ 🟢 AI Review 完成，等待你確認 PR                  ║
 ║      切換: tmux select-window -t personal-site                     ║
@@ -51,7 +52,9 @@
 - 快捷鍵 [c][l][r][s]：同樣在新終端啟動對應的 agent
 - [u]：移除 Zpit 部署到專案的 agents/docs/hooks 檔案
 - [f]：啟動效率 Agent（輕量模式，無 hooks、無 tracker、self-review）
-- 「活躍終端」區域：即時顯示正在運行的 Claude Code session 狀態
+- Tab：三面板循環切換 — 專案列表 → 活躍終端（有終端時）→ Loop 狀態（有 slot 時）→ 專案列表
+- [x]：當焦點在活躍終端時，關閉選中的終端（force kill process，需確認）
+- 「活躍終端」區域：即時顯示正在運行的 Claude Code session 狀態，支援 cursor 選擇和 x 鍵關閉
   （資料來源：Claude Code session log + JSONL 解析）
 - 「最近活動」區域：**尚未實作** — 設計上從 session log 解析 agent 的具體操作
 

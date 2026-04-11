@@ -6,4 +6,5 @@ $cmd = $args[0]
 $cmdArgs = @()
 if ($args.Count -gt 1) { $cmdArgs = $args[1..($args.Count - 1)] }
 & $cmd @cmdArgs
-exit $LASTEXITCODE
+# Always exit 0 so Windows Terminal closes the tab (closeOnExit: graceful).
+exit 0

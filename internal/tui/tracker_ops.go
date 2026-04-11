@@ -33,7 +33,7 @@ func (m Model) handleLabelCheckResult(msg LabelCheckResultMsg) (tea.Model, tea.C
 		return m.executePendingOp()
 	}
 	m.showLabelConfirm(msg.ProjectID, msg.Missing)
-	return m, m.confirmForm.Init()
+	return m, m.initConfirmForm()
 }
 
 func (m Model) handleLabelsEnsured(msg LabelsEnsuredMsg) (tea.Model, tea.Cmd) {

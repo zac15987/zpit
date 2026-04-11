@@ -16,7 +16,7 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
    Read `.claude/docs/agent-guidelines.md` to understand the behavioral rules for AI agents
 2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary, any prior review history)
 3. Read the issue's ACCEPTANCE_CRITERIA, SCOPE, and CONSTRAINTS
-4. Use `git diff dev...HEAD` to view all changes
+4. Use `git diff {base_branch}...HEAD` to view all changes (check `.claude/docs/tracker.md` for the project's base branch)
 5. Re-read ACCEPTANCE_CRITERIA to confirm your understanding before marking verdicts — do not rely on your initial reading
 6. **Compare each AC one by one**: mark each as ✅ Met / ❌ Not met / ⚠️ Partially met (must itemize what is missing)
 7. Check whether any changed files are **outside SCOPE**

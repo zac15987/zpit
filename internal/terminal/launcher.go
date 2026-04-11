@@ -98,8 +98,11 @@ func needsAgentEnv(extraArgs []string) bool {
 
 // BuildWindowsArgs constructs wt.exe arguments for testing without exec.
 // When profile is non-empty, -p "ProfileName" is inserted before the -- separator.
-// When extraArgs contains "--agent" (except "efficiency"), the command is wrapped
-// with the appropriate env wrapper based on shell type to inject ZPIT_AGENT=1.
+// All launches are wrapped with a shell-aware script so Windows Terminal closes the
+// tab on exit (closeOnExit: "graceful" closes on exit 0):
+//   - Agent sessions (except efficiency): zpit-env wrapper (sets ZPIT_AGENT=1, exits 0)
+//   - Non-agent / efficiency sessions: zpit-exit wrapper (exits 0, no ZPIT_AGENT)
+//
 // shell should be "cmd", "pwsh", or "powershell" (empty defaults to "cmd").
 func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, extraArgs []string) []string {
 	var base []string
@@ -119,19 +122,33 @@ func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, ext
 		wrapper := buildEnvWrapper(shell)
 		return append(append(base, wrapper...), buildClaudeArgs(extraArgs)...)
 	}
-	return append(base, buildClaudeArgs(extraArgs)...)
+	wrapper := buildCleanExitWrapper(shell)
+	return append(append(base, wrapper...), buildClaudeArgs(extraArgs)...)
+}
+
+// buildCleanExitWrapper returns the command prefix for a clean-exit wrapper
+// (no ZPIT_AGENT) based on the detected shell type. This ensures the WT tab
+// closes on exit (closeOnExit: "graceful" closes on exit 0).
+func buildCleanExitWrapper(shell string) []string {
+	return buildShellWrapper(shell, "zpit-exit")
 }
 
 // buildEnvWrapper returns the command prefix for the ZPIT_AGENT=1 env wrapper
 // based on the detected shell type.
 func buildEnvWrapper(shell string) []string {
+	return buildShellWrapper(shell, "zpit-env")
+}
+
+// buildShellWrapper returns a shell-aware command prefix that invokes the named
+// script from .claude/hooks/. cmd shells use .cmd extension; pwsh/powershell use .ps1.
+func buildShellWrapper(shell, scriptBase string) []string {
 	switch shell {
 	case "pwsh":
-		return []string{"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1"}
+		return []string{"pwsh", "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
 	case "powershell":
-		return []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1"}
+		return []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
 	default: // "cmd" or empty
-		return []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}
+		return []string{"cmd", "/c", ".claude\\hooks\\" + scriptBase + ".cmd"}
 	}
 }
 

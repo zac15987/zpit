@@ -10,7 +10,6 @@
 ```yaml
 name: clarifier
 description: Requirements clarification and technical advisor
-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 disallowedTools: Edit
 ```
 
@@ -47,8 +46,7 @@ disallowedTools: Edit
 ```yaml
 name: reviewer
 description: Code Review expert
-tools: Read, Grep, Glob, Bash
-disallowedTools: Write, Edit
+disallowedTools: Edit
 ```
 
 **核心行為：**
@@ -132,9 +130,9 @@ Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts, logWriter)
     → stored in AppState fields
-      → DeployHooks() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
+      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS

@@ -19,15 +19,18 @@
      machine │ wpf, ethercat, basler                      [c] Clarify requirement
                                                           [l] Loop auto-implement
    ⚙️ ENR DUC                                             [r] Review changes
-     machine │ wpf, secsgem                               [s] Status overview
-                                                          [o] Open project folder
-   🖥️ DisplayProfileManager                               [p] Open Issue Tracker
-     desktop │ wpf, nlog                                  [u] Undeploy agents
+     machine │ wpf, secsgem                               [f] Efficiency agent
+                                                          [s] Status overview
+   🖥️ DisplayProfileManager                               [o] Open project folder
+     desktop │ wpf, nlog                                  [p] Open Issue Tracker
+                                                          [u] Undeploy agents
+ › 🖥️ Zpit                                                [m] Channel communication
+     desktop │ go, bubbletea
+                                                          [a] Add project
+                                                          [e] Edit config
 
- › 🖥️ Zpit                                                [a] Add project
-     desktop │ go, bubbletea                              [e] Edit config
-
-                                                          [Tab] Switch to slots
+                                                          [x] Close Terminal
+                                                          [Tab] Switch Panel
                                                           [?] Help
                                                           [q] Quit
 
@@ -96,6 +99,7 @@ You (TUI)                    Claude Code Agents
 
 - **Multi-project dashboard** — switch between projects with arrow keys, mouse scroll support
 - **Loop engine** — fully automated: poll todo issues → create worktree → coding agent → reviewer → PR merge → cleanup
+- **Task decomposition** — when an Issue Spec contains `## TASKS`, the coding agent delegates to `task-runner` subagents (sequential or parallel via Agent Teams)
 - **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Permission / Ended), auto-detects running sessions on startup, survives `/resume` session switches
 - **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
@@ -104,11 +108,12 @@ You (TUI)                    Claude Code Agents
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
+- **i18n** — English and Traditional Chinese (zh-TW) via `locale.T()`
 - **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
 
 ## Requirements
 
-- [Go](https://go.dev/) 1.22+
+- [Go](https://go.dev/) 1.26+
 - [Claude Code](https://claude.ai/code) CLI installed and authenticated
 - Windows Terminal (Windows) or tmux (Linux/WSL)
 - A Forgejo/Gitea or GitHub issue tracker
@@ -138,9 +143,14 @@ go build -o zpit .
 Config lives at `~/.zpit/config.toml`. Override with `ZPIT_CONFIG` env var.
 
 ```toml
+language = "en"             # en | zh-TW
+broker_port = 17731         # HTTP broker port for cross-agent channel
+# zpit_bin = "/usr/local/bin/zpit"  # explicit binary path for .mcp.json generation
+
 [terminal]
 windows_mode = "new_tab"    # new_tab | new_window
 tmux_mode = "new_window"    # new_window | new_pane
+# windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag
 
 [notification]
 tui_alert = true
@@ -153,14 +163,23 @@ re_remind_minutes = 2
 base_dir_windows = "D:/worktrees"
 base_dir_wsl = "/mnt/d/worktrees"
 max_per_project = 5
-poll_seconds = 15           # todo issue polling interval
-pr_poll_seconds = 30        # PR merge polling interval
+poll_seconds = 10           # todo issue polling interval
+pr_poll_seconds = 10        # PR merge polling interval
+max_review_rounds = 3       # auto-retry rounds before needs-human
+# dir_format = "{project_id}/{issue_id}--{slug}"
+# auto_cleanup = false
 
 # Tracker providers — token read from env var, never stored in config
 [providers.tracker.my-forgejo]
 type = "forgejo_issues"
 url = "https://your-forgejo.example.com"
 token_env = "FORGEJO_TOKEN"
+
+# Git providers (optional — for Forgejo/Gitea PR API)
+# [providers.git.my-forgejo]
+# type = "forgejo"
+# url = "https://your-forgejo.example.com"
+# token_env = "FORGEJO_TOKEN"
 
 # Profiles control logging strictness for agents
 [profiles.machine]
@@ -173,8 +192,12 @@ id = "my-project"
 profile = "machine"
 hook_mode = "strict"        # strict | standard | relaxed
 tracker = "my-forgejo"
+# tracker_project = "My_Project"  # tracker project name if different from repo
+# git = "my-forgejo"              # git provider for PR operations
 repo = "org/repo"
 base_branch = "dev"
+# shared_core = false
+# log_level = "standard"
 channel_enabled = false     # enable cross-agent channel communication
 channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
 tags = ["go"]
@@ -206,10 +229,12 @@ wsl = "/mnt/d/Projects/my-project"
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
+| `m` | Channel — view cross-agent communication events |
 | `a` | Add project (coming soon) |
 | `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
-| `m` | Channel — view cross-agent communication events |
-| `Tab` | Switch focus to Loop Status slots (↑↓ select, Enter opens Claude Code in worktree) |
+| `x` | Close Terminal — force-close selected terminal (when Terminals panel focused) |
+| `Tab` | Switch focus between panels (Projects, Terminals, Loop Slots) |
+| `?` | Help |
 | `q` | Quit |
 
 ## Loop Engine
@@ -241,7 +266,7 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 **PreToolUse hooks:**
 - `path-guard.sh` — confines Write/Edit to worktree directory
 - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
-- `git-guard.sh` — blocks push, merge, rebase; agents only commit
+- `git-guard.sh` — push whitelist (only `feat/*` branches), blocks merge, rebase, branch-delete, force push
 
 **Notification hook:**
 - `notify-permission.sh` — writes signal file when Claude Code needs tool permission approval; TUI detects and shows 🟠 status + toast notification
@@ -272,6 +297,16 @@ AC-2: ...
 
 ## BRANCH
 [Optional: PR target branch, defaults to project base_branch]
+
+## TASKS
+[Optional: Task decomposition — triggers subagent delegation]
+T1: [task description] | [modify] path/to/file
+T2: [task description] [P] | [modify] path/to/other  # [P] = parallelizable
+T3: [task description] [depends:T1] | [create] path/to/new
+
+## COORDINATES_WITH
+[Optional: Cross-agent coordination for parallel work]
+#42: Brief description of related issue
 
 ## REFERENCES
 [Optional: URLs, related files]
@@ -311,9 +346,10 @@ Zpit is built on top of the following open source libraries:
 | [muesli/termenv](https://github.com/muesli/termenv) | Terminal environment detection | MIT |
 | [rivo/uniseg](https://github.com/rivo/uniseg) | Unicode text segmentation | MIT |
 | [mattn/go-runewidth](https://github.com/mattn/go-runewidth) | Rune display width calculation | MIT |
-| [golang.org/x/sys, x/text, x/sync](https://pkg.go.dev/golang.org/x) | Go extended standard library | BSD-3-Clause |
+| [bubbletea-overlay](https://github.com/rmhubbert/bubbletea-overlay) | Overlay rendering for confirm dialogs | MIT |
+| [golang.org/x/sys, x/text](https://pkg.go.dev/golang.org/x) | Go extended standard library | BSD-3-Clause |
 
-All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`, `wish`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
+All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`, `wish`, `ssh`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
 `fsnotify` and `golang.org/x/*` are BSD-3-Clause; their copyright notices are retained as required.
 
 ## License
