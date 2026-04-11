@@ -356,6 +356,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case IssueConfirmedMsg:
 		return m.handleIssueConfirmed(msg)
 
+	case KillTerminalMsg:
+		return m.handleKillTerminal(msg)
+
 	// Loop engine messages
 	case LoopPollMsg:
 		return m.handleLoopPoll(msg)
@@ -951,6 +954,32 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 	if w != nil {
 		return m, watchNextCmd(msg.ProjectID, w)
 	}
+	return m, nil
+}
+
+func (m Model) handleKillTerminal(msg KillTerminalMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.setStatus(fmt.Sprintf("Kill failed: %s", msg.Err))
+		return m, nil
+	}
+
+	m.state.Lock()
+	at, ok := m.state.activeTerminals[msg.TrackingKey]
+	if ok {
+		if at.Watcher != nil {
+			at.Watcher.Stop()
+		}
+		at.State = watcher.StateEnded
+		at.StateChangedAt = time.Now()
+		m.state.NotifyAll()
+	}
+	m.state.Unlock()
+
+	if ok {
+		displayName := m.projectName(msg.TrackingKey)
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyKillTerminal), displayName, at.SessionPID))
+	}
+
 	return m, nil
 }
 
