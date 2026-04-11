@@ -16,6 +16,8 @@ type HookScripts struct {
 	GitGuard         []byte
 	EnvWrapper       []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches (cmd)
 	EnvWrapperPS1    []byte // zpit-env.ps1 — sets ZPIT_AGENT=1 for Windows agent launches (pwsh/powershell)
+	ExitWrapper      []byte // zpit-exit.cmd — clean exit for Windows non-agent launches (cmd)
+	ExitWrapperPS1   []byte // zpit-exit.ps1 — clean exit for Windows non-agent launches (pwsh/powershell)
 	NotifyPermission []byte // Notification hook — writes permission signal for Zpit TUI
 }
 
@@ -270,6 +272,8 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 		"git-guard.sh":          scripts.GitGuard,
 		"zpit-env.cmd":          scripts.EnvWrapper,
 		"zpit-env.ps1":          scripts.EnvWrapperPS1,
+		"zpit-exit.cmd":         scripts.ExitWrapper,
+		"zpit-exit.ps1":         scripts.ExitWrapperPS1,
 		"notify-permission.sh":  scripts.NotifyPermission,
 	}
 	for name, content := range files {

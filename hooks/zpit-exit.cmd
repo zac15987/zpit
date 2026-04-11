@@ -1,5 +1,4 @@
 @echo off
-set ZPIT_AGENT=1
 %*
 rem Always exit 0 so Windows Terminal closes the tab (closeOnExit: graceful).
 exit /b 0
