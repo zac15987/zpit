@@ -56,6 +56,7 @@ type FocusedPanel int
 
 const (
 	FocusProjects  FocusedPanel = iota
+	FocusTerminals
 	FocusLoopSlots
 )
 
@@ -132,6 +133,7 @@ type Model struct {
 	// Focus panel state (loop slot selection)
 	focusedPanel   FocusedPanel
 	loopCursor     int
+	termCursor     int
 	focusProjectID string
 
 	// Viewport for scrollable content
