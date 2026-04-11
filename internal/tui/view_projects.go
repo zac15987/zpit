@@ -90,9 +90,12 @@ func (m Model) renderProjectsFooter() string {
 		b.WriteString(statusBarStyle.Render(" " + m.statusMessage + " "))
 	}
 	b.WriteString("\n")
-	if m.focusedPanel == FocusLoopSlots {
+	switch m.focusedPanel {
+	case FocusTerminals:
+		b.WriteString(helpStyle.Render(locale.T(locale.KeyTerminalHelp)))
+	case FocusLoopSlots:
 		b.WriteString(helpStyle.Render(locale.T(locale.KeyLoopSlotHelp)))
-	} else {
+	default:
 		b.WriteString(helpStyle.Render(locale.T(locale.KeyHelpFooter)))
 	}
 	return b.String()
@@ -116,7 +119,7 @@ func (m Model) renderHeader() string {
 func (m Model) renderProjectList() string {
 	var b strings.Builder
 	titleStyle := sectionTitleStyle
-	if m.focusedPanel == FocusLoopSlots {
+	if m.focusedPanel != FocusProjects {
 		titleStyle = detailStyle
 	}
 	b.WriteString(titleStyle.Render(locale.T(locale.KeyProjects)))
@@ -181,7 +184,8 @@ func (m Model) renderHotkeys() string {
 		{"m", locale.T(locale.KeyChannelComm), false},
 		{"a", locale.T(locale.KeyAddProject), true},
 		{"e", locale.T(locale.KeyEditConfig), false},
-		{"Tab", locale.T(locale.KeyFocusSlot), true},
+		{"x", locale.T(locale.KeyCloseTerminal), true},
+		{"Tab", locale.T(locale.KeySwitchPanel), false},
 		{"?", locale.T(locale.KeyHelp), false},
 		{"q", locale.T(locale.KeyQuit), false},
 	}
@@ -229,16 +233,16 @@ func (m Model) projectName(id string) string {
 
 func (m Model) renderActiveTerminals() string {
 	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyActiveTerminals)))
+	titleStyle := detailStyle
+	if m.focusedPanel == FocusTerminals {
+		titleStyle = sectionTitleStyle
+	}
+	b.WriteString(titleStyle.Render(locale.T(locale.KeyActiveTerminals)))
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
 	// Sort keys for stable render order.
-	termKeys := make([]string, 0, len(m.state.activeTerminals))
-	for k := range m.state.activeTerminals {
-		termKeys = append(termKeys, k)
-	}
-	sort.Strings(termKeys)
+	termKeys := m.sortedTerminalKeys()
 
 	i := 1
 	for _, projectID := range termKeys {
@@ -255,7 +259,12 @@ func (m Model) renderActiveTerminals() string {
 			displayName += " 🌿" + at.WorktreeBranch
 		}
 
-		b.WriteString(fmt.Sprintf("  [%d] %s %s %s %s\n",
+		prefix := "  "
+		if m.focusedPanel == FocusTerminals && (i-1) == m.termCursor {
+			prefix = " ›"
+		}
+		b.WriteString(fmt.Sprintf("%s[%d] %s %s %s %s\n",
+			prefix,
 			i,
 			selectedStyle.Render(displayName),
 			boxVert,
