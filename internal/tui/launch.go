@@ -688,7 +688,7 @@ func (m Model) handleTerminalsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.showKillTerminalConfirm(trackingKey, displayName, pid)
-		return m, m.confirmForm.Init()
+		return m, m.initConfirmForm()
 	}
 
 	return m, nil

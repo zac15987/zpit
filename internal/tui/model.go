@@ -652,7 +652,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		)
 		if _, err := os.Stat(agentPath); err != nil {
 			m.showEfficiencyDeployConfirm()
-			return m, m.confirmForm.Init()
+			return m, m.initConfirmForm()
 		}
 		return m, m.launchEfficiencyCmd()
 
@@ -665,7 +665,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.showUndeployConfirm(*p)
-		return m, m.confirmForm.Init()
+		return m, m.initConfirmForm()
 
 	case key.Matches(msg, m.keys.Status):
 		p := m.selectedProject()

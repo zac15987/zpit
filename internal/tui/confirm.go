@@ -144,6 +144,18 @@ func (m *Model) showKillTerminalConfirm(trackingKey, displayName string, pid int
 	}
 }
 
+// initConfirmForm initialises the huh confirm dialog and sends it the current
+// terminal dimensions so that buttons render immediately (without waiting for
+// the next WindowSizeMsg from a manual resize).
+func (m *Model) initConfirmForm() tea.Cmd {
+	return tea.Batch(
+		m.confirmForm.Init(),
+		func() tea.Msg {
+			return tea.WindowSizeMsg{Width: m.width, Height: m.height}
+		},
+	)
+}
+
 // executePendingOp continues the original operation after labels are confirmed present.
 func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	op := m.pendingOp
@@ -162,7 +174,7 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 		)
 		if _, err := os.Stat(agentPath); err != nil {
 			m.showDeployConfirm()
-			return m, m.confirmForm.Init()
+			return m, m.initConfirmForm()
 		}
 		return m, m.launchClarifierCmd()
 
@@ -176,7 +188,7 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 		)
 		if _, err := os.Stat(agentPath); err != nil {
 			m.showReviewerDeployConfirm()
-			return m, m.confirmForm.Init()
+			return m, m.initConfirmForm()
 		}
 		return m, m.launchReviewerCmd()
 
@@ -220,7 +232,7 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 		if m.statusCursor < len(m.statusIssues) {
 			issue := m.statusIssues[m.statusCursor]
 			m.showIssueConfirm(issue.ID, issue.Title)
-			return m, m.confirmForm.Init()
+			return m, m.initConfirmForm()
 		}
 		return m, nil
 	}
