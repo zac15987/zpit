@@ -519,6 +519,11 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFocusSwitch()
 	}
 
+	// If focused on terminals, delegate key handling.
+	if m.focusedPanel == FocusTerminals {
+		return m.handleTerminalsKey(msg)
+	}
+
 	// If focused on loop slots, delegate key handling.
 	if m.focusedPanel == FocusLoopSlots {
 		return m.handleLoopSlotsKey(msg)
