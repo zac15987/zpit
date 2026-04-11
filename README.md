@@ -88,6 +88,7 @@ You (TUI)                    Claude Code Agents
     │
     ├─ [s] Status ────────────► shows issue list from tracker
     ├─ [r] Review ────────────► launches reviewer on demand
+    ├─ [f] Efficiency ────────► lightweight agent (no hooks, no tracker, self-review)
     └─ [Enter] ───────────────► launches Claude Code directly
 ```
 
@@ -103,7 +104,7 @@ You (TUI)                    Claude Code Agents
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
-- **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync
+- **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
 
 ## Requirements
 
@@ -126,6 +127,10 @@ go build -o zpit .
 # SSH server mode (remote access)
 ./zpit serve      # Start headless SSH daemon (default port 2200)
 ./zpit connect    # SSH connect to local server
+
+# Or enable auto_serve in config — then just "./zpit" starts
+# the SSH server automatically and connects to it.
+# You can SSH in from your phone at any time.
 ```
 
 ## Configuration
@@ -185,6 +190,7 @@ wsl = "/mnt/d/Projects/my-project"
 # host_key_path = "~/.zpit/ssh/host_ed25519"
 # password_env = "ZPIT_SSH_PASSWORD"
 # authorized_keys_path = "~/.ssh/authorized_keys"
+# auto_serve = false    # when true, "zpit" auto-starts SSH server + connects
 ```
 
 ## Hotkeys
@@ -195,6 +201,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `c` | Clarify — open clarifier agent to create structured issue |
 | `l` | Loop — toggle automated coding + review cycle |
 | `r` | Review — launch reviewer agent |
+| `f` | Efficiency — lightweight agent (no hooks, no tracker, self-review) |
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
@@ -276,7 +283,7 @@ AC-2: ...
 go build ./...           # Build
 go test ./...            # Run all tests
 make test-hooks          # Run hook tests (requires bash)
-go run .                 # Local TUI
+go run .                 # Local TUI (or auto-serve if ssh.auto_serve=true)
 go run . serve           # SSH server mode
 go run . connect         # SSH client shortcut
 ```

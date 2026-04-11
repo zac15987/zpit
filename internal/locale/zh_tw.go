@@ -12,7 +12,8 @@ var zhTW = map[Key]string{
 	KeyLaunchClaude:   "啟動 Claude Code",
 	KeyClarifyReq:     "釐清需求",
 	KeyLoopAutoImpl:   "Loop 自動實作",
-	KeyReviewChanges:  "Review 變更",
+	KeyReviewChanges:   "Review 變更",
+	KeyEfficiencyAgent: "效率 Agent",
 	KeyStatusOverview: "狀態總覽",
 	KeyOpenFolder:     "開啟專案資料夾",
 	KeyOpenTracker:    "開啟 Issue Tracker",
@@ -58,7 +59,8 @@ var zhTW = map[Key]string{
 	KeyClarifierNotDeployed: "Clarifier agent 未部署至此專案，是否部署？",
 	KeyDeployAndLaunch:      "部署並啟動",
 	KeyCancel:               "取消",
-	KeyReviewerNotDeployed:  "Reviewer agent 未部署至此專案，是否部署？",
+	KeyReviewerNotDeployed:   "Reviewer agent 未部署至此專案，是否部署？",
+	KeyEfficiencyNotDeployed: "效率 Agent 未部署至此專案，是否部署？",
 
 	// Undeploy confirm dialogs
 	KeyUndeployConfirm: "移除此專案所有 Zpit 部署檔案？\n\n.claude/agents/  .claude/docs/  .claude/hooks/\n.mcp.json  settings.json (hooks)  settings.local.json",

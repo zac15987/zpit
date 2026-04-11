@@ -92,7 +92,7 @@ Server 從環境變數讀取設定：
 | `ZPIT_ISSUE_ID` | 處理中的 issue ID |
 | `ZPIT_LISTEN_PROJECTS` | 額外訂閱的 project key（逗號分隔） |
 | `ZPIT_AGENT_NAME` | Agent 顯示名稱（optional，如 `clarifier-a3f7`） |
-| `ZPIT_AGENT_TYPE` | Agent 類型（optional，如 `clarifier`、`coding`、`reviewer`、`claude`） |
+| `ZPIT_AGENT_TYPE` | Agent 類型（optional，如 `clarifier`、`coding`、`reviewer`、`efficiency`、`claude`） |
 
 **提供的 MCP Tools：**
 

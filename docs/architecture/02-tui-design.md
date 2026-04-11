@@ -18,8 +18,9 @@
 ║     WPF+硬體 │ 3 todo │ 1 進行中   [c] Clarify 需求               ║
 ║     🟢 Agent 運行中 (tmux:2)       [l] Loop 自動實作               ║
 ║                                    [r] Review 機台改動             ║
-║  ⚙️  ChipMOS 點膠機台              [s] 狀態總覽                    ║
-║     WPF+硬體 │ 1 todo │ 0 進行中   [o] 開啟專案資料夾              ║
+║  ⚙️  ChipMOS 點膠機台              [f] 效率 Agent                  ║
+║     WPF+硬體 │ 1 todo │ 0 進行中   [s] 狀態總覽                    ║
+║                                    [o] 開啟專案資料夾              ║
 ║                                    [p] 開啟 Issue Tracker          ║
 ║  🌐  個人品牌網頁                   [u] Undeploy 部署檔案           ║
 ║     Astro    │ 5 todo │ 0 進行中                                  ║
@@ -49,6 +50,7 @@
 - Enter：在新終端開啟 Claude Code（Windows Terminal 新 tab / tmux 新 window）
 - 快捷鍵 [c][l][r][s]：同樣在新終端啟動對應的 agent
 - [u]：移除 Zpit 部署到專案的 agents/docs/hooks 檔案
+- [f]：啟動效率 Agent（輕量模式，無 hooks、無 tracker、self-review）
 - 「活躍終端」區域：即時顯示正在運行的 Claude Code session 狀態
   （資料來源：Claude Code session log + JSONL 解析）
 - 「最近活動」區域：**尚未實作** — 設計上從 session log 解析 agent 的具體操作

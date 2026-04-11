@@ -17,7 +17,7 @@ go test ./internal/...   # Run a specific package's tests
 go test -run TestName    # Run a single test
 make test-hooks          # Run hook tests (requires bash)
 make test-all            # Run all tests including hooks
-go run .                 # Run local TUI (reads ~/.zpit/config.toml)
+go run .                 # Run local TUI (or auto-serve if ssh.auto_serve=true)
 go run . serve           # Start headless SSH server (Wish)
 go run . connect         # SSH connect to local server (convenience wrapper)
 ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
@@ -27,7 +27,7 @@ ZPIT_CONFIG=./testdata/config.toml go run .  # Run with test config
 
 ```
 main.go                  # Entry point: subcommand routing, go:embed declarations, config/log init
-agents/                  # Agent templates (clarifier.md, reviewer.md, task-runner.md) — embedded via go:embed
+agents/                  # Agent templates (clarifier.md, reviewer.md, task-runner.md, efficiency.md) — embedded via go:embed
 hooks/                   # PreToolUse hook scripts — embedded via go:embed, + hook_test.go
 docs/                    # Agent behavioral rules, code quality baseline, LLM failure mode research
 docs/architecture/       # Architecture docs (split by topic) — see docs/architecture/README.md for index
@@ -42,7 +42,7 @@ internal/
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
 ├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
 ├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
-├── ssh/                 # Wish SSH server: StartServer(), auth config (pub-key + password)
+├── ssh/                 # Wish SSH server: StartServerAsync(), ServerHandle, StartServer(), auth config
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
 ├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
@@ -75,9 +75,9 @@ Agents, hooks, and docs are embedded in the binary and deployed at runtime to ta
 
 ```
 main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, guidelinesMD, principlesMD, hookScripts)
+  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts)
     → stored in AppState fields
-      → DeployHooks() on every agent launch ([c]/[r]/[l])
+      → DeployHooks() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
@@ -112,7 +112,7 @@ The TUI monitors Claude Code sessions via JSONL log files:
 `AppState` (`internal/tui/appstate.go`) holds all shared mutable state. Multiple `tea.Program` instances share one `*AppState`:
 
 ```
-zpit serve
+zpit serve  (or zpit with auto_serve=true)
   └─ AppState (one instance)
        ├─ cfg, env, clients, broker   (read-only after init — no locks needed)
        ├─ activeTerminals, loops,    (mutable — protected by sync.RWMutex)
@@ -122,6 +122,8 @@ zpit serve
             ├─ SSH Client B → Model { state: *AppState, isRemote: true }
             └─ Local TUI    → Model { state: *AppState, isRemote: false }
 ```
+
+**Auto-serve mode** (`ssh.auto_serve = true`): When `zpit` is run without subcommand and `auto_serve` is enabled, it automatically starts the SSH server in-process via `StartServerAsync()`, then connects to itself via `ssh localhost -p <port>`. The user sees the same TUI but over SSH — allowing seamless mobile access. When the local SSH session ends, the server shuts down automatically. Implementation: `runAutoServe()` in `main.go`, which uses `ServerHandle` from `internal/ssh/server.go` for lifecycle management.
 
 **Concurrency model:**
 - Two independent mutexes: `mu` (RWMutex) for state, `subMu` (Mutex) for subscribers — avoids deadlock when `NotifyAll` is called while `mu` is held
@@ -138,7 +140,7 @@ The `[e]` key opens a sub-menu for config editing:
 
 **Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_level`.
 
-**Restart-required fields** (status bar warning): `broker_port`, `ssh.*`, `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
+**Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
 
 Channel quick-toggle uses targeted TOML writing (`internal/config/toml_writer.go`) — locates the matching `[[projects]]` block by `id` and updates only the `channel_enabled` or `channel_listen` line, preserving all other content including comments.
 
@@ -176,7 +178,7 @@ Agent A (Project X)            Agent B (Project Y)
 
 **Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, SSE streaming, and project discovery. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Tracks SSE connections per project per agent type for discovery. SSE endpoint accepts optional `?agent_type=X` query parameter. Started in `NewAppState()` only if any project has `channel_enabled`.
 
-**AgentName**: Each agent gets a human-readable name (`AgentName` field on `Message` and `Artifact` structs, json tag `agent_name`). Format: `{type}-{4hex}` for manual launches (e.g. `clarifier-a3f7`), `{role}-#{issueID}` for loop launches (e.g. `coding-#42`). Generated by TUI at launch time via `crypto/rand`, passed through `ZPIT_AGENT_NAME` env var → `ServerConfig.AgentName` → HTTP POST body → broker storage → SSE → Channel view display as `[agent-name]` tag.
+**AgentName**: Each agent gets a human-readable name (`AgentName` field on `Message` and `Artifact` structs, json tag `agent_name`). Format: `{type}-{4hex}` for manual launches (e.g. `clarifier-a3f7`, `efficiency-a3f7`), `{role}-#{issueID}` for loop launches (e.g. `coding-#42`). Generated by TUI at launch time via `crypto/rand`, passed through `ZPIT_AGENT_NAME` env var → `ServerConfig.AgentName` → HTTP POST body → broker storage → SSE → Channel view display as `[agent-name]` tag.
 
 **MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes seven tools: `publish_artifact`, `list_artifacts`, `send_message`, `list_projects`, `subscribe_project`, `unsubscribe_project`, `list_subscriptions`. Tools accept optional `target_project` parameter for cross-project communication. Includes `AgentName` in HTTP POST bodies for `publish_artifact` and `send_message`. Spawns one SSE listener goroutine per subscribed project (own + `ListenProjects`), with self-echo filtering via per-instance UUID. Supports runtime dynamic subscription management via `subscribe_project`/`unsubscribe_project`/`list_subscriptions` tools (per-project context with mutex-protected cancel map). Entry point: `zpit serve-channel` subcommand.
 
@@ -184,7 +186,7 @@ Agent A (Project X)            Agent B (Project Y)
 
 **TUI integration**: Loop start / manual launch calls `channelSubscribeCmd()` for own project + each `channel_listen` entry → subscribes to EventBus → `channelReadNextCmd()` blocks on channel → `ChannelEventMsg` appended to `AppState.channelEvents[projectID]` → `ViewChannel` merges events from own + listen projects, sorted by timestamp, with `[source]` tag for cross-project events. Loop stop unsubscribes all related channels (own + listen).
 
-**Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server. Env var `ZPIT_AGENT_NAME` passes the generated agent name to MCP server. Env var `ZPIT_AGENT_TYPE` passes the agent type (e.g. `clarifier`, `coding`, `reviewer`, `claude`) to MCP server for SSE registration.
+**Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server. Env var `ZPIT_AGENT_NAME` passes the generated agent name to MCP server. Env var `ZPIT_AGENT_TYPE` passes the agent type (e.g. `clarifier`, `coding`, `reviewer`, `efficiency`, `claude`) to MCP server for SSE registration.
 
 ### TrackerClient
 
@@ -208,7 +210,7 @@ State transitions are **label-driven** (poll issue labels, not PID monitoring). 
 - Coding agent sets `review` → reviewer starts
 - Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
 
-States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotCoding` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
 
 ### Task Execution Model (Subagent + Agent Teams)
 
@@ -233,7 +235,7 @@ When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrat
 1. **agent-guidelines.md** (soft — deployed to `.claude/docs/`, agents read on startup)
 2. **--allowedTools per agent role** (medium — Claude Code enforced)
 3. **PreToolUse hooks** (hard — enforced even with `--bypass-all-permissions`):
-   - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/`, `CLAUDE.md`, `.git/`, `.env`
+   - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/agents/`, `.claude/settings`, `.git/`, `.env`
    - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
    - `git-guard.sh` — push whitelist (only `feat/*`), blocks merge/rebase/branch-delete
    - `notify-permission.sh` — not safety; writes signal file for TUI permission detection

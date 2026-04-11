@@ -60,6 +60,7 @@ type AppState struct {
 	clarifierMD                  []byte
 	reviewerMD                   []byte
 	taskRunnerMD                 []byte
+	efficiencyMD                 []byte
 	agentGuidelinesMD            []byte
 	codeConstructionPrinciplesMD []byte
 	hookScripts                  worktree.HookScripts
@@ -144,7 +145,7 @@ func (s *AppState) ChannelEvents(projectID string) []broker.Event {
 // Initializes all maps and sets defaults equivalent to the former NewModel logic.
 func NewAppState(
 	cfg *config.Config,
-	clarifierMD, reviewerMD, taskRunnerMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte,
+	clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte,
 	hookScripts worktree.HookScripts,
 	logWriter io.Writer,
 ) *AppState {
@@ -200,6 +201,7 @@ func NewAppState(
 		clarifierMD:                  clarifierMD,
 		reviewerMD:                   reviewerMD,
 		taskRunnerMD:                 taskRunnerMD,
+		efficiencyMD:                 efficiencyMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
 		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
 		hookScripts:                  hookScripts,

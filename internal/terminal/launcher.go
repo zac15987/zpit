@@ -84,10 +84,22 @@ func hasAgentFlag(extraArgs []string) bool {
 	return false
 }
 
+// needsAgentEnv returns true if the agent session requires ZPIT_AGENT=1.
+// The efficiency agent works directly in the project directory under user control,
+// so hook enforcement is intentionally skipped.
+func needsAgentEnv(extraArgs []string) bool {
+	for i, arg := range extraArgs {
+		if arg == "--agent" && i+1 < len(extraArgs) {
+			return extraArgs[i+1] != "efficiency"
+		}
+	}
+	return false
+}
+
 // BuildWindowsArgs constructs wt.exe arguments for testing without exec.
 // When profile is non-empty, -p "ProfileName" is inserted before the -- separator.
-// When extraArgs contains "--agent", the command is wrapped with the appropriate
-// env wrapper based on shell type to inject ZPIT_AGENT=1.
+// When extraArgs contains "--agent" (except "efficiency"), the command is wrapped
+// with the appropriate env wrapper based on shell type to inject ZPIT_AGENT=1.
 // shell should be "cmd", "pwsh", or "powershell" (empty defaults to "cmd").
 func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, extraArgs []string) []string {
 	var base []string
@@ -103,7 +115,7 @@ func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, ext
 	}
 	base = append(base, "-d", projectPath, "--title", projectName, "--")
 
-	if hasAgentFlag(extraArgs) {
+	if needsAgentEnv(extraArgs) {
 		wrapper := buildEnvWrapper(shell)
 		return append(append(base, wrapper...), buildClaudeArgs(extraArgs)...)
 	}
@@ -124,11 +136,11 @@ func buildEnvWrapper(shell string) []string {
 }
 
 // BuildTmuxArgs constructs tmux arguments for testing without exec.
-// When extraArgs contains "--agent", ZPIT_AGENT=1 is prefixed to the command
-// so hook scripts can detect agent sessions.
+// When extraArgs contains "--agent" (except "efficiency"), ZPIT_AGENT=1 is
+// prefixed to the command so hook scripts can detect agent sessions.
 func BuildTmuxArgs(projectID, projectPath, mode string, extraArgs []string) []string {
 	claudeCmd := strings.Join(buildClaudeArgs(extraArgs), " ")
-	if hasAgentFlag(extraArgs) {
+	if needsAgentEnv(extraArgs) {
 		claudeCmd = "ZPIT_AGENT=1 " + claudeCmd
 	}
 	switch mode {

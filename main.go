@@ -7,9 +7,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,6 +33,9 @@ var reviewerAgentMD []byte
 
 //go:embed agents/task-runner.md
 var taskRunnerMD []byte
+
+//go:embed agents/efficiency.md
+var efficiencyMD []byte
 
 //go:embed docs/agent-guidelines.md
 var agentGuidelinesMD []byte
@@ -78,14 +84,19 @@ func main() {
 	}
 }
 
-// runLocalTUI runs the local interactive TUI (current behavior, unchanged).
+// runLocalTUI runs the local interactive TUI, or auto-serve mode if configured.
 func runLocalTUI() {
 	cfg, logFile := loadConfigAndLog()
 	if logFile != nil {
 		defer logFile.Close()
 	}
 
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logFile)
+	if cfg.SSH.AutoServe {
+		runAutoServe(cfg, logFile)
+		return
+	}
+
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logFile)
 	p := tea.NewProgram(
 		tui.NewModel(appState),
 		tea.WithAltScreen(),
@@ -113,7 +124,7 @@ func runServe() {
 	logger := log.New(combined, "", log.LstdFlags)
 
 	// AppState also gets the combined writer so all state transitions are logged to both.
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), combined)
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), combined)
 
 	if err := zssh.StartServer(appState, cfg.SSH, logger); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -145,6 +156,104 @@ func runConnect() {
 		fmt.Fprintf(os.Stderr, "ssh exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runAutoServe starts an SSH server in-process, connects via SSH client,
+// and shuts down the server when the client disconnects.
+func runAutoServe(cfg *config.Config, logFile *os.File) {
+	// Logs go to logFile only — stdout belongs to the SSH client subprocess.
+	var logWriter io.Writer = io.Discard
+	if logFile != nil {
+		logWriter = logFile
+	}
+	logger := log.New(logWriter, "", log.LstdFlags)
+
+	logger.Println("auto_serve: starting")
+
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logWriter)
+
+	// Start SSH server (non-blocking — port is ready on return).
+	handle, err := zssh.StartServerAsync(appState, cfg.SSH, logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "auto_serve: failed to start SSH server: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Println("auto_serve: SSH server ready")
+
+	// Ensure server is shut down on all exit paths.
+	defer func() {
+		logger.Println("auto_serve: shutting down SSH server")
+		if err := handle.Shutdown(); err != nil {
+			logger.Printf("auto_serve: shutdown error: %v", err)
+		}
+		logger.Println("auto_serve: done")
+	}()
+
+	// Locate ssh client.
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "auto_serve: ssh not found in PATH")
+		fmt.Fprintln(os.Stderr, "Install OpenSSH or add it to your PATH.")
+		return // deferred shutdown will clean up the server
+	}
+
+	// Build SSH command with host-key verification disabled (connecting to our own server).
+	port := strconv.Itoa(cfg.SSH.Port)
+	nullFile := "/dev/null"
+	if runtime.GOOS == "windows" {
+		nullFile = "NUL"
+	}
+	logger.Printf("auto_serve: connecting to localhost:%s", port)
+
+	cmd := exec.Command(sshPath, "localhost", "-p", port,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile="+nullFile,
+	)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Intercept signals so Ctrl+C goes to the SSH client, not our process.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Forward signals to SSH client subprocess.
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-sigCh:
+			logger.Printf("auto_serve: received %s, terminating SSH client", sig)
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
+		case <-done:
+		}
+	}()
+
+	// Run SSH client (blocks until disconnect).
+	clientErr := cmd.Run()
+
+	// Stop intercepting signals.
+	close(done)
+	signal.Stop(sigCh)
+
+	if clientErr != nil {
+		logger.Printf("auto_serve: SSH client exited: %v", clientErr)
+	} else {
+		logger.Println("auto_serve: SSH client disconnected")
+	}
+
+	// Check if server encountered an error during the session (non-blocking).
+	select {
+	case err := <-handle.ErrCh():
+		if err != nil {
+			logger.Printf("auto_serve: server error during session: %v", err)
+		}
+	default:
+		// Server still running — will be shut down by deferred Shutdown.
+	}
+
+	// Deferred shutdown handles the rest.
 }
 
 // runServeChannel starts the Channel MCP stdio server for cross-worktree agent communication.

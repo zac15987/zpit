@@ -55,6 +55,7 @@ type SSHConfig struct {
 	HostKeyPath        string `toml:"host_key_path"`
 	PasswordEnv        string `toml:"password_env"`
 	AuthorizedKeysPath string `toml:"authorized_keys_path"`
+	AutoServe          bool   `toml:"auto_serve"`
 }
 
 type TerminalConfig struct {
@@ -171,6 +172,7 @@ max_per_project = 5
 # host_key_path = "~/.zpit/ssh/host_ed25519"
 # authorized_keys_path = "~/.ssh/authorized_keys"
 # password_env = ""               # env var name for password auth (e.g. "ZPIT_SSH_PASSWORD")
+# auto_serve = false              # when true, "zpit" auto-starts SSH server + connects
 
 # --- Providers ---
 # Uncomment and fill in your tracker provider(s).

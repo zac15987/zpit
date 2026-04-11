@@ -19,6 +19,7 @@ port = 2200
 host = "0.0.0.0"
 host_key_path = "~/.zpit/ssh/host_ed25519"
 authorized_keys_path = "~/.ssh/authorized_keys"
+auto_serve = true
 # password_env = "ZPIT_SSH_PASSWORD"   # env var name; leave commented to disable password auth
 
 [notification]

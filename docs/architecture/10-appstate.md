@@ -27,10 +27,11 @@ AppState (shared, one instance)
 
 ## 10.2 SSH Server Mode（Wish）
 
-三個子命令透過 `os.Args` routing：
+四個路徑透過 `os.Args` routing：
 
 ```
-zpit           → runLocalTUI()     # 本機 TUI
+zpit           → runLocalTUI()     # 本機 TUI（auto_serve=false 時）
+zpit           → runAutoServe()    # 自動 serve + connect（auto_serve=true 時）
 zpit serve     → runServe()        # 無頭 SSH daemon
 zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 ```
@@ -65,6 +66,27 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 └─────────────────────────────────────────────────────────┘
 ```
 
+**Auto-serve 模式（`auto_serve = true`）：**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  zpit (auto_serve=true)                                 │
+│                                                         │
+│  runAutoServe()                                         │
+│    ├── AppState (logger → logFile only, no stdout)      │
+│    ├── StartServerAsync() → ServerHandle                │
+│    │     ├── setup: resolve paths, auth, wish.NewServer │
+│    │     ├── RunServerInit() (session scan, providers)  │
+│    │     ├── net.Listen("tcp", addr)  ← port ready      │
+│    │     └── go srv.Serve(ln)                           │
+│    ├── ssh localhost -p <port> (subprocess, blocks)     │
+│    │     └── SSH session → NewModelWithState(state,true)│
+│    └── on disconnect → handle.Shutdown() → exit         │
+└─────────────────────────────────────────────────────────┘
+```
+
+與 `zpit serve` 的差異：auto_serve 的 server 生命週期由本地 SSH 連線控制——斷線即關閉。`zpit serve` 則持續運行直到收到 SIGINT/SIGTERM。兩者共用 `StartServerAsync()` 和 `ServerHandle`。
+
 **SSH Config（`[ssh]` section in config.toml）：**
 
 ```toml
@@ -74,6 +96,7 @@ host = "0.0.0.0"
 host_key_path = "~/.zpit/ssh/host_ed25519"     # 支援 ~/ 展開
 password_env = "ZPIT_SSH_PASSWORD"              # env var 名稱，選配
 authorized_keys_path = "~/.ssh/authorized_keys" # 選配
+auto_serve = false                             # true 時 zpit 自動啟動 server + 連入
 ```
 
 **認證機制：**
@@ -87,7 +110,9 @@ authorized_keys_path = "~/.ssh/authorized_keys" # 選配
 |------|--------------------------|--------------------------|
 | `Init()` | `serverInitCmds()` + `tickCmd()` (both in session.go) | `tickCmd()` only |
 | Quit (`q`) | 停 watchers + loops + `tea.Quit` | `tea.Quit` only |
-| Server init | 在 `Init()` 中執行 | `zpit serve` 啟動時同步執行一次 |
+| Server init | 在 `Init()` 中執行 | `zpit serve` / `runAutoServe` 啟動時同步執行一次 |
+
+> **Note:** auto_serve 模式下的 SSH session 同樣是 `isRemote=true`，行為與 `zpit serve` 建立的 session 完全一致。
 
 ---
 

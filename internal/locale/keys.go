@@ -59,7 +59,9 @@ const (
 	KeyClarifierNotDeployed Key = "clarifier_not_deployed"
 	KeyDeployAndLaunch      Key = "deploy_and_launch"
 	KeyCancel               Key = "cancel"
-	KeyReviewerNotDeployed  Key = "reviewer_not_deployed"
+	KeyReviewerNotDeployed   Key = "reviewer_not_deployed"
+	KeyEfficiencyAgent       Key = "efficiency_agent"
+	KeyEfficiencyNotDeployed Key = "efficiency_not_deployed"
 
 	// Undeploy confirm dialogs (model.go)
 	KeyUndeployConfirm Key = "undeploy_confirm"

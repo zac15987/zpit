@@ -4,7 +4,8 @@ package tui
 //
 // Lock protocol:
 //   - Cmd factory methods (launchClaudeCmd, launchClarifierCmd, launchReviewerCmd,
-//     deployAndLaunchAgent, openFolderCmd, openTrackerCmd): read-only access to
+//     launchEfficiencyCmd, deployAndLaunchAgent, deployAndLaunchAgentLite,
+//     openFolderCmd, openTrackerCmd): read-only access to
 //     m.state.projects[m.cursor] and read-only config fields — no lock needed.
 //   - Slot operation methods (launchFocusClaudeCmd, openSlotFolderCmd, openSlotIssueCmd):
 //     acquire RLock to read loops/slots, release before I/O or returning cmd.
@@ -166,6 +167,47 @@ func (m Model) launchReviewerCmd() tea.Cmd {
 	}
 }
 
+// launchEfficiencyCmd opens a new terminal with claude --agent efficiency.
+// Unlike clarifier/reviewer, this does not redeploy — efficiency.md is already present.
+func (m Model) launchEfficiencyCmd() tea.Cmd {
+	project := m.state.projects[m.cursor]
+	cfg := m.state.cfg.Terminal
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	logger := m.state.logger
+
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
+
+	return func() tea.Msg {
+		// Write .mcp.json for channel communication with a fresh AgentName.
+		if channelEnabled && brokerAddr != "" {
+			agentName := generateAgentName("efficiency")
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, agentName, "efficiency", channelListen); err != nil {
+				logger.Printf("efficiency: failed to write .mcp.json for project=%s: %v", project.ID, err)
+			} else {
+				logger.Printf("efficiency: wrote .mcp.json to %s for project=%s agent=%s", projectPath, project.ID, agentName)
+			}
+		}
+
+		args := []string{"--agent", "efficiency"}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
+		return LaunchResultMsg{
+			ProjectID: project.ID,
+			Result:    result,
+			Err:       err,
+		}
+	}
+}
+
 // deployAndLaunchAgent deploys the named agent to the project and launches it.
 // If the broker is available (channel_enabled), writes .mcp.json to the project root
 // with ZPIT_ISSUE_ID = "0" (lobby) so the manual agent can use channel communication.
@@ -222,6 +264,79 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 
 		// Launch
 		args := []string{"--agent", agentName}
+		if channelEnabled {
+			args = append(args, "--channel-enabled")
+		}
+		result, err := terminal.LaunchClaude(project, cfg, args...)
+		return LaunchResultMsg{
+			ProjectID: project.ID,
+			Result:    result,
+			Err:       err,
+		}
+	}
+}
+
+// deployAndLaunchAgentLite deploys the efficiency agent with minimal setup and launches it.
+// Unlike deployAndLaunchAgent, this function:
+//   - Does NOT deploy hooks (no path-guard, bash-firewall, git-guard)
+//   - Does NOT set ZPIT_AGENT=1 environment variable
+//   - Deploys: gitignore, gitattributes, agent MD, docs (including tracker.md)
+//   - Writes .mcp.json if channel_enabled (with agent_type=efficiency)
+func (m Model) deployAndLaunchAgentLite() tea.Cmd {
+	project := m.state.projects[m.cursor]
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	cfg := m.state.cfg.Terminal
+	logger := m.state.logger
+
+	agentMD := injectLangInstruction(m.state.efficiencyMD)
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	var trackerDocContent string
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+	}
+	// Capture broker info for .mcp.json (read-only after init).
+	channelEnabled := project.ChannelEnabled
+	channelListen := project.ChannelListen
+	var brokerAddr string
+	if channelEnabled && m.state.broker != nil {
+		brokerAddr = m.state.broker.Addr()
+	}
+	zpitBin := m.state.cfg.ZpitBin
+
+	return func() tea.Msg {
+		// (a) Ensure gitignore + gitattributes
+		worktree.EnsureGitignore(projectPath)
+		worktree.EnsureGitattributes(projectPath)
+
+		// (b) Deploy agent — NO hooks deployed
+		agentDir := filepath.Join(projectPath, ".claude", "agents")
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+		if err := os.WriteFile(filepath.Join(agentDir, "efficiency.md"), agentMD, 0o644); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Deploy failed: %s", err)}
+		}
+
+		// (c) Deploy docs (including tracker.md)
+		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
+
+		// (d) Write .mcp.json if channel_enabled (agent_type=efficiency)
+		if channelEnabled && brokerAddr != "" {
+			channelAgentName := generateAgentName("efficiency")
+			if err := writeMCPConfig(projectPath, brokerAddr, project.ID, "0", zpitBin, channelAgentName, "efficiency", channelListen); err != nil {
+				logger.Printf("efficiency: failed to write .mcp.json for project=%s: %v", project.ID, err)
+			} else {
+				logger.Printf("efficiency: wrote .mcp.json to %s for project=%s agent=%s", projectPath, project.ID, channelAgentName)
+			}
+		}
+
+		// (e) NO DeployHooksToProject call
+		// (f) NO ZPIT_AGENT=1 — launcher skips env injection for "efficiency" agent
+		//     (see needsAgentEnv in terminal/launcher.go)
+
+		// (g) Launch with --agent efficiency
+		args := []string{"--agent", "efficiency"}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}

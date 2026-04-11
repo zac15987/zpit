@@ -173,6 +173,7 @@ func (m Model) renderHotkeys() string {
 		{"c", locale.T(locale.KeyClarifyReq), false},
 		{"l", locale.T(locale.KeyLoopAutoImpl), false},
 		{"r", locale.T(locale.KeyReviewChanges), false},
+		{"f", locale.T(locale.KeyEfficiencyAgent), false},
 		{"s", locale.T(locale.KeyStatusOverview), false},
 		{"o", locale.T(locale.KeyOpenFolder), false},
 		{"p", locale.T(locale.KeyOpenTracker), false},

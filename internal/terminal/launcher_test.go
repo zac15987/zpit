@@ -298,3 +298,54 @@ func TestHasAgentFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestNeedsAgentEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"nil", nil, false},
+		{"empty", []string{}, false},
+		{"no agent", []string{"--resume"}, false},
+		{"clarifier", []string{"--agent", "clarifier"}, true},
+		{"coding", []string{"--agent", "coding"}, true},
+		{"reviewer", []string{"--agent", "reviewer"}, true},
+		{"efficiency skipped", []string{"--agent", "efficiency"}, false},
+		{"efficiency with channel", []string{"--agent", "efficiency", "--channel-enabled"}, false},
+		{"agent flag without value", []string{"--agent"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := needsAgentEnv(tt.args); got != tt.want {
+				t.Errorf("needsAgentEnv(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildWindowsArgs_EfficiencyNoWrapper(t *testing.T) {
+	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "efficiency"})
+	// Efficiency agent should NOT have the env wrapper (cmd /c zpit-env.cmd)
+	for i, a := range args {
+		if a == "cmd" && i+2 < len(args) && args[i+1] == "/c" {
+			t.Errorf("efficiency agent should not have env wrapper, got: %v", args)
+		}
+	}
+	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--", "claude", "--agent", "efficiency"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildTmuxArgs_EfficiencyNoPrefix(t *testing.T) {
+	args := BuildTmuxArgs("proj", "/path", "new_window", []string{"--agent", "efficiency"})
+	cmd := args[len(args)-1]
+	if strings.HasPrefix(cmd, "ZPIT_AGENT=1") {
+		t.Errorf("efficiency agent should not have ZPIT_AGENT=1 prefix, got: %s", cmd)
+	}
+	want := []string{"new-window", "-n", "proj", "-c", "/path", "claude --agent efficiency"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
