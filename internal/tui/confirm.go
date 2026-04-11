@@ -125,6 +125,25 @@ func (m *Model) showIssueConfirm(issueID, issueTitle string) {
 	}
 }
 
+// showKillTerminalConfirm displays a huh confirm dialog for killing a terminal process.
+func (m *Model) showKillTerminalConfirm(trackingKey, displayName string, pid int) {
+	title := fmt.Sprintf(locale.T(locale.KeyKillTerminalConfirm), displayName, pid)
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative("Kill").
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(50)
+	m.confirmAction = func() tea.Cmd {
+		return m.killTerminalCmd(trackingKey, displayName, pid)
+	}
+}
+
 // executePendingOp continues the original operation after labels are confirmed present.
 func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 	op := m.pendingOp
