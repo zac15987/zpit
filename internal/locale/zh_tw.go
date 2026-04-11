@@ -87,6 +87,8 @@ var zhTW = map[Key]string{
 	// Terminal focus panel
 	KeyKillTerminal:         "終端已關閉：%s (PID %d)",
 	KeyKillTerminalConfirm:  "關閉終端 %s (PID %d)？\n這將強制終止 Claude Code 程序。",
+	KeyKillFailed:           "關閉失敗：%s",
+	KeyKillButton:           "關閉",
 	KeyTerminalNoPID:        "終端無有效程序",
 	KeyTerminalAlreadyEnded: "終端已結束",
 	KeySwitchPanel:          "切換面板",

@@ -134,7 +134,7 @@ func (m *Model) showKillTerminalConfirm(trackingKey, displayName string, pid int
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title(title).
-				Affirmative("Kill").
+				Affirmative(locale.T(locale.KeyKillButton)).
 				Negative(locale.T(locale.KeyCancel)).
 				Value(confirmed),
 		),

@@ -959,13 +959,15 @@ func (m Model) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKillTerminal(msg KillTerminalMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
-		m.setStatus(fmt.Sprintf("Kill failed: %s", msg.Err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyKillFailed), msg.Err))
 		return m, nil
 	}
 
 	m.state.Lock()
 	at, ok := m.state.activeTerminals[msg.TrackingKey]
+	var pid int
 	if ok {
+		pid = at.SessionPID
 		if at.Watcher != nil {
 			at.Watcher.Stop()
 		}
@@ -977,7 +979,7 @@ func (m Model) handleKillTerminal(msg KillTerminalMsg) (tea.Model, tea.Cmd) {
 
 	if ok {
 		displayName := m.projectName(msg.TrackingKey)
-		m.setStatus(fmt.Sprintf(locale.T(locale.KeyKillTerminal), displayName, at.SessionPID))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyKillTerminal), displayName, pid))
 	}
 
 	return m, nil

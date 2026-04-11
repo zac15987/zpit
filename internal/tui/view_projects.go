@@ -242,7 +242,8 @@ func (m Model) renderActiveTerminals() string {
 	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
 	// Sort keys for stable render order.
-	termKeys := m.sortedTerminalKeys()
+	// Use locked variant — caller (syncViewportContent) already holds RLock.
+	termKeys := m.sortedTerminalKeysLocked()
 
 	i := 1
 	for _, projectID := range termKeys {

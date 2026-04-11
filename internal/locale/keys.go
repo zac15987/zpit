@@ -88,6 +88,8 @@ const (
 	// Terminal focus panel
 	KeyKillTerminal         Key = "kill_terminal"
 	KeyKillTerminalConfirm  Key = "kill_terminal_confirm"
+	KeyKillFailed           Key = "kill_failed"
+	KeyKillButton           Key = "kill_button"
 	KeyTerminalNoPID        Key = "terminal_no_pid"
 	KeyTerminalAlreadyEnded Key = "terminal_already_ended"
 	KeySwitchPanel          Key = "switch_panel"

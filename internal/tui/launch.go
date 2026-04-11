@@ -695,10 +695,16 @@ func (m Model) handleTerminalsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // sortedTerminalKeys returns sorted activeTerminals keys.
-// Caller must NOT hold a write lock (reads activeTerminals).
+// Caller must NOT hold any lock (acquires RLock internally).
 func (m Model) sortedTerminalKeys() []string {
 	m.state.RLock()
 	defer m.state.RUnlock()
+	return m.sortedTerminalKeysLocked()
+}
+
+// sortedTerminalKeysLocked returns sorted activeTerminals keys.
+// Caller must already hold at least RLock.
+func (m Model) sortedTerminalKeysLocked() []string {
 	keys := make([]string, 0, len(m.state.activeTerminals))
 	for k := range m.state.activeTerminals {
 		keys = append(keys, k)

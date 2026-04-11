@@ -87,6 +87,8 @@ var en = map[Key]string{
 	// Terminal focus panel
 	KeyKillTerminal:         "Terminal killed: %s (PID %d)",
 	KeyKillTerminalConfirm:  "Kill terminal %s (PID %d)?\nThis will force-terminate the Claude Code process.",
+	KeyKillFailed:           "Kill failed: %s",
+	KeyKillButton:           "Kill",
 	KeyTerminalNoPID:        "Terminal has no active process",
 	KeyTerminalAlreadyEnded: "Terminal already ended",
 	KeySwitchPanel:          "Switch Panel",
