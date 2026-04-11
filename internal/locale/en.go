@@ -84,6 +84,15 @@ var en = map[Key]string{
 	KeyNoWorktreePath: "Slot has no worktree",
 	KeyLoopSlotHelp:   "Enter: open Claude  o: open folder  p: open issue  \u2191\u2193: navigate  Tab/Esc: back",
 
+	// Terminal focus panel
+	KeyKillTerminal:         "Terminal killed: %s (PID %d)",
+	KeyKillTerminalConfirm:  "Kill terminal %s (PID %d)?\nThis will force-terminate the Claude Code process.",
+	KeyTerminalNoPID:        "Terminal has no active process",
+	KeyTerminalAlreadyEnded: "Terminal already ended",
+	KeySwitchPanel:          "Switch Panel",
+	KeyTerminalHelp:         "\u2191\u2193 select \u2502 x close \u2502 Tab switch \u2502 Esc back",
+	KeyCloseTerminal:        "Close Terminal",
+
 	// Sound file warning
 	KeySoundFileNotFound: "Sound file not found: %s",
 
