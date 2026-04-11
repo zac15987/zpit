@@ -84,6 +84,17 @@ var zhTW = map[Key]string{
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
 	KeyLoopSlotHelp:   "Enter: 開啟 Claude  o: 開啟資料夾  p: 開啟 issue  \u2191\u2193: 選擇  Tab/Esc: 返回",
 
+	// Terminal focus panel
+	KeyKillTerminal:         "終端已關閉：%s (PID %d)",
+	KeyKillTerminalConfirm:  "關閉終端 %s (PID %d)？\n這將強制終止 Claude Code 程序。",
+	KeyKillFailed:           "關閉失敗：%s",
+	KeyKillButton:           "關閉",
+	KeyTerminalNoPID:        "終端無有效程序",
+	KeyTerminalAlreadyEnded: "終端已結束",
+	KeySwitchPanel:          "切換面板",
+	KeyTerminalHelp:         "\u2191\u2193 選擇 \u2502 x 關閉 \u2502 Tab 切換 \u2502 Esc 返回",
+	KeyCloseTerminal:        "關閉終端",
+
 	// Sound file warning
 	KeySoundFileNotFound: "找不到音效檔案：%s",
 

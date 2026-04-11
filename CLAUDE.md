@@ -96,6 +96,8 @@ The TUI follows Bubble Tea's Elm architecture with a consistent pattern across a
 
 Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
 
+**Focus panel system**: The main view (`ViewProjects`) has three focusable panels controlled by `FocusedPanel` enum (`FocusProjects` → `FocusTerminals` → `FocusLoopSlots`). Tab cycles through panels that have content (terminals panel skipped if no active terminals, loop panel skipped if no loop slots). Each panel has its own cursor (`cursor` for projects, `termCursor` for terminals, `loopSlotCursor` for loop slots). The `x` key kills the selected terminal when `FocusTerminals` is active (with confirm dialog, force-kills the process). `FocusedPanel` is per-Model (per-connection UI state), not shared in AppState.
+
 ### Session Log Monitoring
 
 The TUI monitors Claude Code sessions via JSONL log files:

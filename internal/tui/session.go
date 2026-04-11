@@ -475,6 +475,26 @@ func waitForLogCmd(projectID string, pid int, sessionID, logPath, workDir string
 	}
 }
 
+// killTerminalCmd sends SIGKILL/TerminateProcess to the given PID.
+// Must NOT be called while holding a lock.
+func (m Model) killTerminalCmd(trackingKey, displayName string, pid int) tea.Cmd {
+	logger := m.state.logger
+	return func() tea.Msg {
+		logger.Printf("terminal kill: key=%s pid=%d", trackingKey, pid)
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			logger.Printf("terminal kill: FindProcess failed: key=%s pid=%d err=%v", trackingKey, pid, err)
+			return KillTerminalMsg{TrackingKey: trackingKey, Err: fmt.Errorf("find process %d: %w", pid, err)}
+		}
+		if err := proc.Kill(); err != nil {
+			logger.Printf("terminal kill: Kill failed: key=%s pid=%d err=%v", trackingKey, pid, err)
+			return KillTerminalMsg{TrackingKey: trackingKey, Err: fmt.Errorf("kill process %d: %w", pid, err)}
+		}
+		logger.Printf("terminal kill: success key=%s pid=%d", trackingKey, pid)
+		return KillTerminalMsg{TrackingKey: trackingKey, Err: nil}
+	}
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return TickMsg(t)
