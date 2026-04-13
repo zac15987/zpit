@@ -17,8 +17,10 @@ echo "$COMMAND" | grep -qiE '^\s*git\s' || exit 0
 # --- Push whitelist ---
 # Agents may only push feat/* branches (needed to open PRs).
 if echo "$COMMAND" | grep -qiE 'git\s+push'; then
-  # Always block force push
-  if echo "$COMMAND" | grep -qiE '(-f|--force)'; then
+  # Always block force push. Match -f / --force / --force-with-lease only when
+  # they appear as standalone flags (surrounded by whitespace or at start/end),
+  # so branch names like "feat/89-...-fetch-pull" aren't false positives.
+  if echo "$COMMAND" | grep -qiE '(^|[[:space:]])(-f|--force[a-z-]*)([[:space:]]|$)'; then
     echo "BLOCKED: Force push is not allowed." >&2
     exit 2
   fi

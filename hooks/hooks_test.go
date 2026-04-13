@@ -189,6 +189,36 @@ func TestGitGuard_AllowsPushUFeatBranch(t *testing.T) {
 	}
 }
 
+// Regression: branch names containing "-f..." (e.g. "-fetch") must not
+// trip the force-push detector. See upstream bug where
+// feat/89-git-status-project-branch-fetch-pull was blocked as a force push.
+func TestGitGuard_AllowsPushFeatBranchContainingDashF(t *testing.T) {
+	code, msg := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push -u origin feat/89-git-status-project-branch-fetch-pull"}}`,
+		agentEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d: %s", code, msg)
+	}
+}
+
+func TestGitGuard_BlocksForceWithLease(t *testing.T) {
+	code, _ := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push --force-with-lease origin feat/123-slug"}}`,
+		agentEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
+func TestGitGuard_BlocksForcePushAtEnd(t *testing.T) {
+	code, _ := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git push origin feat/123-slug --force"}}`,
+		agentEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
 func TestGitGuard_BlocksResetHard(t *testing.T) {
 	code, _ := runHook(t, "git-guard.sh",
 		`{"tool_input":{"command":"git reset --hard HEAD~1"}}`,
