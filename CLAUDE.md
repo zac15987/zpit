@@ -37,6 +37,7 @@ testdata/                # Config fixtures + JSONL session fixtures
 internal/
 ├── broker/              # HTTP event broker for cross-agent channel communication
 ├── config/              # Config structs, Load(), Reload(), Diff(), defaults, BaseDir(), WriteTemplate(), DefaultConfigPath()
+├── git/                 # Git ops wrappers: Fetch, Pull, LogGraph, Branches + parsers
 ├── locale/              # i18n: SetLanguage(), T(), ResponseInstruction() — en + zh-TW
 ├── loop/                # Loop state machine types: SlotState enum, Slot, LoopState
 ├── mcp/                 # MCP stdio server for agent↔broker communication (zpit serve-channel)

@@ -230,6 +230,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `p` | Open issue tracker in browser |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
 | `m` | Channel — view cross-agent communication events |
+| `g` | Git Status — view branches (local + remote-only) and commit graph; [f] fetch, [p] pull (--ff-only) |
 | `a` | Add project (coming soon) |
 | `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
 | `x` | Close Terminal — force-close selected terminal (when Terminals panel focused) |
