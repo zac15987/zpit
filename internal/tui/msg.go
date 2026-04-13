@@ -5,6 +5,7 @@ import (
 
 	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/git"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -208,4 +209,30 @@ type ChannelListenUpdatedMsg struct {
 type KillTerminalMsg struct {
 	TrackingKey string
 	Err         error
+}
+
+// --- Git status page ---
+
+// GitDataLoadedMsg carries the result of loading branches + graph for a project.
+type GitDataLoadedMsg struct {
+	ProjectID string
+	Branches  git.BranchInfo
+	Graph     string // raw ANSI-colored log output, may be empty for no-commits repo
+	Err       error
+}
+
+// GitFetchResultMsg carries the result of `git fetch --all --prune`.
+type GitFetchResultMsg struct {
+	ProjectID string
+	Stdout    string
+	Stderr    string
+	Err       error
+}
+
+// GitPullResultMsg carries the result of `git pull --ff-only`.
+type GitPullResultMsg struct {
+	ProjectID string
+	Stdout    string
+	Stderr    string
+	Err       error
 }
