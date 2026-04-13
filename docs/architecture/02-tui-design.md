@@ -199,3 +199,63 @@ TUI 本身透過 session log 即時顯示進度摘要。
 - [2]：進入多選清單，列出所有其他專案 + `_global`，空白鍵 toggle，Enter 確認
 - [3]：本機模式使用 `$EDITOR` 開啟 config.toml，關閉後自動 reload；SSH 遠端模式顯示檔案路徑
 - [r]：手動觸發 config reload（適用於 SSH 遠端或外部編輯後）
+
+---
+
+## 2.6 Git Status 頁面 ✅ 已實作
+
+按 [g] 進入，針對當前選取的 project 顯示 branch 資訊與提交圖，
+支援 [f] fetch / [p] pull，不需離開 Zpit 切到系統終端機即可同步遠端變更。
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  Git Status │ ASE 檢測清潔機台                       [Esc] 返回    ║
+║  Branch: dev                                                       ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                    ║
+║  Local Branches                                                    ║
+║  ─────────────────────────────────────────────────────             ║
+║  * dev                          ↑0 ↓2  origin/dev                  ║
+║    feat/47-ethercat-backoff     ↑3 ↓0  origin/feat/47-ethercat-…   ║
+║    main                         ↑0 ↓0  origin/main                 ║
+║                                                                    ║
+║  Remote-only Branches                                              ║
+║  ─────────────────────────────────────────────────────             ║
+║    origin/feat/50-ng-stats                                         ║
+║    origin/feat/51-alarm-refactor                                   ║
+║                                                                    ║
+║  Commit Graph                                                      ║
+║  ─────────────────────────────────────────────────────             ║
+║  * a1b2c3f (HEAD -> dev, origin/dev) fix: alarm retry              ║
+║  * d4e5f6a add: NG stats report                                    ║
+║  |\                                                                ║
+║  | * 7f8e9d0 (origin/feat/47-ethercat-backoff) wip: backoff        ║
+║  |/                                                                ║
+║  * 0c1d2e3 (origin/main, main) release v0.4                       ║
+║                                                                    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  [f] Fetch  [p] Pull  [r] Refresh  [Esc] Back                     ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+
+操作方式：
+- `[f]`：執行 `git fetch --all --prune`（30 秒 timeout）
+- `[p]`：執行 `git pull --ff-only`（30 秒 timeout）
+- `[r]`：重新載入 branches 與 commit graph
+- `[Esc]`：返回 ViewProjects
+- `↑↓` / `PgUp PgDn`：捲動 commit graph
+
+設計決策 / 註記：
+- **為何 `--ff-only`**：符合 `main ← dev ← feature` branching model，分歧時安全失敗而非默默 merge，
+  避免在 TUI 內產生難以處理的合併衝突。
+- **為何 `--all --prune`**：手機上 merge PR 後 GitHub 會 auto-delete branch，
+  prune 清除 stale remote refs，保持 branch list 乾淨。
+- **為何 shell out git 而非 go-git**：自寫 graph 渲染 ~600 LoC 為過度工程；
+  git 原生 `--graph --oneline` 輸出已含 ANSI 色碼，viewport 直接支援顯示。
+- **並發模型**：fetch/pull 為非阻塞 `tea.Cmd`，status bar 顯示 `{spinner} fetching...`；
+  操作進行中重複按鍵 ignored（`gitOpRunning` flag）；操作成功後自動重刷 branches + graph。
+
+相關檔案：
+- `internal/git/ops.go` — git exec 封裝（FetchAll / PullFF / Branches / Graph）與輸出 parser
+- `internal/tui/gitstatus.go` — message handlers + tea.Cmd（GitStatusMsg / GitOpDoneMsg）
+- `internal/tui/view_gitstatus.go` — render 函式（branch table + graph viewport）
