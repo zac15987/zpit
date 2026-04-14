@@ -25,6 +25,9 @@ import (
 	"github.com/zac15987/zpit/internal/worktree"
 )
 
+// version is set at build time via -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
+
 //go:embed agents/clarifier.md
 var clarifierAgentMD []byte
 
@@ -83,9 +86,11 @@ func main() {
 		runConnect()
 	case "serve-channel":
 		runServeChannel()
+	case "version", "--version":
+		fmt.Println(version)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcmd)
-		fmt.Fprintln(os.Stderr, "Usage: zpit [serve|connect|serve-channel]")
+		fmt.Fprintln(os.Stderr, "Usage: zpit [serve|connect|serve-channel|version]")
 		os.Exit(1)
 	}
 }

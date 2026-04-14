@@ -16,8 +16,12 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+for /f "delims=" %%v in ('git describe --tags --always --dirty 2^>nul') do set "GIT_VERSION=%%v"
+if not defined GIT_VERSION set "GIT_VERSION=dev"
+echo === version: %GIT_VERSION% ===
+
 echo === go build . ===
-go build -v .
+go build -v -ldflags "-X main.version=%GIT_VERSION%" .
 if %errorlevel% neq 0 (
     echo BUILD FAILED
     pause
@@ -25,7 +29,7 @@ if %errorlevel% neq 0 (
 )
 
 echo === go install . ===
-go install -v .
+go install -v -ldflags "-X main.version=%GIT_VERSION%" .
 if %errorlevel% neq 0 (
     echo INSTALL FAILED
     pause
