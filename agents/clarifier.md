@@ -220,6 +220,10 @@ All channel messages in meeting mode MUST use these formats:
     g. **Forbidden vague words**: scan AC lines for "appropriate", "reasonable", "sufficient",
        "when necessary" (case-insensitive). Replace any found with specific, measurable language.
     h. **SCOPE format**: verify each SCOPE line starts with `[modify]`, `[create]`, or `[delete]`.
+    i. **TASKS parallel markers**: if a `## TASKS` section exists, for each group of tasks that
+       share the same dependency set and modify different files, verify ALL are marked `[P]`.
+       If any task in the group is missing `[P]`, add it. A lone task with a unique dependency
+       set should NOT have `[P]` (singleton `[P]` is meaningless).
 15. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
 16. Push the issue to the Tracker:
     a. Before performing any tracker operation, you MUST first read `.claude/docs/tracker.md`.
@@ -335,7 +339,7 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 - Each task touches at most 3 files — if a task needs more than 3 files, split it into smaller tasks
 - Format: `T{N}: [description] [create|modify|delete] file-path (depends: T{M}, T{K} | none)`
   - `T{N}:` — task ID, incrementing from T1
-  - `[P]` — optional parallel marker, placed after the colon and before the description; indicates the task can run in parallel with its dependencies' successors
+  - `[P]` — parallel marker, placed after the colon and before the description. Mark a task `[P]` when ALL of these are true: (1) at least one adjacent task shares the same dependency set (including `depends: none`), AND (2) it modifies different files from that adjacent task. When multiple consecutive tasks satisfy these conditions, mark ALL of them `[P]` — not just some. The execution engine groups consecutive `[P]` tasks into one parallel batch; a missing `[P]` breaks the batch and forces sequential execution.
   - `[create|modify|delete] file-path` — file action brackets (same keywords as SCOPE), can appear multiple times for multi-file tasks
   - `(depends: T{M}, T{K})` — explicit dependency list at the end; use `(depends: none)` for tasks with no dependencies
 - Every file path in TASKS must also appear in a SCOPE entry — no undeclared files
@@ -345,8 +349,9 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
   ## TASKS
   T1: Add TaskEntry struct [modify] internal/tracker/issuespec.go (depends: none)
   T2: [P] Add parsing tests [modify] internal/tracker/issuespec_test.go (depends: T1)
-  T3: Update coding prompt [modify] internal/prompt/coding.go (depends: T1)
+  T3: [P] Update coding prompt [modify] internal/prompt/coding.go (depends: T1)
   ```
+  T2 and T3 share the same dependency (T1) and touch different files, so both are `[P]`. If T3 were missing `[P]`, it would run sequentially after T2 instead of alongside it.
 
 ## Rules
 

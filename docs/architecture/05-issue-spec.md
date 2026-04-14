@@ -62,7 +62,7 @@ dev
 ## TASKS
 <!-- 可選。任務分解，用於大型 issue 的有序執行 -->
 <!-- 格式：T{N}: [P] 描述 [action] 檔案路徑 (depends: T{M}, T{N}) -->
-T1: Add retry backoff to ReconnectAsync [modify] src/Services/EtherCatService.cs (depends: none)
+T1: [P] Add retry backoff to ReconnectAsync [modify] src/Services/EtherCatService.cs (depends: none)
 T2: [P] Add alarm code constant [modify] src/Alarms/AlarmManager.cs (depends: none)
 T3: Wire alarm trigger into retry flow [modify] src/Services/EtherCatService.cs (depends: T1, T2)
 
@@ -90,7 +90,7 @@ T3: Wire alarm trigger into retry flow [modify] src/Services/EtherCatService.cs 
 
 **TASKS section 格式規則：**
 - `T{N}:` — 任務 ID（T 加數字）
-- `[P]` — 可選，標記為可平行執行
+- `[P]` — 平行標記。連續多個 task 擁有相同 dependency set 且修改不同檔案時，全部標記 `[P]`；引擎將連續 `[P]` task 合為一組平行批次
 - `[modify|create|delete] path` — 涉及的檔案（可多個）
 - `(depends: T{M}, ...)` — 相依關係；`(depends: none)` 表示無相依
 - TASKS 中的檔案路徑會與 SCOPE 交叉驗證

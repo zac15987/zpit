@@ -225,7 +225,7 @@ When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrat
 
 **Execution strategy:**
 - **Sequential tasks** (no `[P]`): Delegated one at a time to `task-runner` subagent via the Agent tool. Each subagent runs in its own context window, implements the task, and commits.
-- **Parallel tasks** (`[P]` marked): When a group of `[P]` tasks has all dependencies satisfied, the orchestrator creates an Agent Team with one teammate per task (each using `task-runner` subagent type). Teammates work in parallel.
+- **Parallel tasks** (`[P]` marked): Consecutive `[P]` tasks form a parallel batch. When all dependencies for the batch are satisfied, the orchestrator creates an Agent Team with one teammate per task (each using `task-runner` subagent type). Teammates work in parallel. **Marking rule:** adjacent tasks sharing the same dependency set and touching different files must ALL be `[P]`; omitting `[P]` on any one breaks the batch.
 - **Mixed**: Groups execute in dependency order — sequential tasks use subagent, parallel groups use Agent Team.
 - **No tasks**: `buildStandardWorkflow()` generates the same prompt as before (no delegation).
 
