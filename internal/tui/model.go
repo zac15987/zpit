@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -34,6 +35,7 @@ const (
 	ViewStatus
 	ViewChannel
 	ViewEditConfig
+	ViewGitStatus
 )
 
 // EditConfigSub represents the sub-view within the edit config screen.
@@ -113,6 +115,13 @@ type Model struct {
 	// Channel view state
 	channelProjectID string
 
+	// Git status view state
+	spinner      spinner.Model
+	gitOp        string   // "" | "fetch" | "pull" | "refresh"
+	gitData      *GitData // loaded branch + graph data, nil when loading or error
+	gitProjectID string   // project ID currently shown in git status view
+	gitError     string   // first-line error message, cleared on successful load
+
 	// Edit config sub-menu state
 	editConfigProjectID    string                // project being edited
 	editConfigSub          EditConfigSub         // current sub-view
@@ -155,6 +164,9 @@ func NewModelWithState(appState *AppState, isRemote bool) Model {
 	vp.MouseWheelDelta = 3
 	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
 
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+	sp.Style = lipgloss.NewStyle().Foreground(colorWorking)
+
 	id, ch := appState.Subscribe()
 
 	return Model{
@@ -162,6 +174,7 @@ func NewModelWithState(appState *AppState, isRemote bool) Model {
 		isRemote:     isRemote,
 		keys:         DefaultKeyMap(),
 		currentView:  ViewProjects,
+		spinner:      sp,
 		viewport:     vp,
 		subscriberID: id,
 		subscriberCh: ch,
@@ -233,6 +246,10 @@ func (m *Model) syncViewportContent() {
 		header = m.renderEditConfigHeader()
 		footer = m.renderEditConfigFooter()
 		m.viewport.SetContent(m.renderEditConfigScrollable())
+	case ViewGitStatus:
+		header = m.renderGitStatusHeader()
+		footer = m.renderGitStatusFooter()
+		m.viewport.SetContent(m.renderGitStatusScrollable())
 	}
 	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
@@ -401,6 +418,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Git status messages
+	case GitDataLoadedMsg:
+		m, cmd := m.onGitDataLoaded(msg)
+		return m, cmd
+	case GitFetchResultMsg:
+		m, cmd := m.onGitFetchResult(msg)
+		return m, cmd
+	case GitPullResultMsg:
+		m, cmd := m.onGitPullResult(msg)
+		return m, cmd
+	case spinner.TickMsg:
+		m, cmd := m.handleSpinnerTick(msg)
+		return m, cmd
+
 	// Edit config messages
 	case EditorFinishedMsg:
 		return m.handleEditorFinished(msg)
@@ -437,6 +468,8 @@ func (m Model) View() string {
 		bg = m.viewChannel()
 	case ViewEditConfig:
 		bg = m.viewEditConfig()
+	case ViewGitStatus:
+		bg = m.viewGitStatus()
 	default:
 		bg = "Unknown view"
 	}
@@ -512,6 +545,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleChannelKey(msg)
 	case ViewEditConfig:
 		return m.handleEditConfigKey(msg)
+	case ViewGitStatus:
+		return m.handleGitStatusKey(msg)
 	}
 	return m, nil
 }
@@ -695,6 +730,15 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.channelProjectID = p.ID
 		m.viewport.GotoTop()
 		return m, nil
+
+	case key.Matches(msg, m.keys.GitStatus):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m, cmd = m.enterGitStatus(p.ID)
+		return m, cmd
 
 	case key.Matches(msg, m.keys.Add):
 		m.setStatus(locale.T(locale.KeyAddProjectStub))

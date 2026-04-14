@@ -27,6 +27,12 @@ type KeyMap struct {
 	FocusSwitch key.Binding
 	Kill        key.Binding
 
+	// Git status page keys
+	GitStatus  key.Binding
+	GitFetch   key.Binding
+	GitPull    key.Binding
+	GitRefresh key.Binding
+
 	// Edit config sub-menu keys
 	Option1 key.Binding
 	Option2 key.Binding
@@ -60,6 +66,11 @@ func DefaultKeyMap() KeyMap {
 		Confirm:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
 		FocusSwitch: key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "switch focus")),
 		Kill:        key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill terminal")),
+
+		GitStatus:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "git status")),
+		GitFetch:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch")),
+		GitPull:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull")),
+		GitRefresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 
 		Option1: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "option 1")),
 		Option2: key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "option 2")),

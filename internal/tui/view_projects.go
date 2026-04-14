@@ -182,6 +182,7 @@ func (m Model) renderHotkeys() string {
 		{"p", locale.T(locale.KeyOpenTracker), false},
 		{"u", locale.T(locale.KeyUndeploy), false},
 		{"m", locale.T(locale.KeyChannelComm), false},
+		{"g", locale.T(locale.KeyGitStatusHotkeyLabel), false},
 		{"a", locale.T(locale.KeyAddProject), true},
 		{"e", locale.T(locale.KeyEditConfig), false},
 		{"x", locale.T(locale.KeyCloseTerminal), true},
