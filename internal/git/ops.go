@@ -89,7 +89,7 @@ func Branches(ctx context.Context, cwd string) (BranchInfo, error) {
 	// List local branches with upstream info.
 	branchesOut, _, err := runGitSeparate(ctx, cwd,
 		"for-each-ref", "refs/heads/",
-		"--format=%(refname:short)\x00%(upstream:short)")
+		"--format=%(refname:short)\t%(upstream:short)")
 	if err != nil {
 		return info, fmt.Errorf("list local branches: %w", err)
 	}
@@ -162,7 +162,7 @@ func shortHEAD(ctx context.Context, cwd string) (string, error) {
 // --- Internal parsers (pure functions, no I/O) ---
 
 // parseLocalBranches parses `git for-each-ref refs/heads/` output with NUL-separated fields.
-// Each line has format: "branchName\x00upstream" (upstream may be empty).
+// Each line has format: "branchName\tupstream" (upstream may be empty).
 // currentName is the name of the current branch (empty string if detached).
 func parseLocalBranches(branchesOut string, currentName string) []LocalBranch {
 	var result []LocalBranch
@@ -171,7 +171,7 @@ func parseLocalBranches(branchesOut string, currentName string) []LocalBranch {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\x00", 2)
+		parts := strings.SplitN(line, "\t", 2)
 		name := strings.TrimSpace(parts[0])
 		if name == "" {
 			continue

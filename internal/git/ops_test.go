@@ -20,7 +20,7 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name:        "single branch marked as current",
-			branchesOut: "main\x00origin/main\n",
+			branchesOut: "main\torigin/main\n",
 			currentName: "main",
 			want: []LocalBranch{
 				{Name: "main", IsCurrent: true, Upstream: "origin/main"},
@@ -28,7 +28,7 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name:        "single branch not current",
-			branchesOut: "main\x00origin/main\n",
+			branchesOut: "main\torigin/main\n",
 			currentName: "dev",
 			want: []LocalBranch{
 				{Name: "main", IsCurrent: false, Upstream: "origin/main"},
@@ -36,7 +36,7 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name:        "branch with no upstream",
-			branchesOut: "feature-x\x00\n",
+			branchesOut: "feature-x\t\n",
 			currentName: "feature-x",
 			want: []LocalBranch{
 				{Name: "feature-x", IsCurrent: true, Upstream: ""},
@@ -44,9 +44,9 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name: "multiple branches with mixed upstream",
-			branchesOut: "main\x00origin/main\n" +
-				"dev\x00origin/dev\n" +
-				"feat/89-foo\x00\n",
+			branchesOut: "main\torigin/main\n" +
+				"dev\torigin/dev\n" +
+				"feat/89-foo\t\n",
 			currentName: "dev",
 			want: []LocalBranch{
 				{Name: "main", IsCurrent: false, Upstream: "origin/main"},
@@ -56,7 +56,7 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name:        "detached HEAD (empty currentName)",
-			branchesOut: "main\x00origin/main\ndev\x00origin/dev\n",
+			branchesOut: "main\torigin/main\ndev\torigin/dev\n",
 			currentName: "",
 			want: []LocalBranch{
 				{Name: "main", IsCurrent: false, Upstream: "origin/main"},
@@ -65,7 +65,7 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name:        "whitespace-only lines are skipped",
-			branchesOut: "  \n\nmain\x00origin/main\n  \n",
+			branchesOut: "  \n\nmain\torigin/main\n  \n",
 			currentName: "main",
 			want: []LocalBranch{
 				{Name: "main", IsCurrent: true, Upstream: "origin/main"},
@@ -73,7 +73,7 @@ func TestParseLocalBranches(t *testing.T) {
 		},
 		{
 			name:        "no trailing newline",
-			branchesOut: "main\x00origin/main",
+			branchesOut: "main\torigin/main",
 			currentName: "main",
 			want: []LocalBranch{
 				{Name: "main", IsCurrent: true, Upstream: "origin/main"},
