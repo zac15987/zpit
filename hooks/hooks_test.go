@@ -87,12 +87,14 @@ func TestPathGuard_AllowsInsideWorktree(t *testing.T) {
 	}
 }
 
-func TestPathGuard_BlocksCLAUDEmd(t *testing.T) {
+func TestPathGuard_AllowsCLAUDEmd(t *testing.T) {
+	// Regression guard for commit 164918f: CLAUDE.md inside the worktree must
+	// remain writable so coding agents can update project instructions.
 	code, msg := runHook(t, "path-guard.sh",
 		`{"tool_input":{"file_path":"CLAUDE.md"}}`,
 		agentEnv(worktreeEnv))
-	if code != 2 {
-		t.Errorf("expected exit 2, got %d: %s", code, msg)
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d: %s", code, msg)
 	}
 }
 
