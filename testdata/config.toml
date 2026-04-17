@@ -161,3 +161,43 @@ tags = ["go", "electron", "xterm"]
 [projects.path]
 windows = "D:/Documents/MyProjects/zplex"
 wsl = "/mnt/d/Documents/MyProjects/zplex"
+
+[[projects]]
+name = "Zacfuse"
+id = "zacfuse"
+profile = "desktop"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "zacfuse"
+git = "github"
+repo = "zac15987/zacfuse"
+shared_core = false
+log_policy = "standard"
+base_branch = "dev"
+channel_enabled = false
+channel_listen = ["_global"]
+tags = ["astro", "typescript", "docs"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zacfuse"
+wsl = "/mnt/d/Documents/MyProjects/zacfuse"
+
+[[projects]]
+name = "Zac Doc"
+id = "zac-doc"
+profile = "desktop"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "zac-doc"
+git = "github"
+repo = "zac15987/zac-doc"
+shared_core = false
+log_policy = "standard"
+base_branch = "dev"
+channel_enabled = false
+channel_listen = ["_global"]
+tags = ["docusaurus", "javascript", "docs"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zac-doc"
+wsl = "/mnt/d/Documents/MyProjects/zac-doc"
