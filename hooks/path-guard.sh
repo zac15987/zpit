@@ -44,6 +44,18 @@ for pattern in "${DENY_PATTERNS[@]}"; do
   fi
 done
 
+# Clarifier role — only tracker temp files are writable
+if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
+  BASENAME=$(basename "$FILE_PATH")
+  case "$BASENAME" in
+    tmp_*.md|tmp_*.txt) : ;;
+    *)
+      echo "BLOCKED: Clarifier role can only Write to tmp_*.{md,txt} tracker temp files. '$FILE_PATH' is not allowed. If this change is real, scope it into the Issue SCOPE section and let the Coding Agent execute it." >&2
+      exit 2
+      ;;
+  esac
+fi
+
 # Whitelist — must be inside allowed directory
 if [[ "$FILE_PATH" != "${ALLOWED_DIR}"/* ]]; then
   echo "BLOCKED: Path '$FILE_PATH' is outside the working directory '${ALLOWED_DIR}'. Agents can only modify files in their own worktree." >&2

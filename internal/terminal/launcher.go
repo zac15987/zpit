@@ -96,6 +96,17 @@ func needsAgentEnv(extraArgs []string) bool {
 	return false
 }
 
+// getAgentRole extracts the role name from "--agent <role>".
+// Returns empty string if not present.
+func getAgentRole(extraArgs []string) string {
+	for i, arg := range extraArgs {
+		if arg == "--agent" && i+1 < len(extraArgs) {
+			return extraArgs[i+1]
+		}
+	}
+	return ""
+}
+
 // BuildWindowsArgs constructs wt.exe arguments for testing without exec.
 // When profile is non-empty, -p "ProfileName" is inserted before the -- separator.
 // All launches are wrapped with a shell-aware script so Windows Terminal closes the
@@ -120,7 +131,10 @@ func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, ext
 
 	if needsAgentEnv(extraArgs) {
 		wrapper := buildEnvWrapper(shell)
-		return append(append(base, wrapper...), buildClaudeArgs(extraArgs)...)
+		role := getAgentRole(extraArgs)
+		// Pass role as first arg to the wrapper so it can export ZPIT_AGENT_TYPE.
+		withRole := append([]string{role}, buildClaudeArgs(extraArgs)...)
+		return append(append(base, wrapper...), withRole...)
 	}
 	wrapper := buildCleanExitWrapper(shell)
 	return append(append(base, wrapper...), buildClaudeArgs(extraArgs)...)
@@ -153,12 +167,14 @@ func buildShellWrapper(shell, scriptBase string) []string {
 }
 
 // BuildTmuxArgs constructs tmux arguments for testing without exec.
-// When extraArgs contains "--agent" (except "efficiency"), ZPIT_AGENT=1 is
-// prefixed to the command so hook scripts can detect agent sessions.
+// When extraArgs contains "--agent" (except "efficiency"), ZPIT_AGENT=1 and
+// ZPIT_AGENT_TYPE=<role> are prefixed to the command so hook scripts can
+// detect agent sessions and apply role-aware enforcement.
 func BuildTmuxArgs(projectID, projectPath, mode string, extraArgs []string) []string {
 	claudeCmd := strings.Join(buildClaudeArgs(extraArgs), " ")
 	if needsAgentEnv(extraArgs) {
-		claudeCmd = "ZPIT_AGENT=1 " + claudeCmd
+		role := getAgentRole(extraArgs)
+		claudeCmd = "ZPIT_AGENT=1 ZPIT_AGENT_TYPE=" + role + " " + claudeCmd
 	}
 	switch mode {
 	case "new_pane":

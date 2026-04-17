@@ -435,3 +435,203 @@ func TestBashFirewall_BypassWithoutZPITAgent(t *testing.T) {
 		t.Errorf("expected exit 0 (bypass) without ZPIT_AGENT, got %d", code)
 	}
 }
+
+// ── role-aware path-guard.sh tests (ZPIT_AGENT_TYPE=clarifier) ──
+
+func clarifierEnv(extra map[string]string) map[string]string {
+	env := agentEnv(extra)
+	env["ZPIT_AGENT_TYPE"] = "clarifier"
+	return env
+}
+
+func codingEnv(extra map[string]string) map[string]string {
+	env := agentEnv(extra)
+	env["ZPIT_AGENT_TYPE"] = "coding"
+	return env
+}
+
+func TestPathGuard_Clarifier_BlocksDocsWrite(t *testing.T) {
+	code, msg := runHook(t, "path-guard.sh",
+		`{"tool_input":{"file_path":"docs/project-spec.md"}}`,
+		clarifierEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier writing docs/*, got %d: %s", code, msg)
+	}
+}
+
+func TestPathGuard_Clarifier_BlocksCLAUDEmd(t *testing.T) {
+	code, msg := runHook(t, "path-guard.sh",
+		`{"tool_input":{"file_path":"CLAUDE.md"}}`,
+		clarifierEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier writing CLAUDE.md, got %d: %s", code, msg)
+	}
+}
+
+func TestPathGuard_Clarifier_AllowsTmpIssueBody(t *testing.T) {
+	code, msg := runHook(t, "path-guard.sh",
+		`{"tool_input":{"file_path":"tmp_issue_body.md"}}`,
+		clarifierEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for tmp_issue_body.md, got %d: %s", code, msg)
+	}
+}
+
+func TestPathGuard_Clarifier_AllowsTmpPatternTxt(t *testing.T) {
+	code, msg := runHook(t, "path-guard.sh",
+		`{"tool_input":{"file_path":"tmp_pr_body.txt"}}`,
+		clarifierEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for tmp_*.txt, got %d: %s", code, msg)
+	}
+}
+
+func TestPathGuard_Coding_StillAllowsDocsWrite(t *testing.T) {
+	// Regression guard: coding agent behavior unchanged
+	code, msg := runHook(t, "path-guard.sh",
+		`{"tool_input":{"file_path":"docs/project-spec.md"}}`,
+		codingEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for coding writing docs/*, got %d: %s", code, msg)
+	}
+}
+
+func TestPathGuard_NoType_StillAllowsDocsWrite(t *testing.T) {
+	// Backwards compat: no ZPIT_AGENT_TYPE → coding-like behavior (unchanged)
+	code, msg := runHook(t, "path-guard.sh",
+		`{"tool_input":{"file_path":"docs/project-spec.md"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 when ZPIT_AGENT_TYPE unset, got %d: %s", code, msg)
+	}
+}
+
+// ── role-aware bash-firewall.sh tests (ZPIT_AGENT_TYPE=clarifier) ──
+
+func TestBashFirewall_Clarifier_BlocksRmRelative(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm docs/old.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier rm, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksMv(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"mv a.md b.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier mv, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksCp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"cp a.md b.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier cp, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksMkdir(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"mkdir -p src/new"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier mkdir, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksTouch(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"touch src/foo.go"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier touch, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksSedInPlace(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"sed -i 's/old/new/' README.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier sed -i, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksRedirectToSource(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo hi > docs/spec.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier redirect to .md, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsRedirectToTmpMd(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo hello > tmp_issue_body.md"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for redirect to tmp_*.md, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsRedirectToTmpTxt(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo title > tmp_pr_title.txt"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for redirect to tmp_*.txt, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsReadOnlyCat(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"cat docs/spec.md"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for cat, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsLs(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"ls -la docs/"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for ls, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsTrackerCLI(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"gh issue create --body-file tmp_issue_body.md --title foo"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for gh CLI, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Coding_StillAllowsRm(t *testing.T) {
+	// Regression guard: coding agent rm still works (only ZPIT_AGENT_TYPE=clarifier is restricted)
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm docs/old.md"}}`,
+		codingEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for coding rm, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_NoType_StillAllowsRm(t *testing.T) {
+	// Backwards compat: no ZPIT_AGENT_TYPE → coding-like behavior
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm docs/old.md"}}`,
+		agentEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 when ZPIT_AGENT_TYPE unset, got %d: %s", code, msg)
+	}
+}

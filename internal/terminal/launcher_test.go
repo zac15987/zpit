@@ -29,7 +29,7 @@ func TestBuildWindowsArgs_NewWindow(t *testing.T) {
 func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "clarifier"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
-		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "clarifier"}
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "clarifier", "claude", "--agent", "clarifier"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -38,7 +38,7 @@ func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
 func TestBuildWindowsArgs_AgentModeWithInitMsg(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "coding", "init message"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
-		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "coding", "init message"}
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "coding", "claude", "--agent", "coding", "init message"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -77,7 +77,7 @@ func TestBuildWindowsArgs_WithProfile_NewWindow(t *testing.T) {
 func TestBuildWindowsArgs_WithProfile_AgentPwsh(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", []string{"--agent", "coding"})
 	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--",
-		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "claude", "--agent", "coding"}
+		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "coding", "claude", "--agent", "coding"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -86,7 +86,7 @@ func TestBuildWindowsArgs_WithProfile_AgentPwsh(t *testing.T) {
 func TestBuildWindowsArgs_WithProfile_AgentPowershell(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "Windows PowerShell", "powershell", []string{"--agent", "coding"})
 	want := []string{"new-tab", "-p", "Windows PowerShell", "-d", "/path", "--title", "Test", "--",
-		"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "claude", "--agent", "coding"}
+		"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "coding", "claude", "--agent", "coding"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -95,7 +95,7 @@ func TestBuildWindowsArgs_WithProfile_AgentPowershell(t *testing.T) {
 func TestBuildWindowsArgs_WithProfile_AgentCmd(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "Command Prompt", "cmd", []string{"--agent", "coding"})
 	want := []string{"new-tab", "-p", "Command Prompt", "-d", "/path", "--title", "Test", "--",
-		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "coding"}
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "coding", "claude", "--agent", "coding"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -203,7 +203,7 @@ func TestBuildTmuxArgs_NewPane(t *testing.T) {
 func TestBuildTmuxArgs_AgentMode(t *testing.T) {
 	args := BuildTmuxArgs("ase", "/mnt/d/Projects/ASE", "new_window", []string{"--agent", "clarifier"})
 	want := []string{"new-window", "-n", "ase", "-c", "/mnt/d/Projects/ASE",
-		"ZPIT_AGENT=1 claude --agent clarifier"}
+		"ZPIT_AGENT=1 ZPIT_AGENT_TYPE=clarifier claude --agent clarifier"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -348,6 +348,28 @@ func TestNeedsAgentEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := needsAgentEnv(tt.args); got != tt.want {
 				t.Errorf("needsAgentEnv(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetAgentRole(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"nil", nil, ""},
+		{"empty", []string{}, ""},
+		{"no agent", []string{"--resume"}, ""},
+		{"clarifier", []string{"--agent", "clarifier"}, "clarifier"},
+		{"coding with init", []string{"--agent", "coding", "init msg"}, "coding"},
+		{"agent flag without value", []string{"--agent"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getAgentRole(tt.args); got != tt.want {
+				t.Errorf("getAgentRole(%v) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
