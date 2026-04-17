@@ -16,12 +16,14 @@ import (
 )
 
 // UI symbols.
+// Profile icons use Nerd Font glyphs (requires a patched font like CascadiaCode NF);
+// all other icons stay as emoji so the TUI degrades gracefully without Nerd Fonts.
 const (
-	iconMachine  = "⚙️ "
-	iconWeb      = "🌐 "
-	iconDesktop  = "🖥️ "
-	iconAndroid  = "📱 "
-	iconTerminal = "💻 "
+	iconMachine  = "\uf275 " // nf-fa-industry
+	iconWeb      = "\uf0ac " // nf-fa-globe
+	iconDesktop  = "\uf108 " // nf-fa-desktop
+	iconAndroid  = "\uf17b " // nf-fa-android
+	iconTerminal = "\uf120 " // nf-fa-terminal
 	iconWorking    = "🟢"
 	iconWaiting    = "🟡"
 	iconPermission = "🟠"
