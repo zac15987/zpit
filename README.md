@@ -185,7 +185,7 @@ token_env = "FORGEJO_TOKEN"
 [[projects]]
 name = "My Project"
 id = "my-project"
-profile = "machine"         # display tag: machine | desktop | web | android (for TUI icon)
+profile = "machine"         # display tag: machine | desktop | web | android | terminal (for TUI icon)
 hook_mode = "strict"        # strict | standard | relaxed
 log_policy = "standard"     # strict | standard | minimal — agent logging strictness
 tracker = "my-forgejo"

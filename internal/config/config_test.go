@@ -58,8 +58,8 @@ func TestLoad(t *testing.T) {
 	}
 
 	// Projects
-	if len(cfg.Projects) != 5 {
-		t.Fatalf("Projects = %d, want 5", len(cfg.Projects))
+	if len(cfg.Projects) != 7 {
+		t.Fatalf("Projects = %d, want 7", len(cfg.Projects))
 	}
 
 	first := cfg.Projects[0]

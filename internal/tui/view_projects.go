@@ -21,6 +21,7 @@ const (
 	iconWeb      = "🌐 "
 	iconDesktop  = "🖥️ "
 	iconAndroid  = "📱 "
+	iconTerminal = "💻 "
 	iconWorking    = "🟢"
 	iconWaiting    = "🟡"
 	iconPermission = "🟠"
@@ -31,10 +32,11 @@ const (
 )
 
 var profileIcons = map[string]string{
-	"machine": iconMachine,
-	"web":     iconWeb,
-	"desktop": iconDesktop,
-	"android": iconAndroid,
+	"machine":  iconMachine,
+	"web":      iconWeb,
+	"desktop":  iconDesktop,
+	"android":  iconAndroid,
+	"terminal": iconTerminal,
 }
 
 func (m Model) viewProjects() string {

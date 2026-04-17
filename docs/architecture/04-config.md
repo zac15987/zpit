@@ -86,7 +86,7 @@ type = "github"
 [[projects]]
 name = "ASE 檢測清潔機台"
 id = "ase-inspection"
-profile = "machine"             # 顯示標籤：machine | desktop | web | android (TUI icon)
+profile = "machine"             # 顯示標籤：machine | desktop | web | android | terminal (TUI icon)
 hook_mode = "strict"            # strict | standard | relaxed
 log_policy = "strict"           # strict | standard | minimal
 tracker = "my-forgejo"          # 指向 providers.tracker 的 key
