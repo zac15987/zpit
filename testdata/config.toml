@@ -57,22 +57,6 @@ type = "github"
 token_env = "GITHUB_TOKEN"
 
 # ──────────────────────────────────────────────
-# Profiles
-# ──────────────────────────────────────────────
-
-[profiles.machine]
-log_policy = "strict"
-
-[profiles.desktop]
-log_policy = "standard"
-
-[profiles.web]
-log_policy = "minimal"
-
-[profiles.android]
-log_policy = "standard"
-
-# ──────────────────────────────────────────────
 # Projects
 # ──────────────────────────────────────────────
 
@@ -86,7 +70,7 @@ tracker_project = "AI_Inspection_Cleaning_Demo"
 git = "forgejo-leyu"
 repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
 shared_core = true
-log_level = "strict"
+log_policy = "strict"  # strict | standard | minimal
 base_branch = "dev"
 channel_enabled = true
 channel_listen = ["_global"]
@@ -106,7 +90,7 @@ tracker_project = "ENR_DUC"
 git = "forgejo-leyu"
 repo = "Leyu-LGBT/ENR_DUC"
 shared_core = true
-log_level = "strict"
+log_policy = "strict"
 base_branch = "dev"
 channel_enabled = false
 tags = ["wpf", "secsgem"]
@@ -125,7 +109,7 @@ tracker_project = "DisplayProfileManager"
 git = "github"
 repo = "zac15987/DisplayProfileManager"
 shared_core = false
-log_level = "standard"
+log_policy = "standard"
 base_branch = "dev"
 channel_enabled = false
 tags = ["wpf", "nlog"]
@@ -144,7 +128,7 @@ tracker_project = "zpit"
 git = "github"
 repo = "zac15987/zpit"
 shared_core = false
-log_level = "minimal"
+log_policy = "standard"
 base_branch = "dev"
 channel_enabled = true
 # channel_listen: subscribe to other projects' SSE streams for cross-project communication.
@@ -168,7 +152,7 @@ tracker_project = "zplex"
 git = "github"
 repo = "zac15987/zplex"
 shared_core = false
-log_level = "standard"
+log_policy = "standard"
 base_branch = "dev"
 channel_enabled = false
 channel_listen = ["_global"]

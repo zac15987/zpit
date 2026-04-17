@@ -30,22 +30,16 @@ const (
 )
 
 // Config is the top-level configuration loaded from config.toml.
-// ProfileConfig holds agent-relevant metadata per project type.
-type ProfileConfig struct {
-	LogPolicy string `toml:"log_policy"` // "strict" | "standard" | "minimal"
-}
-
 type Config struct {
-	Language     string                    `toml:"language"`
-	BrokerPort   int                       `toml:"broker_port"`
-	ZpitBin      string                    `toml:"zpit_bin"`
-	Terminal     TerminalConfig            `toml:"terminal"`
-	Notification NotificationConfig        `toml:"notification"`
-	Worktree     WorktreeConfig            `toml:"worktree"`
-	SSH          SSHConfig                 `toml:"ssh"`
-	Providers    ProvidersConfig           `toml:"providers"`
-	Profiles     map[string]ProfileConfig  `toml:"profiles"`
-	Projects     []ProjectConfig           `toml:"projects"`
+	Language     string             `toml:"language"`
+	BrokerPort   int                `toml:"broker_port"`
+	ZpitBin      string             `toml:"zpit_bin"`
+	Terminal     TerminalConfig     `toml:"terminal"`
+	Notification NotificationConfig `toml:"notification"`
+	Worktree     WorktreeConfig     `toml:"worktree"`
+	SSH          SSHConfig          `toml:"ssh"`
+	Providers    ProvidersConfig    `toml:"providers"`
+	Projects     []ProjectConfig    `toml:"projects"`
 }
 
 // SSHConfig holds settings for the Wish SSH server (zpit serve).
@@ -59,9 +53,9 @@ type SSHConfig struct {
 }
 
 type TerminalConfig struct {
-	WindowsMode            string `toml:"windows_mode"`              // "new_tab" | "new_window"
-	TmuxMode               string `toml:"tmux_mode"`                 // "new_window" | "new_pane"
-	WindowsTerminalProfile string `toml:"windows_terminal_profile"`  // WT profile name for -p flag
+	WindowsMode            string `toml:"windows_mode"`             // "new_tab" | "new_window"
+	TmuxMode               string `toml:"tmux_mode"`                // "new_window" | "new_pane"
+	WindowsTerminalProfile string `toml:"windows_terminal_profile"` // WT profile name for -p flag
 }
 
 type NotificationConfig struct {
@@ -104,7 +98,7 @@ type ProjectConfig struct {
 	Git            string            `toml:"git"`
 	Repo           string            `toml:"repo"`
 	SharedCore     bool              `toml:"shared_core"`
-	LogLevel       string            `toml:"log_level"`
+	LogPolicy      string            `toml:"log_policy"` // "strict" | "standard" | "minimal"
 	BaseBranch     string            `toml:"base_branch"`
 	ChannelEnabled bool              `toml:"channel_enabled"`
 	ChannelListen  []string          `toml:"channel_listen"`
@@ -186,19 +180,15 @@ max_per_project = 5
 # type = "github_issues"
 # token_env = "GITHUB_TOKEN"
 
-# --- Profiles ---
-
-# [profiles.default]
-# log_policy = "standard"   # strict | standard | minimal
-
 # --- Projects ---
 # Add at least one project to get started.
 
 # [[projects]]
 # name = "My Project"
 # id = "my-project"
-# profile = "default"
+# profile = "machine"       # display tag: machine | desktop | web | android (for TUI icon)
 # hook_mode = "standard"    # strict | standard | relaxed
+# log_policy = "standard"   # strict | standard | minimal
 # tracker = "my-github"
 # repo = "owner/repo"
 # base_branch = "dev"
@@ -331,7 +321,7 @@ func projectsChannelEqual(a, b []ProjectConfig) bool {
 	return true
 }
 
-// projectsMetaEqual checks if hook_mode, base_branch, and log_level are
+// projectsMetaEqual checks if hook_mode, base_branch, and log_policy are
 // identical across matching projects.
 func projectsMetaEqual(a, b []ProjectConfig) bool {
 	am := projectMap(a)
@@ -343,7 +333,7 @@ func projectsMetaEqual(a, b []ProjectConfig) bool {
 		}
 		if ap.HookMode != bp.HookMode ||
 			ap.BaseBranch != bp.BaseBranch ||
-			ap.LogLevel != bp.LogLevel {
+			ap.LogPolicy != bp.LogPolicy {
 			return false
 		}
 	}
@@ -464,6 +454,9 @@ func applyDefaults(cfg *Config) {
 		}
 		if cfg.Projects[i].HookMode == "" {
 			cfg.Projects[i].HookMode = "strict"
+		}
+		if cfg.Projects[i].LogPolicy == "" {
+			cfg.Projects[i].LogPolicy = "standard"
 		}
 	}
 }

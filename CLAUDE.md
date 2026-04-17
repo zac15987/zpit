@@ -143,7 +143,7 @@ The `[e]` key opens a sub-menu for config editing:
 - `[2]` Edit channel_listen — multi-select list of other projects + `_global`
 - `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
 
-**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_level`.
+**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_policy`.
 
 **Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
 

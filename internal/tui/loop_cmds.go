@@ -320,10 +320,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	repo := project.Repo
-	logPolicy := ""
-	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
-		logPolicy = p.LogPolicy
-	}
+	logPolicy := project.LogPolicy
 
 	// Build tracker doc content outside closure (avoid accessing m.state.cfg inside goroutine)
 	var trackerDocContent string
@@ -475,10 +472,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	}
 	repo := project.Repo
 	cfg := m.state.cfg.Terminal
-	logPolicy := ""
-	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
-		logPolicy = p.LogPolicy
-	}
+	logPolicy := project.LogPolicy
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
 	channelEnabled := project.ChannelEnabled
 	channelListen := project.ChannelListen
@@ -842,10 +836,7 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	m.state.RUnlock()
 
 	repo := project.Repo
-	logPolicy := ""
-	if p, ok := m.state.cfg.Profiles[project.Profile]; ok {
-		logPolicy = p.LogPolicy
-	}
+	logPolicy := project.LogPolicy
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	agentGuidelines := m.state.agentGuidelinesMD

@@ -87,26 +87,28 @@ func TestLoad(t *testing.T) {
 	if first.BaseBranch != "dev" {
 		t.Errorf("Projects[0].BaseBranch = %q, want %q", first.BaseBranch, "dev")
 	}
+	if first.LogPolicy != "strict" {
+		t.Errorf("Projects[0].LogPolicy = %q, want %q", first.LogPolicy, "strict")
+	}
 
 	// SSH
 	if !cfg.SSH.AutoServe {
 		t.Error("SSH.AutoServe should be true")
 	}
 
-	// Profiles
-	if len(cfg.Profiles) != 4 {
-		t.Fatalf("Profiles = %d, want 4", len(cfg.Profiles))
+	// log_policy is now per-project: verify a different project has a different policy
+	var desktopProj *ProjectConfig
+	for i := range cfg.Projects {
+		if cfg.Projects[i].Profile == "desktop" {
+			desktopProj = &cfg.Projects[i]
+			break
+		}
 	}
-	machine, ok := cfg.Profiles["machine"]
-	if !ok {
-		t.Fatal("machine profile not found")
+	if desktopProj == nil {
+		t.Fatal("no project with profile=desktop found in testdata")
 	}
-	if machine.LogPolicy != "strict" {
-		t.Errorf("machine.LogPolicy = %q, want %q", machine.LogPolicy, "strict")
-	}
-	desktop := cfg.Profiles["desktop"]
-	if desktop.LogPolicy != "standard" {
-		t.Errorf("desktop.LogPolicy = %q, want %q", desktop.LogPolicy, "standard")
+	if desktopProj.LogPolicy != "standard" {
+		t.Errorf("desktop project LogPolicy = %q, want %q", desktopProj.LogPolicy, "standard")
 	}
 }
 

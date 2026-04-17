@@ -181,23 +181,19 @@ token_env = "FORGEJO_TOKEN"
 # url = "https://your-forgejo.example.com"
 # token_env = "FORGEJO_TOKEN"
 
-# Profiles control logging strictness for agents
-[profiles.machine]
-log_policy = "strict"       # strict | standard | minimal
-
 # Projects
 [[projects]]
 name = "My Project"
 id = "my-project"
-profile = "machine"
+profile = "machine"         # display tag: machine | desktop | web | android (for TUI icon)
 hook_mode = "strict"        # strict | standard | relaxed
+log_policy = "standard"     # strict | standard | minimal — agent logging strictness
 tracker = "my-forgejo"
 # tracker_project = "My_Project"  # tracker project name if different from repo
 # git = "my-forgejo"              # git provider for PR operations
 repo = "org/repo"
 base_branch = "dev"
 # shared_core = false
-# log_level = "standard"
 channel_enabled = false     # enable cross-agent channel communication
 channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
 tags = ["go"]
