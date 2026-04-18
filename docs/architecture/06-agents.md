@@ -155,21 +155,49 @@ main.go (go:embed vars)
 
 ## 6.6 Internationalization (i18n)
 
-所有 agent template (.md) 和 prompt builder (.go) 以**英文**撰寫。回應語言由 config 控制：
+**雙軌策略**：TUI chrome 可在地化、但 agent 輸出一律英文。
 
-```toml
-language = "zh-TW"  # or "en" (default)
-```
+- **TUI 字串**（在地化）：`internal/locale/` package，`T(key)` 查找。`language = "en" | "zh-TW"`（config.toml），翻譯在 `en.go` 和 `zh_tw.go`。新增語言需新的 `locale/{lang}.go` + `SetLanguage()` 的新 case。
+- **Agent 輸出**（強制英文）：`locale.ResponseInstruction()` 永遠回傳 non-negotiable 英文規則 — 不因 `language` 切換而改變。規則涵蓋：agent 回話、Issue Spec（title + 所有 sections）、commit message、PR 描述、channel 訊息、tracker labels。使用者可以用任何語言輸入，agent 仍以英文作答。
+- **Agent .md 檔案**：語言指示在 deploy time 由 `injectLangInstruction()` 注入（YAML frontmatter 之後）。適用於 `clarifier.md` / `reviewer.md` / `efficiency.md` / `task-runner.md`。
+- **Prompt builder**：`BuildCodingPrompt` / `BuildReviewerPrompt` / `BuildRevisionPrompt` 在輸出開頭呼叫 `ResponseInstruction()`。
+- **Domain term 例外**：專有名詞若無精確英文對應，agent 允許保留原文於括號，例如 `stocktake (盤點)`。clarifier.md 的 Issue Format 和 Meeting Protocol sections 都有明列此規則。
 
-- **TUI 字串**：`internal/locale/` package，`T(key)` 查找。翻譯在 `en.go` 和 `zh_tw.go`。
-- **Agent prompts**：`locale.ResponseInstruction()` 回傳 `"Always respond in Traditional Chinese (zh-TW).\n\n"`（zh-TW）或 `""`（English）。
-- **Agent .md 檔案**：語言指示在 deploy time 由 `injectLangInstruction()` 注入（YAML frontmatter 之後）。
-
-新增語言需要：新的 `locale/{lang}.go` 翻譯 map + `SetLanguage()` 和 `ResponseInstruction()` 的新 case。
+**設計動機**：CJK 字元在 Claude tokenizer 密度約為英文 2×。clarifier Q&A、coding 實作軌跡、reviewer 留言、channel 訊息這些最長的對話強制英文後，整體 token 消耗顯著下降。TUI chrome 走 `T()` 不經模型，i18n 完全不受影響。
 
 ---
 
-## 6.7 CLAUDE.md 模板
+## 6.7 Per-Role Model Selection
+
+每個 agent role 在啟動時透過 `--model <id>` 傳給 Claude Code CLI。由 `[agent_models]` 區塊控制（`internal/config/config.go:AgentModelsConfig`）：
+
+```toml
+[agent_models]
+clarifier = "claude-opus-4-7"       # 需求澄清 — 最深層推理
+coding = "claude-sonnet-4-6"        # 功能實作
+reviewer = "claude-sonnet-4-6"      # PR review
+task_runner = "claude-sonnet-4-6"   # advisory — 由 coding session 繼承
+efficiency = "claude-sonnet-4-6"    # 效能檢視 agent
+```
+
+**設計決策**：
+
+- **為什麼 clarifier 用 Opus**：需求澄清是品質關鍵點（一次錯全 loop 錯），且整個 issue 生命週期通常只跑一次，成本佔比小。
+- **為什麼 coding/reviewer 用 Sonnet**：Sonnet 4.6 在代碼實作與 review 能力足夠，單價約 Opus 的 1/5；loop 可能跑多個 review round，差距在這裡放大。
+- **為什麼用 full ID 而不是 alias**：`opus` / `sonnet` alias 解析行為隨 provider 而異 — Anthropic API 指向 Opus 4.7 / Sonnet 4.6，但 Bedrock / Vertex / Foundry 指向 Opus 4.6 / Sonnet 4.5（落後一版）。Full ID 保證跨 provider 一致性。使用者仍可在自己 config 覆寫為 alias。
+- **task_runner 目前 advisory**：task-runner subagent 透過 Claude Code Agent tool 由 coding orchestrator spawn，預設繼承父 session 的 model（目前即 Sonnet 4.6），所以 `task_runner` 欄位在 prompt builder 尚未主動使用，保留作為未來 escape hatch（例如想讓平行 `[P]` 任務全跑 Haiku）。
+
+**Wiring**：
+
+- **Manual 啟動**（`[c]` / `[r]` / `[f]` / Enter / `[d]`）：在 `internal/tui/launch.go` 六個 launch function 各讀取對應欄位，注入 `--model` 參數。`deployAndLaunchAgent` 透過 `resolveAgentModel()` helper 依 `agentName` dispatch。
+- **Loop 啟動**（coding / reviewer）：在 `internal/tui/loop_cmds.go` 的 `loopLaunchCoderCmd` / `loopWriteAndLaunchReviewerCmd` 讀取對應欄位後注入。
+- **Copy-before-closure**：model 值在 closure 外先 copy 到 local（`model := m.state.cfg.AgentModels.X`），符合 AppState 並行存取規範。
+
+**Hot-reload**：`agent_models.*` 列為 hot-reloadable — 修改後下一次啟動 agent 即生效；已運行的 session 沿用啟動時的 model（Claude Code 無法中途改）。
+
+---
+
+## 6.8 CLAUDE.md 模板
 
 每個目標專案根目錄放一份，agent 實作時會自動讀取。
 以下為建議模板結構（Zpit 不自動產生，由使用者維護）：

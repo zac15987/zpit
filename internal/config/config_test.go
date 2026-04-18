@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -96,6 +97,23 @@ func TestLoad(t *testing.T) {
 		t.Error("SSH.AutoServe should be true")
 	}
 
+	// Agent models — testdata/config.toml explicitly sets all five
+	if cfg.AgentModels.Clarifier != "claude-opus-4-7" {
+		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, "claude-opus-4-7")
+	}
+	if cfg.AgentModels.Coding != "claude-sonnet-4-6" {
+		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, "claude-sonnet-4-6")
+	}
+	if cfg.AgentModels.Reviewer != "claude-sonnet-4-6" {
+		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "claude-sonnet-4-6")
+	}
+	if cfg.AgentModels.TaskRunner != "claude-sonnet-4-6" {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "claude-sonnet-4-6")
+	}
+	if cfg.AgentModels.Efficiency != "claude-sonnet-4-6" {
+		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, "claude-sonnet-4-6")
+	}
+
 	// log_policy is now per-project: verify a different project has a different policy
 	var desktopProj *ProjectConfig
 	for i := range cfg.Projects {
@@ -149,6 +167,74 @@ func TestLoadMinimal_AppliesAllDefaults(t *testing.T) {
 	}
 	if cfg.Worktree.DirFormat != defaultDirFormat {
 		t.Errorf("DirFormat = %q, want %q", cfg.Worktree.DirFormat, defaultDirFormat)
+	}
+}
+
+func TestAgentModelsDefaults_Minimal(t *testing.T) {
+	cfg, err := Load(testdataPath("config_minimal.toml"))
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.AgentModels.Clarifier != defaultClarifierModel {
+		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, defaultClarifierModel)
+	}
+	if cfg.AgentModels.Coding != defaultCodingModel {
+		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, defaultCodingModel)
+	}
+	if cfg.AgentModels.Reviewer != defaultReviewerModel {
+		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, defaultReviewerModel)
+	}
+	if cfg.AgentModels.TaskRunner != defaultTaskRunnerModel {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, defaultTaskRunnerModel)
+	}
+	if cfg.AgentModels.Efficiency != defaultEfficiencyModel {
+		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, defaultEfficiencyModel)
+	}
+}
+
+func TestAgentModelsPartialOverride(t *testing.T) {
+	// Write a temp config with only `clarifier` overridden; the other four
+	// fields must fall back to defaults.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := "[terminal]\n\n[agent_models]\nclarifier = \"custom-opus-id\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.AgentModels.Clarifier != "custom-opus-id" {
+		t.Errorf("Clarifier override lost: %q", cfg.AgentModels.Clarifier)
+	}
+	if cfg.AgentModels.Coding != defaultCodingModel {
+		t.Errorf("Coding = %q, want default %q", cfg.AgentModels.Coding, defaultCodingModel)
+	}
+	if cfg.AgentModels.Reviewer != defaultReviewerModel {
+		t.Errorf("Reviewer = %q, want default %q", cfg.AgentModels.Reviewer, defaultReviewerModel)
+	}
+	if cfg.AgentModels.TaskRunner != defaultTaskRunnerModel {
+		t.Errorf("TaskRunner = %q, want default %q", cfg.AgentModels.TaskRunner, defaultTaskRunnerModel)
+	}
+	if cfg.AgentModels.Efficiency != defaultEfficiencyModel {
+		t.Errorf("Efficiency = %q, want default %q", cfg.AgentModels.Efficiency, defaultEfficiencyModel)
+	}
+}
+
+func TestAgentModelsDiff_HotReload(t *testing.T) {
+	base := &Config{}
+	updated := &Config{AgentModels: AgentModelsConfig{Clarifier: "new"}}
+	d := Diff(base, updated)
+	found := false
+	for _, f := range d.HotReload {
+		if f == "agent_models" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("agent_models change should be hot-reloadable; got HotReload=%v", d.HotReload)
 	}
 }
 

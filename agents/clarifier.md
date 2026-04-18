@@ -153,6 +153,8 @@ When the user triggers convergence ("wrap up", "finalize", "write the issue", et
 
 ### Message Format Standard
 
+**All channel messages must be written in English**, regardless of the language being used with the user. Meeting messages are agent-to-agent coordination and must stay terse and machine-parseable.
+
 All channel messages in meeting mode MUST use these formats:
 
 | Message Type | Format | Example |
@@ -281,6 +283,8 @@ Evaluation dimensions include:
   critical feature, unacceptable vendor lock-in).
 
 ## Issue Format
+
+**Language rule**: Every section of the Issue Spec (title, CONTEXT, APPROACH, ACCEPTANCE_CRITERIA, SCOPE, CONSTRAINTS, BRANCH, DEPENDS_ON, COORDINATES_WITH, TASKS, REFERENCES) must be written in English — no exceptions — even when the user conducted the clarification conversation in another language. Domain-specific terms with no good English equivalent may be kept in the original language inside parentheses, e.g. `stocktake (盤點)`. The same rule applies to the **issue title** and any tracker labels you author.
 
 **Must strictly follow the Issue Spec format.** No required section may be omitted.
 

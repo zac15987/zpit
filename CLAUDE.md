@@ -145,7 +145,7 @@ The `[e]` key opens a sub-menu for config editing:
 - `[2]` Edit channel_listen — multi-select list of other projects + `_global`
 - `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
 
-**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_policy`.
+**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, `agent_models.*` (picked up on the next agent launch — already-running sessions keep their original model), per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_policy`.
 
 **Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
 
@@ -265,6 +265,8 @@ Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 
 See `testdata/config.toml` for a working example and `README.md` for full config reference.
 
+**`[agent_models]`**: global per-role model selection, passed to Claude Code via `--model <id>` at launch. Defaults: `clarifier = claude-opus-4-7`, `coding/reviewer/task_runner/efficiency = claude-sonnet-4-6`. Accepts full model IDs (preferred — same behavior across Anthropic API / Bedrock / Vertex / Foundry) or short aliases (`opus` / `sonnet` / `haiku` — provider-dependent). `task_runner` is advisory — task-runner subagents currently inherit the coding orchestrator's model via Claude Code's Agent tool. Wired in `launch.go` (manual `[c]`/`[r]`/`[f]`/enter/`[d]`) and `loop_cmds.go` (`loopLaunchCoderCmd`, `loopWriteAndLaunchReviewerCmd`).
+
 ## Conventions
 
 - **Branch naming**: `feat/ISSUE-ID-slug` — Loop always uses `feat/` prefix; PR title classification (feat/fix) decided by agent
@@ -277,5 +279,6 @@ See `testdata/config.toml` for a working example and `README.md` for full config
 - **Agent docs**: `docs/agent-guidelines.md` (behavioral rules), `docs/code-construction-principles.md` (quality baseline)
 - **Logging**: Use `m.state.logger` for all state transitions and lifecycle events (not `setStatus`, which is TUI-only). Include identifiers (key, PID, state, issue ID, role, round). In goroutine closures, capture `logger := m.state.logger` before use. Do not log ticks or renders.
 - **i18n**: All user-facing strings in TUI views must go through `locale.T()`. Never hardcode display text — define a key in `internal/locale/keys.go`, add translations in `en.go` and `zh_tw.go`.
+- **Agent language strategy**: TUI chrome is localized via `locale.T()`, but **all agent output is English-only**. `locale.ResponseInstruction()` is prepended to every agent prompt (coding/reviewer/revision builders) and injected into agent markdown files via `injectLangInstruction()` before deployment. The rule is non-negotiable — users may input in any language, but agents reply, write Issue Specs, commit messages, PR bodies, and channel messages in English. This is a token-efficiency choice (CJK tokenizes roughly 2× denser than English). If you add a new agent launch path, call `injectLangInstruction()` on its markdown before writing.
 - **TUI icons**: Profile icons (`machine`/`desktop`/`web`/`android`/`terminal` in `internal/tui/view_projects.go`) use Nerd Font glyphs (requires a patched font such as CascadiaCode NF, bundled with Windows Terminal). All other TUI icons — session/loop status circles, channel artifact/message markers, worktree branch marker, etc. — stay as Unicode emoji so the TUI degrades gracefully in terminals without Nerd Fonts. When adding a new profile type, add a matching Nerd Font glyph to the `profileIcons` map; for any other TUI icon, use an emoji.
 - **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `channelEvents`, `channelSubs`, `lastLivenessCheck`, `lastPermissionCheck`, `lastSessionScan`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.

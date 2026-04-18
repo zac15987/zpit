@@ -49,9 +49,27 @@ func generateAgentName(prefix string) string {
 	return fmt.Sprintf("%s-%04x", prefix, b)
 }
 
+// resolveAgentModel picks the --model value for a given agent role.
+// Falls back to the Coding model for unknown roles (keeps behavior
+// consistent with a generic coding session).
+func (m Model) resolveAgentModel(agentName string) string {
+	am := m.state.cfg.AgentModels
+	switch agentName {
+	case "clarifier":
+		return am.Clarifier
+	case "reviewer":
+		return am.Reviewer
+	case "efficiency":
+		return am.Efficiency
+	default:
+		return am.Coding
+	}
+}
+
 func (m Model) launchClaudeCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Coding
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	logger := m.state.logger
 
@@ -75,7 +93,7 @@ func (m Model) launchClaudeCmd() tea.Cmd {
 			}
 		}
 
-		var args []string
+		args := []string{"--model", model}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -92,6 +110,7 @@ func (m Model) launchClaudeCmd() tea.Cmd {
 func (m Model) launchClarifierCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Clarifier
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	logger := m.state.logger
 
@@ -115,7 +134,7 @@ func (m Model) launchClarifierCmd() tea.Cmd {
 			}
 		}
 
-		args := []string{"--agent", "clarifier"}
+		args := []string{"--agent", "clarifier", "--model", model}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -132,6 +151,7 @@ func (m Model) launchClarifierCmd() tea.Cmd {
 func (m Model) launchReviewerCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Reviewer
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	logger := m.state.logger
 
@@ -155,7 +175,7 @@ func (m Model) launchReviewerCmd() tea.Cmd {
 			}
 		}
 
-		args := []string{"--agent", "reviewer"}
+		args := []string{"--agent", "reviewer", "--model", model}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -173,6 +193,7 @@ func (m Model) launchReviewerCmd() tea.Cmd {
 func (m Model) launchEfficiencyCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Efficiency
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	logger := m.state.logger
 
@@ -196,7 +217,7 @@ func (m Model) launchEfficiencyCmd() tea.Cmd {
 			}
 		}
 
-		args := []string{"--agent", "efficiency"}
+		args := []string{"--agent", "efficiency", "--model", model}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -216,6 +237,7 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	cfg := m.state.cfg.Terminal
+	model := m.resolveAgentModel(agentName)
 	logger := m.state.logger
 
 	agentGuidelines := m.state.agentGuidelinesMD
@@ -264,7 +286,7 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 		}
 
 		// Launch
-		args := []string{"--agent", agentName}
+		args := []string{"--agent", agentName, "--model", model}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -287,6 +309,7 @@ func (m Model) deployAndLaunchAgentLite() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Efficiency
 	logger := m.state.logger
 
 	agentMD := injectLangInstruction(m.state.efficiencyMD)
@@ -337,7 +360,7 @@ func (m Model) deployAndLaunchAgentLite() tea.Cmd {
 		//     (see needsAgentEnv in terminal/launcher.go)
 
 		// (g) Launch with --agent efficiency
-		args := []string{"--agent", "efficiency"}
+		args := []string{"--agent", "efficiency", "--model", model}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}

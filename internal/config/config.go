@@ -27,6 +27,12 @@ const (
 	defaultSSHHost               = "0.0.0.0"
 	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
 	defaultSSHAuthorizedKeysPath = "~/.ssh/authorized_keys"
+
+	defaultClarifierModel  = "claude-opus-4-7"
+	defaultCodingModel     = "claude-sonnet-4-6"
+	defaultReviewerModel   = "claude-sonnet-4-6"
+	defaultTaskRunnerModel = "claude-sonnet-4-6"
+	defaultEfficiencyModel = "claude-sonnet-4-6"
 )
 
 // Config is the top-level configuration loaded from config.toml.
@@ -38,8 +44,21 @@ type Config struct {
 	Notification NotificationConfig `toml:"notification"`
 	Worktree     WorktreeConfig     `toml:"worktree"`
 	SSH          SSHConfig          `toml:"ssh"`
+	AgentModels  AgentModelsConfig  `toml:"agent_models"`
 	Providers    ProvidersConfig    `toml:"providers"`
 	Projects     []ProjectConfig    `toml:"projects"`
+}
+
+// AgentModelsConfig holds the --model value passed to Claude Code for each
+// agent role. Accepts a full model ID (e.g. "claude-sonnet-4-6") or a short
+// alias ("sonnet"). Full IDs are preferred because short aliases resolve
+// differently per backend (Anthropic API vs Bedrock/Vertex/Foundry).
+type AgentModelsConfig struct {
+	Clarifier  string `toml:"clarifier"`
+	Coding     string `toml:"coding"`
+	Reviewer   string `toml:"reviewer"`
+	TaskRunner string `toml:"task_runner"`
+	Efficiency string `toml:"efficiency"`
 }
 
 // SSHConfig holds settings for the Wish SSH server (zpit serve).
@@ -159,6 +178,23 @@ max_per_project = 5
 # poll_seconds = 10         # todo issue polling interval (seconds)
 # pr_poll_seconds = 10      # PR merge polling interval (seconds)
 
+# --- Agent Models ---
+# Model passed to Claude Code via --model when launching each agent role.
+# Accepts either a full model ID (claude-opus-4-7, claude-sonnet-4-6,
+# claude-haiku-4-5-20251001) or a short alias (opus, sonnet, haiku).
+#
+# Full IDs pin to a specific version and behave identically across the
+# Anthropic API, Bedrock, Vertex, and Foundry. Short aliases track the
+# "recommended" version for your provider and differ across backends —
+# e.g. "opus" is Opus 4.7 on the Anthropic API but Opus 4.6 on
+# Bedrock/Vertex/Foundry.
+[agent_models]
+clarifier = "claude-opus-4-7"       # requirement clarification — deepest reasoning
+coding = "claude-sonnet-4-6"        # feature implementation
+reviewer = "claude-sonnet-4-6"      # PR review
+task_runner = "claude-sonnet-4-6"   # advisory only — task-runner subagents inherit the coding session's model
+efficiency = "claude-sonnet-4-6"    # efficiency-review agent (manual [f])
+
 # --- SSH Server (zpit serve) ---
 # [ssh]
 # port = 2200
@@ -270,6 +306,9 @@ func Diff(old, new *Config) ConfigDiff {
 	}
 	if old.Terminal != new.Terminal {
 		diff.HotReload = append(diff.HotReload, "terminal")
+	}
+	if old.AgentModels != new.AgentModels {
+		diff.HotReload = append(diff.HotReload, "agent_models")
 	}
 	if !projectsChannelEqual(old.Projects, new.Projects) {
 		diff.HotReload = append(diff.HotReload, "channel")
@@ -446,6 +485,22 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.SSH.AuthorizedKeysPath == "" {
 		cfg.SSH.AuthorizedKeysPath = defaultSSHAuthorizedKeysPath
+	}
+
+	if cfg.AgentModels.Clarifier == "" {
+		cfg.AgentModels.Clarifier = defaultClarifierModel
+	}
+	if cfg.AgentModels.Coding == "" {
+		cfg.AgentModels.Coding = defaultCodingModel
+	}
+	if cfg.AgentModels.Reviewer == "" {
+		cfg.AgentModels.Reviewer = defaultReviewerModel
+	}
+	if cfg.AgentModels.TaskRunner == "" {
+		cfg.AgentModels.TaskRunner = defaultTaskRunnerModel
+	}
+	if cfg.AgentModels.Efficiency == "" {
+		cfg.AgentModels.Efficiency = defaultEfficiencyModel
 	}
 
 	for i := range cfg.Projects {

@@ -38,6 +38,16 @@ max_per_project = 5
 poll_seconds = 10
 pr_poll_seconds = 10
 
+# Per-role model selection — passed to Claude Code via --model at launch.
+# Full IDs pin a specific version (identical across Anthropic API / Bedrock /
+# Vertex / Foundry). Short aliases (opus/sonnet/haiku) resolve per provider.
+[agent_models]
+clarifier = "claude-opus-4-7"
+coding = "claude-sonnet-4-6"
+reviewer = "claude-sonnet-4-6"
+task_runner = "claude-sonnet-4-6"
+efficiency = "claude-sonnet-4-6"
+
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
 url = "http://leyu88.synology.me:3000"

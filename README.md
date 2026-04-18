@@ -110,7 +110,8 @@ You (TUI)                    Claude Code Agents
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
-- **i18n** — English and Traditional Chinese (zh-TW) via `locale.T()`
+- **i18n** — TUI chrome localized to English or Traditional Chinese (zh-TW) via `locale.T()`; all agent output (Issue Specs, commits, PR bodies, channel messages) is always English regardless of TUI locale, for token efficiency
+- **Per-role model selection** — `[agent_models]` lets you choose a model per agent role (Opus for clarifier, Sonnet for coding/reviewer by default); override any value in config
 - **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
 
 ## Requirements
@@ -170,6 +171,17 @@ pr_poll_seconds = 10        # PR merge polling interval
 max_review_rounds = 3       # auto-retry rounds before needs-human
 # dir_format = "{project_id}/{issue_id}--{slug}"
 # auto_cleanup = false
+
+# Per-role model selection — passed to Claude Code via --model at launch.
+# Full IDs are recommended (identical across Anthropic API / Bedrock /
+# Vertex / Foundry). Short aliases (opus/sonnet/haiku) work too, but
+# resolve to different versions per backend.
+[agent_models]
+clarifier = "claude-opus-4-7"      # requirement clarification — deepest reasoning
+coding = "claude-sonnet-4-6"       # feature implementation
+reviewer = "claude-sonnet-4-6"     # PR review
+task_runner = "claude-sonnet-4-6"  # advisory — subagents inherit the coding session's model
+efficiency = "claude-sonnet-4-6"   # efficiency-review agent (manual [f])
 
 # Tracker providers — token read from env var, never stored in config
 [providers.tracker.my-forgejo]

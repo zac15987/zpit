@@ -378,7 +378,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		// Deploy task-runner.md when Issue Spec contains TASKS for subagent delegation.
 		if len(spec.Tasks) > 0 && len(taskRunnerMD) > 0 {
 			trPath := filepath.Join(agentDir, "task-runner.md")
-			if err := os.WriteFile(trPath, taskRunnerMD, 0o644); err != nil {
+			if err := os.WriteFile(trPath, injectLangInstruction(taskRunnerMD), 0o644); err != nil {
 				logger.Printf("loop: failed to deploy task-runner.md for issue #%s: %v", issueID, err)
 			} else {
 				logger.Printf("loop: deployed task-runner.md to %s for issue #%s", agentDir, issueID)
@@ -419,6 +419,7 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 	m.state.RUnlock()
 
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Coding
 	agentName := fmt.Sprintf("coding-%s", issueID)
 	tabTitle := fmt.Sprintf("%s #%s", project.Name, issueID)
 	channelEnabled := project.ChannelEnabled
@@ -430,7 +431,7 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 
 	return func() tea.Msg {
 		launchedAt := time.Now().Unix()
-		args := []string{"--agent", agentName, initMsg}
+		args := []string{"--agent", agentName, "--model", model, initMsg}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
@@ -472,6 +473,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	}
 	repo := project.Repo
 	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Reviewer
 	logPolicy := project.LogPolicy
 	tabTitle := fmt.Sprintf("%s #%s review", project.Name, issueID)
 	channelEnabled := project.ChannelEnabled
@@ -550,7 +552,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		if reviewRound > 0 {
 			initMsg = locale.T(locale.KeyInitRevisionReview)
 		}
-		args := []string{"--agent", agentName, initMsg}
+		args := []string{"--agent", agentName, "--model", model, initMsg}
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
