@@ -126,6 +126,17 @@
 - [x] `zpit-exit.cmd` / `zpit-exit.ps1` exit wrappers for auto-closing WT tabs
 - [x] WindowSizeMsg on confirm dialog init for immediate button rendering
 
+## M4f: Redeploy 快捷鍵 + 部署狀態標記
+
+> 已完成
+
+- [x] `[d]` Redeploy hotkey：一鍵 undeploy + 重新部署 4 個 agents（clarifier/reviewer/task-runner/efficiency）+ hooks + docs，不啟動 Claude；confirm 對話框保護
+- [x] `deployAllCmd()` in `internal/tui/launch.go` — 沿用 `undeployFiles` + `DeployHooksToProject` + `deployDocs`，無 `.mcp.json` 寫入
+- [x] 專案列表狀態標記：🟢 已部署（10 個檔案齊全）/ 🟡 部分部署 / ⚪ 未部署
+- [x] `deployStatus()` in `view_projects.go` — 每次渲染 `os.Stat` 10 個檔案，不快取
+- [x] `showRedeployConfirm()` 沿用 huh confirm dialog pattern
+- [x] i18n：7 個新 locale key（KeyRedeploy、KeyRedeployConfirm/Button/Done、KeyDeployStatus{Full,Partial,None}）
+
 ---
 
 ## M5: 完整體驗（規劃中）

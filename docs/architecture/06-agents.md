@@ -106,7 +106,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 
 ## 6.4 Efficiency Agent (.claude/agents/efficiency.md)
 
-**Deployment:** go:embed 嵌入 Zpit binary，透過 `[f]` 快捷鍵部署。使用 `deployAndLaunchAgentLite`（不部署 hooks、不設定 ZPIT_AGENT=1）。
+**Deployment:** go:embed 嵌入 Zpit binary，透過 `[f]` 快捷鍵部署（或 `[d]` 批次 redeploy 時一併寫入）。使用 `deployAndLaunchAgentLite`（不部署 hooks、不設定 ZPIT_AGENT=1）。
 
 ```yaml
 name: efficiency
@@ -143,7 +143,7 @@ Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 main.go (go:embed vars)
   → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts, logWriter)
     → stored in AppState fields
-      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
+      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) or redeploy ([d]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS

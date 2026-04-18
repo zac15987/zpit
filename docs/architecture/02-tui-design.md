@@ -14,22 +14,22 @@
 ║  專案列表                          快捷鍵                          ║
 ║  ─────────────────────────────     ──────────────────────          ║
 ║                                                                    ║
-║  ⚙️  ASE 檢測清潔機台              [Enter] 開 Claude Code (新終端) ║
+║  ⚙️  ASE 檢測清潔機台  🟢 已部署   [Enter] 開 Claude Code (新終端) ║
 ║     WPF+硬體 │ 3 todo │ 1 進行中   [c] Clarify 需求               ║
 ║     🟢 Agent 運行中 (tmux:2)       [l] Loop 自動實作               ║
 ║                                    [r] Review 機台改動             ║
-║  ⚙️  ChipMOS 點膠機台              [f] 效率 Agent                  ║
+║  ⚙️  ChipMOS 點膠機台  🟡 部分部署 [f] 效率 Agent                  ║
 ║     WPF+硬體 │ 1 todo │ 0 進行中   [s] 狀態總覽                    ║
 ║                                    [o] 開啟專案資料夾              ║
 ║                                    [p] 開啟 Issue Tracker          ║
-║  🌐  個人品牌網頁                   [u] Undeploy 部署檔案           ║
-║     Astro    │ 5 todo │ 0 進行中                                  ║
+║  🌐  個人品牌網頁  ⚪ 未部署         [u] Undeploy 部署檔案           ║
+║     Astro    │ 5 todo │ 0 進行中   [d] Redeploy 重新部署           ║
 ║                                    ──────────────────────          ║
 ║  🖥️  報警管理工具                   [x] 關閉終端                    ║
 ║     WPF      │ 0 todo │ 0 進行中   [a] 新增專案                    ║
 ║                                    [e] 編輯設定 (子選單)            ║
 ║                                    [?] 說明                       ║
-║ ›📱  Android 監控 App               [q] 離開                       ║
+║ ›📱  Android 監控 App  🟢 已部署    [q] 離開                       ║
 ║     Kotlin   │ 2 todo │ 0 進行中                                  ║
 ║                                                                    ║
 ╠══════════════════════════════════════════════════════════════════════╣
@@ -51,6 +51,8 @@
 - Enter：在新終端開啟 Claude Code（Windows Terminal 新 tab / tmux 新 window）
 - 快捷鍵 [c][l][r][s]：同樣在新終端啟動對應的 agent
 - [u]：移除 Zpit 部署到專案的 agents/docs/hooks 檔案
+- [d]：清除現有部署後重新寫入 4 個 agents (clarifier/reviewer/task-runner/efficiency) + hooks + docs，**不啟動 Claude**（confirm 後執行）
+- 專案名稱旁的狀態標記：🟢 已部署（全部 10 個檔案齊全）、🟡 部分部署（部分檔案缺失或只部署過單一 agent）、⚪ 未部署
 - [f]：啟動效率 Agent（輕量模式，無 hooks、無 tracker、self-review）
 - Tab：三面板循環切換 — 專案列表 → 活躍終端（有終端時）→ Loop 狀態（有 slot 時）→ 專案列表
 - [x]：當焦點在活躍終端時，關閉選中的終端（force kill process，需確認）

@@ -20,6 +20,7 @@ var zhTW = map[Key]string{
 	KeyAddProject:     "新增專案",
 	KeyEditConfig:     "編輯設定",
 	KeyUndeploy:       "清除部署檔案",
+	KeyRedeploy:       "重新部署所有 agent",
 	KeyChannelComm:    "Channel 通訊",
 	KeyHelp:           "說明",
 	KeyQuit:           "離開",
@@ -67,6 +68,14 @@ var zhTW = map[Key]string{
 	KeyUndeployButton:  "清除",
 	KeyUndeployDone:    "已清除 %d 個項目（%s）",
 	KeyUndeployNoop:    "無已部署檔案（%s）",
+
+	// Redeploy confirm dialog + deploy status tag
+	KeyRedeployConfirm:     "重新部署所有 Zpit 檔案至此專案？\n\n將移除現有部署並重新寫入：\n.claude/agents/ (4 個 agent)  .claude/docs/  .claude/hooks/",
+	KeyRedeployButton:      "重新部署",
+	KeyRedeployDone:        "已重新部署至 %s",
+	KeyDeployStatusFull:    "已部署",
+	KeyDeployStatusPartial: "部分部署",
+	KeyDeployStatusNone:    "未部署",
 
 	// Issue confirm dialog
 	KeyIssueConfirmTitle:  "確認將 #%s 設為 todo？\n「%s」",

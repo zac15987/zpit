@@ -694,6 +694,17 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showUndeployConfirm(*p)
 		return m, m.initConfirmForm()
 
+	case key.Matches(msg, m.keys.Redeploy):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[d]", *p, valPath) {
+			return m, nil
+		}
+		m.showRedeployConfirm()
+		return m, m.initConfirmForm()
+
 	case key.Matches(msg, m.keys.Status):
 		p := m.selectedProject()
 		if p == nil {

@@ -20,6 +20,7 @@ var en = map[Key]string{
 	KeyAddProject:     "Add project",
 	KeyEditConfig:     "Edit config",
 	KeyUndeploy:       "Undeploy agents",
+	KeyRedeploy:       "Redeploy all agents",
 	KeyChannelComm:    "Channel communication",
 	KeyHelp:           "Help",
 	KeyQuit:           "Quit",
@@ -67,6 +68,14 @@ var en = map[Key]string{
 	KeyUndeployButton:  "Undeploy",
 	KeyUndeployDone:    "Undeployed %d item(s) from %s",
 	KeyUndeployNoop:    "No deployed files found (%s)",
+
+	// Redeploy confirm dialog + deploy status tag
+	KeyRedeployConfirm:     "Redeploy all Zpit files to this project?\n\nWill remove existing deploy and re-write:\n.claude/agents/ (4 agents)  .claude/docs/  .claude/hooks/",
+	KeyRedeployButton:      "Redeploy",
+	KeyRedeployDone:        "Redeployed to %s",
+	KeyDeployStatusFull:    "deployed",
+	KeyDeployStatusPartial: "partial",
+	KeyDeployStatusNone:    "not deployed",
 
 	// Issue confirm dialog
 	KeyIssueConfirmTitle:  "Set #%s to todo?\n「%s」",

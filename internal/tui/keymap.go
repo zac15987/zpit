@@ -20,6 +20,7 @@ type KeyMap struct {
 	EditConfig key.Binding
 	Channel    key.Binding
 	Undeploy   key.Binding
+	Redeploy   key.Binding
 	Help       key.Binding
 	Quit        key.Binding
 	Back        key.Binding
@@ -60,6 +61,7 @@ func DefaultKeyMap() KeyMap {
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
 		Channel:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "channel")),
 		Undeploy:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undeploy")),
+		Redeploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "redeploy")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),

@@ -350,6 +350,67 @@ func (m Model) deployAndLaunchAgentLite() tea.Cmd {
 	}
 }
 
+// deployAllCmd wipes any existing Zpit deployment from the project and writes a
+// fresh copy of every agent, hook, and doc. Does NOT launch Claude Code and does
+// NOT write .mcp.json (that requires agent-name/issue-id decided at launch time).
+// The set of files written here must stay in sync with the deployedFiles list in
+// view_projects.go used by deployStatus for the list indicator.
+func (m Model) deployAllCmd() tea.Cmd {
+	project := m.state.projects[m.cursor]
+	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	projectName := project.Name
+	logger := m.state.logger
+
+	clarifierMD := injectLangInstruction(m.state.clarifierMD)
+	reviewerMD := injectLangInstruction(m.state.reviewerMD)
+	taskRunnerMD := m.state.taskRunnerMD
+	efficiencyMD := injectLangInstruction(m.state.efficiencyMD)
+	agentGuidelines := m.state.agentGuidelinesMD
+	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	hookScripts := m.state.hookScripts
+	hookMode := project.HookMode
+	var trackerDocContent string
+	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
+		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+	}
+
+	return func() tea.Msg {
+		removed := undeployFiles(projectPath)
+		logger.Printf("[redeploy] %s: cleared %d prior item(s)", projectName, removed)
+
+		worktree.EnsureGitignore(projectPath)
+		worktree.EnsureGitattributes(projectPath)
+
+		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
+			logger.Printf("[redeploy] %s: hook deploy failed: %v", projectName, err)
+			return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
+		}
+
+		agentDir := filepath.Join(projectPath, ".claude", "agents")
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			logger.Printf("[redeploy] %s: mkdir agents failed: %v", projectName, err)
+			return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
+		}
+		agents := map[string][]byte{
+			"clarifier.md":   clarifierMD,
+			"reviewer.md":    reviewerMD,
+			"task-runner.md": taskRunnerMD,
+			"efficiency.md":  efficiencyMD,
+		}
+		for name, content := range agents {
+			if err := os.WriteFile(filepath.Join(agentDir, name), content, 0o644); err != nil {
+				logger.Printf("[redeploy] %s: write %s failed: %v", projectName, name, err)
+				return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
+			}
+		}
+
+		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
+
+		logger.Printf("[redeploy] %s: wrote %d agent(s), hooks, docs to %s", projectName, len(agents), projectPath)
+		return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyRedeployDone), projectName)}
+	}
+}
+
 func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 	m.state.RLock()
 	ls, ok := m.state.loops[m.focusProjectID]

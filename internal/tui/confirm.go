@@ -78,6 +78,25 @@ func (m *Model) showEfficiencyDeployConfirm() {
 	}
 }
 
+// showRedeployConfirm displays a huh confirm dialog for running deployAllCmd
+// (undeploy + re-deploy all agents/hooks/docs, no Claude launch).
+func (m *Model) showRedeployConfirm() {
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(locale.T(locale.KeyRedeployConfirm)).
+				Affirmative(locale.T(locale.KeyRedeployButton)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(60)
+	m.confirmAction = func() tea.Cmd {
+		return m.deployAllCmd()
+	}
+}
+
 // showUndeployConfirm displays a huh confirm dialog for removing deployed files.
 func (m *Model) showUndeployConfirm(project config.ProjectConfig) {
 	confirmed := new(bool)

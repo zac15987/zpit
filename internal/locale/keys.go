@@ -20,6 +20,7 @@ const (
 	KeyAddProject      Key = "add_project"
 	KeyEditConfig      Key = "edit_config"
 	KeyUndeploy        Key = "undeploy"
+	KeyRedeploy        Key = "redeploy"
 	KeyChannelComm     Key = "channel_comm"
 	KeyHelp            Key = "help"
 	KeyQuit            Key = "quit"
@@ -68,6 +69,14 @@ const (
 	KeyUndeployButton  Key = "undeploy_button"
 	KeyUndeployDone    Key = "undeploy_done"
 	KeyUndeployNoop    Key = "undeploy_noop"
+
+	// Redeploy confirm dialog + deploy status tag (view_projects.go)
+	KeyRedeployConfirm     Key = "redeploy_confirm"
+	KeyRedeployButton      Key = "redeploy_button"
+	KeyRedeployDone        Key = "redeploy_done"
+	KeyDeployStatusFull    Key = "deploy_status_full"
+	KeyDeployStatusPartial Key = "deploy_status_partial"
+	KeyDeployStatusNone    Key = "deploy_status_none"
 
 	// Issue confirm dialog (model.go)
 	KeyIssueConfirmTitle  Key = "issue_confirm_title"

@@ -3,6 +3,8 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
+	"github.com/zac15987/zpit/internal/platform"
 	"github.com/zac15987/zpit/internal/watcher"
 )
 
@@ -28,10 +31,73 @@ const (
 	iconWaiting    = "🟡"
 	iconPermission = "🟠"
 	iconEnded      = "⚫"
+	iconDeployFull    = "🟢"
+	iconDeployPartial = "🟡"
+	iconDeployNone    = "⚪"
 	cursorMarker = " › "
 	boxHoriz     = "─"
 	boxVert      = "│"
 )
+
+// DeployStatus indicates whether Zpit-managed files are fully, partially, or not present in a project.
+type DeployStatus int
+
+const (
+	DeployNone DeployStatus = iota
+	DeployPartial
+	DeployFull
+)
+
+// deployedFiles lists every file that a full `[d]` redeploy writes. deployStatus
+// counts how many of these are present on disk and classifies into None/Partial/Full.
+// Keep in sync with deployAllCmd (launch.go).
+var deployedFiles = []string{
+	".claude/agents/clarifier.md",
+	".claude/agents/reviewer.md",
+	".claude/agents/task-runner.md",
+	".claude/agents/efficiency.md",
+	".claude/docs/agent-guidelines.md",
+	".claude/docs/code-construction-principles.md",
+	".claude/hooks/path-guard.sh",
+	".claude/hooks/bash-firewall.sh",
+	".claude/hooks/git-guard.sh",
+	".claude/hooks/notify-permission.sh",
+}
+
+// deployStatus checks the project's filesystem and returns DeployFull (all files
+// present), DeployNone (no files present), or DeployPartial (mixed).
+// Stateless filesystem call; safe to run every render.
+func deployStatus(projectPath string) DeployStatus {
+	if projectPath == "" {
+		return DeployNone
+	}
+	found := 0
+	for _, rel := range deployedFiles {
+		if _, err := os.Stat(filepath.Join(projectPath, rel)); err == nil {
+			found++
+		}
+	}
+	switch {
+	case found == 0:
+		return DeployNone
+	case found == len(deployedFiles):
+		return DeployFull
+	default:
+		return DeployPartial
+	}
+}
+
+// renderDeployTag returns the styled status tag rendered next to the project name.
+func renderDeployTag(s DeployStatus) string {
+	switch s {
+	case DeployFull:
+		return workingStyle.Render(iconDeployFull + " " + locale.T(locale.KeyDeployStatusFull))
+	case DeployPartial:
+		return waitingStyle.Render(iconDeployPartial + " " + locale.T(locale.KeyDeployStatusPartial))
+	default:
+		return detailStyle.Render(iconDeployNone + " " + locale.T(locale.KeyDeployStatusNone))
+	}
+}
 
 var profileIcons = map[string]string{
 	"machine":  iconMachine,
@@ -153,7 +219,9 @@ func (m Model) renderProjectList() string {
 			tags = tagStyle.Render(strings.Join(p.Tags, ", "))
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, icon, name))
+		deployTag := renderDeployTag(deployStatus(platform.ResolvePath(p.Path.Windows, p.Path.WSL)))
+
+		b.WriteString(fmt.Sprintf("%s%s%s  %s\n", cursor, icon, name, deployTag))
 		b.WriteString(fmt.Sprintf("     %s",
 			detailStyle.Render(p.Profile)))
 		if tags != "" {
@@ -185,6 +253,7 @@ func (m Model) renderHotkeys() string {
 		{"o", locale.T(locale.KeyOpenFolder), false},
 		{"p", locale.T(locale.KeyOpenTracker), false},
 		{"u", locale.T(locale.KeyUndeploy), false},
+		{"d", locale.T(locale.KeyRedeploy), false},
 		{"m", locale.T(locale.KeyChannelComm), false},
 		{"g", locale.T(locale.KeyGitStatusHotkeyLabel), false},
 		{"a", locale.T(locale.KeyAddProject), true},

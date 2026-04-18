@@ -15,17 +15,18 @@
   Projects                                                Hotkeys
   ────────────────────────────────                        ──────────────────────────
 
-   ⚙️ AI Inspection Cleaning Demo                         [Enter] Launch Claude Code
+   ⚙️ AI Inspection Cleaning Demo  🟢 deployed            [Enter] Launch Claude Code
      machine │ wpf, ethercat, basler                      [c] Clarify requirement
                                                           [l] Loop auto-implement
-   ⚙️ ENR DUC                                             [r] Review changes
+   ⚙️ ENR DUC  🟡 partial                                 [r] Review changes
      machine │ wpf, secsgem                               [f] Efficiency agent
                                                           [s] Status overview
-   🖥️ DisplayProfileManager                               [o] Open project folder
+   🖥️ DisplayProfileManager  ⚪ not deployed              [o] Open project folder
      desktop │ wpf, nlog                                  [p] Open Issue Tracker
                                                           [u] Undeploy agents
- › 🖥️ Zpit                                                [m] Channel communication
-     desktop │ go, bubbletea
+ › 🖥️ Zpit  🟢 deployed                                   [d] Redeploy all agents
+     desktop │ go, bubbletea                              [m] Channel communication
+
                                                           [a] Add project
                                                           [e] Edit config
 
@@ -92,6 +93,7 @@ You (TUI)                    Claude Code Agents
     ├─ [s] Status ────────────► shows issue list from tracker
     ├─ [r] Review ────────────► launches reviewer on demand
     ├─ [f] Efficiency ────────► lightweight agent (no hooks, no tracker, self-review)
+    ├─ [d] Redeploy ──────────► undeploy + re-write all agents/hooks/docs (no launch)
     └─ [Enter] ───────────────► launches Claude Code directly
 ```
 
@@ -225,6 +227,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `o` | Open project folder |
 | `p` | Open issue tracker in browser |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
+| `d` | Redeploy — undeploy then re-write all 4 agents + hooks + docs (no Claude launch) |
 | `m` | Channel — view cross-agent communication events |
 | `g` | Git Status — view branches (local + remote-only) and commit graph; [f] fetch, [p] pull (--ff-only) |
 | `a` | Add project (coming soon) |
