@@ -40,11 +40,20 @@ const (
 	boxVert      = "│"
 
 	// Dock layout constants.
-	focusBarChar       = "▎"
-	panelRuleChar      = "─"
-	dockMinRightWidth  = 22 // hotkeys column minimum width — keeps it docked right even on narrow terminals
-	dockMinLeftWidth   = 18 // left column minimum before we surrender the split
-	dockMinPanelHeight = 4  // title + rule + ≥2 body rows
+	focusBarChar        = "▎"
+	panelRuleChar       = "─"
+	dockMinRightWidth   = 22   // hotkeys column minimum width — keeps it docked right even on narrow terminals
+	dockMinLeftWidth    = 18   // left column minimum before we surrender the split
+	dockMinPanelHeight  = 4    // title + rule + ≥2 body rows
+	dockLeftColumnRatio = 0.70 // ideal left/right split before min-width clamps
+	panelBodyPrefixLen  = 2    // "▎ " focus bar OR "  " blank, rendered as chrome prefix
+	panelRuleWidth      = 6    // width of the short rule under each panel title
+	loopIssueTitleMaxLen = 35  // per-slot title truncation in the Loop panel
+
+	// Panel height weights (relative shares when all three left-column panels are present).
+	panelWeightProjects  = 3
+	panelWeightTerminals = 2
+	panelWeightLoop      = 2
 )
 
 // panelRect describes the placement of a single dock panel.
@@ -58,6 +67,36 @@ type dockRects struct {
 	terminals panelRect
 	loop      panelRect
 	hotkeys   panelRect
+}
+
+// dockPanel bundles everything renderPanelChrome and the renderOne composer need
+// for one panel. Packing the fields avoids a 7-parameter signature at the call site.
+type dockPanel struct {
+	rect      panelRect
+	vp        viewport.Model
+	title     string
+	count     int
+	focused   bool
+	focusable bool
+	stacked   bool
+}
+
+// panelInnerSize returns the content-area width/height carved out of a panel
+// rect (after subtracting chrome rows and the body's leading prefix). ok=false
+// signals an empty rect — the caller should skip rendering.
+func panelInnerSize(r panelRect, stacked bool) (innerW, innerH int, ok bool) {
+	if r.w == 0 || r.h == 0 {
+		return 0, 0, false
+	}
+	innerW = r.w - panelBodyPrefixLen
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerH = r.h - panelChromeRows(stacked)
+	if innerH < 1 {
+		innerH = 1
+	}
+	return innerW, innerH, true
 }
 
 // DeployStatus indicates whether Zpit-managed files are fully, partially, or not present in a project.
@@ -157,8 +196,8 @@ func (m Model) computePanelRects(width, contentHeight int) dockRects {
 		}
 	}
 
-	// Column split: 70/30 ideal; clamp hotkeys to min width and keep left readable.
-	leftW := int(float64(width) * 0.70)
+	// Column split: dockLeftColumnRatio ideal; clamp hotkeys to min width and keep left readable.
+	leftW := int(float64(width) * dockLeftColumnRatio)
 	rightW := width - leftW
 	if rightW < dockMinRightWidth {
 		rightW = dockMinRightWidth
@@ -177,12 +216,13 @@ func (m Model) computePanelRects(width, contentHeight int) dockRects {
 		leftW = 0
 	}
 
-	wP, wT, wL := 3, 0, 0
+	wP := panelWeightProjects
+	wT, wL := 0, 0
 	if nTerms > 0 {
-		wT = 2
+		wT = panelWeightTerminals
 	}
 	if hasLoop {
-		wL = 2
+		wL = panelWeightLoop
 	}
 	total := wP + wT + wL
 	if total == 0 {
@@ -248,54 +288,68 @@ func panelChromeRows(stacked bool) int {
 // Reads m.lastDockRects (populated by layoutDockPanels before this is called).
 func (m Model) composeDockLayout(width, contentHeight int) string {
 	r := m.lastDockRects
-	renderOne := func(rect panelRect, vp viewport.Model, title string, count int, focused, focusable, stacked bool) string {
-		if rect.w == 0 || rect.h == 0 {
+	renderOne := func(p dockPanel) string {
+		if p.rect.w == 0 || p.rect.h == 0 {
 			return ""
 		}
-		chrome := m.renderPanelChrome(title, count, focused, focusable, stacked, rect.w)
-		body := vp.View()
-		return lipgloss.NewStyle().Width(rect.w).Height(rect.h).Render(
-			lipgloss.JoinVertical(lipgloss.Left, chrome, body),
+		chrome := m.renderPanelChrome(p)
+		return lipgloss.NewStyle().Width(p.rect.w).Height(p.rect.h).Render(
+			lipgloss.JoinVertical(lipgloss.Left, chrome, p.vp.View()),
 		)
 	}
-	pStr := renderOne(r.projects, m.projectsVP, locale.T(locale.KeyProjects), len(m.state.projects),
-		m.focusedPanel == FocusProjects, true, false)
-	tStr := renderOne(r.terminals, m.terminalsVP, locale.T(locale.KeyActiveTerminals), len(m.state.activeTerminals),
-		m.focusedPanel == FocusTerminals, true, r.terminals.h > 0)
-	lStr := renderOne(r.loop, m.loopVP, locale.T(locale.KeyLoopStatus), m.totalLoopSlots(),
-		m.focusedPanel == FocusLoopSlots, true, r.loop.h > 0)
-	hStr := renderOne(r.hotkeys, m.hotkeysVP, locale.T(locale.KeyHotkeys), 0, false, false, false)
+	pStr := renderOne(dockPanel{
+		rect: r.projects, vp: m.projectsVP,
+		title: locale.T(locale.KeyProjects), count: len(m.state.projects),
+		focused: m.focusedPanel == FocusProjects, focusable: true,
+	})
+	tStr := renderOne(dockPanel{
+		rect: r.terminals, vp: m.terminalsVP,
+		title: locale.T(locale.KeyActiveTerminals), count: len(m.state.activeTerminals),
+		focused: m.focusedPanel == FocusTerminals, focusable: true,
+		stacked: r.terminals.h > 0,
+	})
+	lStr := renderOne(dockPanel{
+		rect: r.loop, vp: m.loopVP,
+		title: locale.T(locale.KeyLoopStatus), count: m.totalLoopSlots(),
+		focused: m.focusedPanel == FocusLoopSlots, focusable: true,
+		stacked: r.loop.h > 0,
+	})
+	hStr := renderOne(dockPanel{
+		rect: r.hotkeys, vp: m.hotkeysVP,
+		title: locale.T(locale.KeyHotkeys),
+	})
 
 	left := lipgloss.JoinVertical(lipgloss.Left, pStr, tStr, lStr)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, hStr)
 }
 
 // renderPanelChrome returns the title + rule rows that sit above each panel body.
-// When stacked=true, prepends a blank gutter row (used for panels below the first
-// in a column). focusable=false (Hotkeys) suppresses the focus bar column entirely.
-func (m Model) renderPanelChrome(title string, count int, focused, focusable, stacked bool, panelWidth int) string {
+// When p.stacked is true, prepends a blank gutter row (used for panels below the
+// first in a column). When p.focusable is false (Hotkeys), the focus bar column
+// stays blank regardless of focus state.
+func (m Model) renderPanelChrome(p dockPanel) string {
 	bar := "  "
-	if focusable && focused {
+	if p.focusable && p.focused {
 		bar = focusBarStyle.Render(focusBarChar) + " "
 	}
 	titleStyle := panelTitleBlurredStyle
-	if focused {
+	if p.focused {
 		titleStyle = panelTitleFocusedStyle
 	}
 	countStr := ""
-	if count > 0 {
-		countStr = "  " + panelCountStyle.Render(fmt.Sprintf("%d", count))
+	if p.count > 0 {
+		countStr = "  " + panelCountStyle.Render(fmt.Sprintf("%d", p.count))
 	}
-	head := bar + titleStyle.Render(strings.ToUpper(title)) + countStr
-	ruleLen := 6
-	if panelWidth-2 < ruleLen {
-		ruleLen = panelWidth - 2
+	head := bar + titleStyle.Render(strings.ToUpper(p.title)) + countStr
+	ruleLen := panelRuleWidth
+	if p.rect.w-panelBodyPrefixLen < ruleLen {
+		ruleLen = p.rect.w - panelBodyPrefixLen
 	}
 	if ruleLen < 1 {
 		ruleLen = 1
 	}
 	rule := "  " + panelRuleStyle.Render(strings.Repeat(panelRuleChar, ruleLen))
-	if stacked {
+	if p.stacked {
 		return lipgloss.JoinVertical(lipgloss.Left, "", head, rule)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, head, rule)
@@ -310,49 +364,37 @@ func (m Model) totalLoopSlots() int {
 	return total
 }
 
+// applyPanelContent pushes body + dimensions into a panel viewport and re-clamps
+// YOffset after the content change. Shared epilogue across all four sync* funcs.
+func applyPanelContent(vp *viewport.Model, rectW, innerH int, body string) {
+	vp.Width = rectW
+	vp.Height = innerH
+	vp.SetContent(body)
+	vp.SetYOffset(vp.YOffset) // force clamp after content change
+}
+
 // syncProjectsPanel re-renders the Projects panel body into projectsVP and keeps
 // the cursor row visible.
 func (m *Model) syncProjectsPanel(r panelRect, stacked bool) {
-	if r.w == 0 || r.h == 0 {
+	innerW, innerH, ok := panelInnerSize(r, stacked)
+	if !ok {
 		return
 	}
-	innerW := r.w - 2
-	if innerW < 1 {
-		innerW = 1
-	}
-	innerH := r.h - panelChromeRows(stacked)
-	if innerH < 1 {
-		innerH = 1
-	}
-	body := m.renderProjectListBody(innerW)
-	m.projectsVP.Width = r.w
-	m.projectsVP.Height = innerH
-	m.projectsVP.SetContent(body)
-	m.projectsVP.SetYOffset(m.projectsVP.YOffset) // force clamp after content change
+	applyPanelContent(&m.projectsVP, r.w, innerH, m.renderProjectListBody(innerW))
 	m.ensureCursorInPanel(&m.projectsVP, m.cursor*3)
 }
 
 // syncTerminalsPanel re-renders the Active Terminals panel body into terminalsVP and
 // refreshes m.termLineStarts for variable-stride cursor follow.
 func (m *Model) syncTerminalsPanel(r panelRect, stacked bool) {
-	if r.w == 0 || r.h == 0 {
+	innerW, innerH, ok := panelInnerSize(r, stacked)
+	if !ok {
 		m.termLineStarts = nil
 		return
 	}
-	innerW := r.w - 2
-	if innerW < 1 {
-		innerW = 1
-	}
-	innerH := r.h - panelChromeRows(stacked)
-	if innerH < 1 {
-		innerH = 1
-	}
 	body, starts := m.renderTerminalsBody(innerW)
 	m.termLineStarts = starts
-	m.terminalsVP.Width = r.w
-	m.terminalsVP.Height = innerH
-	m.terminalsVP.SetContent(body)
-	m.terminalsVP.SetYOffset(m.terminalsVP.YOffset)
+	applyPanelContent(&m.terminalsVP, r.w, innerH, body)
 	if m.focusedPanel == FocusTerminals && m.termCursor >= 0 && m.termCursor < len(starts) {
 		m.ensureCursorInPanel(&m.terminalsVP, starts[m.termCursor])
 	}
@@ -361,24 +403,14 @@ func (m *Model) syncTerminalsPanel(r panelRect, stacked bool) {
 // syncLoopPanel re-renders the Loop Engine panel body into loopVP and refreshes
 // m.loopLineStarts for the currently focused project's slots.
 func (m *Model) syncLoopPanel(r panelRect, stacked bool) {
-	if r.w == 0 || r.h == 0 {
+	innerW, innerH, ok := panelInnerSize(r, stacked)
+	if !ok {
 		m.loopLineStarts = nil
 		return
 	}
-	innerW := r.w - 2
-	if innerW < 1 {
-		innerW = 1
-	}
-	innerH := r.h - panelChromeRows(stacked)
-	if innerH < 1 {
-		innerH = 1
-	}
 	body, starts := m.renderLoopBody(innerW)
 	m.loopLineStarts = starts
-	m.loopVP.Width = r.w
-	m.loopVP.Height = innerH
-	m.loopVP.SetContent(body)
-	m.loopVP.SetYOffset(m.loopVP.YOffset)
+	applyPanelContent(&m.loopVP, r.w, innerH, body)
 	if m.focusedPanel == FocusLoopSlots && m.loopCursor >= 0 && m.loopCursor < len(starts) {
 		m.ensureCursorInPanel(&m.loopVP, starts[m.loopCursor])
 	}
@@ -386,22 +418,11 @@ func (m *Model) syncLoopPanel(r panelRect, stacked bool) {
 
 // syncHotkeysPanel re-renders the Hotkeys reference panel into hotkeysVP.
 func (m *Model) syncHotkeysPanel(r panelRect, stacked bool) {
-	if r.w == 0 || r.h == 0 {
+	innerW, innerH, ok := panelInnerSize(r, stacked)
+	if !ok {
 		return
 	}
-	innerW := r.w - 2
-	if innerW < 1 {
-		innerW = 1
-	}
-	innerH := r.h - panelChromeRows(stacked)
-	if innerH < 1 {
-		innerH = 1
-	}
-	body := m.renderHotkeysBody(innerW, innerH)
-	m.hotkeysVP.Width = r.w
-	m.hotkeysVP.Height = innerH
-	m.hotkeysVP.SetContent(body)
-	m.hotkeysVP.SetYOffset(m.hotkeysVP.YOffset)
+	applyPanelContent(&m.hotkeysVP, r.w, innerH, m.renderHotkeysBody(innerW, innerH))
 }
 
 // renderProjectsFooter returns the fixed footer below the scrollable area.
@@ -756,7 +777,7 @@ func (m Model) renderLoopBody(innerWidth int) (string, []int) {
 			}
 			prefix := "  " + selMarker
 
-			titleText := truncate(slot.IssueTitle, 35)
+			titleText := truncate(slot.IssueTitle, loopIssueTitleMaxLen)
 			if isFocusedProject && idx == m.loopCursor {
 				titleText = selectedStyle.Render(titleText)
 			}
