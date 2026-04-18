@@ -11,6 +11,8 @@ Allowed:
 - `git status` / `git diff` / `git log`
 - `git push` to your `feat/*` branch (needed to open PRs)
 
+When running as a parallel `[P]` teammate (spawn prompt contains `parallel_task_id: T{N}`), you MUST follow the **Parallel Commit Protocol** in `.claude/agents/task-runner.md` — isolated `GIT_INDEX_FILE`, scoped `git add -- <files>`, and `.git/zpit-commit.lock` acquisition around `git commit`. Sequential tasks do not need this.
+
 Forbidden:
 - Force push (`--force`, `-f`)
 - Push to protected branches (`main`, `master`, `develop`, `dev`)

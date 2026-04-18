@@ -28,8 +28,60 @@ After completing your task, commit using the exact format provided in your task 
 [ISSUE-ID] T{N}: {short description}
 ```
 
-- Use `git add` with specific file paths (never `git add -A` or `git add .`).
+- `git add` **must** use explicit file paths — never `git add -A` or `git add .`. This is enforced by a hook.
 - Write a concise commit message that describes what was done.
+
+## Parallel Commit Protocol
+
+If your spawn prompt contains a line like `parallel_task_id: T{N}`, you are running as a **parallel teammate** alongside sibling subagents in the same git worktree. You MUST follow the protocol below to avoid racing on the shared `.git/index` and `refs/heads/<branch>.lock`. Skip this section entirely if no `parallel_task_id` is present — sequential tasks own the index exclusively and commit normally.
+
+### Step 1 — Isolate your staging index
+
+Export `GIT_INDEX_FILE` at the start of your session, before any `git add` / `git commit`. Use this **exact** path format, substituting your task ID from `parallel_task_id`:
+
+```bash
+export GIT_INDEX_FILE=.git/index.zpit.<task-id>
+```
+
+Every subsequent `git` invocation in this session inherits the env var and writes staging state to your private index file, leaving the shared `.git/index` untouched.
+
+### Step 2 — Stage only your declared files
+
+Use scoped pathspec on `git add`. The file list comes from your spawn prompt (`files:` / `paths:`):
+
+```bash
+git add -- <file-1> <file-2> ...
+```
+
+Pathspec is mandatory, not optional — if Step 1 is skipped or fails, pathspec still prevents cross-task contamination.
+
+### Step 3 — Serialize the commit with a mkdir lock
+
+Before `git commit`, acquire a cross-teammate lock via `mkdir` (atomic on every filesystem). Retry up to 5 times with a short jittered sleep, then commit, then release:
+
+```bash
+for attempt in 1 2 3 4 5; do
+  if mkdir .git/zpit-commit.lock 2>/dev/null; then
+    git commit -m "[ISSUE-ID] T{N}: <short description>"
+    rmdir .git/zpit-commit.lock
+    break
+  fi
+  sleep $(( (RANDOM % 3) + 1 ))
+done
+```
+
+If all 5 attempts fail, report the failure back to the main agent — do not force-remove the lock.
+
+### Step 4 — Clean up
+
+After your commit succeeds:
+
+```bash
+unset GIT_INDEX_FILE
+rm -f .git/index.zpit.<task-id>
+```
+
+Do not leave stale `.git/index.zpit.*` files behind. Do not touch any other teammate's index file.
 
 ## Error Handling
 

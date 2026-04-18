@@ -89,6 +89,17 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 - 循序 task：主 coding agent 透過 Agent tool 的 `subagent_type: "task-runner"` 逐一委派
 - 平行 task（`[P]`）：主 coding agent 建立 Agent Team，每個 teammate 使用 `task-runner` subagent type
 
+**Parallel Commit Protocol（平行 `[P]` teammate 專用）：**
+
+當 spawn prompt 帶有 `parallel_task_id: T{N}` 行時啟動，解決多個 teammate 共用同一 worktree 時 `.git/index` 與 `refs/heads/<branch>.lock` 的 race（真實案例見 `docs/known-issues.md`）：
+
+1. `export GIT_INDEX_FILE=.git/index.zpit.T{N}` — 每個 teammate 用獨立 staging index
+2. `git add -- <declared files only>` — pathspec 強制（hook 也擋 `-A` / `.`）
+3. `mkdir .git/zpit-commit.lock` 取得 commit 鎖（重試 5 次、jittered sleep）→ `git commit` → `rmdir` 釋放
+4. 清理：`unset GIT_INDEX_FILE` + `rm -f .git/index.zpit.T{N}`
+
+循序 task 獨佔 index，不走此協定。完整命令與錯誤處理見 `agents/task-runner.md` → Parallel Commit Protocol。
+
 完整模板見 `agents/task-runner.md`。
 
 ---

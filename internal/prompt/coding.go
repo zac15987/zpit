@@ -277,6 +277,18 @@ func buildTeamDelegation(b *strings.Builder, p CodingParams) {
 	fmt.Fprintf(b, "- Each teammate commits independently with format `[%s] T{N}: {short description}`.\n", p.IssueID)
 	b.WriteString("- Wait for ALL teammates to complete before proceeding to the next task group.\n")
 	b.WriteString("- After the team finishes, verify all commits exist and are consistent.\n\n")
+
+	b.WriteString("#### Parallel Commit Protocol (required for every `[P]` teammate)\n\n")
+	b.WriteString("Parallel teammates share one worktree, so naive `git add` / `git commit` races on `.git/index` and on `refs/heads/<branch>.lock`. This has caused real commit-content corruption in the past. You MUST brief every teammate in its spawn prompt so it can follow `.claude/agents/task-runner.md` → **Parallel Commit Protocol**.\n\n")
+	b.WriteString("Each teammate's spawn prompt must include, on its own line:\n\n")
+	b.WriteString("```\nparallel_task_id: T{N}\n```\n\n")
+	b.WriteString("(substitute the teammate's task ID). The `task-runner` agent reads this line as the signal to switch on the protocol. In the same spawn prompt, include the explicit `files:` / `paths:` list from the task — teammates use it as the `git add -- <files>` pathspec.\n\n")
+	b.WriteString("Summary of what every teammate will do (the agent doc has the exact commands):\n\n")
+	b.WriteString("1. `export GIT_INDEX_FILE=.git/index.zpit.T{N}` so staging writes to a private index.\n")
+	b.WriteString("2. `git add -- <declared files only>` (pathspec required by hook and by this protocol).\n")
+	b.WriteString("3. Acquire `.git/zpit-commit.lock` via `mkdir` (retry up to 5× with jittered sleep), run `git commit`, then `rmdir` the lock.\n")
+	b.WriteString("4. `unset GIT_INDEX_FILE` and `rm -f .git/index.zpit.T{N}` after the commit.\n\n")
+	b.WriteString("If any teammate fails all 5 lock attempts or returns without a commit, stop the group — do NOT force-remove `.git/zpit-commit.lock` and do NOT retry the batch automatically. Report the failure and wait for the user.\n\n")
 }
 
 // coordinationReviewGate returns the review gate text for when CoordinatesWith is non-empty.

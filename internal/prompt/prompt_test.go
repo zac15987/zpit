@@ -305,9 +305,14 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 	}
 
 	// AC-1: pure sequential tasks must NOT contain Agent Team instructions
+	// or any of the Parallel Commit Protocol strings (sequential owns the index).
 	mustNotContain := []string{
 		"Agent Team Delegation",
 		"Parallel group",
+		"Parallel Commit Protocol",
+		"parallel_task_id",
+		"GIT_INDEX_FILE",
+		".git/zpit-commit.lock",
 	}
 	for _, c := range mustNotContain {
 		if strings.Contains(result, c) {
@@ -336,7 +341,8 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 
 	result := BuildCodingPrompt(p)
 
-	// Must contain both subagent and Agent Team delegation sections
+	// Must contain both subagent and Agent Team delegation sections,
+	// plus the Parallel Commit Protocol hand-off that protects against index/ref races.
 	mustContain := []string{
 		"Task Decomposition",
 		"Execution Strategy",
@@ -353,6 +359,10 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"sequential",
 		"teammate",
 		"self-check against each ACCEPTANCE_CRITERIA",
+		"Parallel Commit Protocol",
+		"parallel_task_id",
+		"GIT_INDEX_FILE",
+		".git/zpit-commit.lock",
 	}
 	for _, c := range mustContain {
 		if !strings.Contains(result, c) {

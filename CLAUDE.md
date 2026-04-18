@@ -234,10 +234,12 @@ When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrat
 **Prompt generation** (`internal/prompt/coding.go`):
 - `groupTasks()` partitions tasks into sequential singletons and parallel batches
 - `buildSubagentDelegation()` generates Agent tool delegation instructions
-- `buildTeamDelegation()` generates Agent Team instructions (only when `[P]` tasks exist)
+- `buildTeamDelegation()` generates Agent Team instructions + **Parallel Commit Protocol** hand-off (only when `[P]` tasks exist) — orchestrator must inject `parallel_task_id: T{N}` into each teammate's spawn prompt so the teammate activates the protocol from `.claude/agents/task-runner.md`
 - Task Execution Order section sequences the groups correctly
 
 **task-runner subagent** (`agents/task-runner.md`): Restricted tools (`Read, Write, Edit, Bash, Glob, Grep`), reads CLAUDE.md + agent-guidelines on startup, commits with `[ISSUE-ID] T{N}: {description}` format, stays within assigned file scope.
+
+**Parallel Commit Protocol** (shared-worktree race mitigation): Parallel `[P]` teammates all commit into the same worktree, racing on `.git/index` and `refs/heads/<branch>.lock`. Each teammate uses its own `GIT_INDEX_FILE=.git/index.zpit.T{N}` (index isolation), scoped `git add -- <files>` (pathspec safety net), and `.git/zpit-commit.lock` mkdir lock around `git commit` with 5 jittered retries (ref serialization). Sequential tasks skip the protocol (they own the index). Activation is driven by the `parallel_task_id` line injected by the orchestrator prompt — don't rename/remove that line without updating the agent doc too. See `docs/known-issues.md` for the incident that prompted this.
 
 ### Hook-Based Safety System (5 Layers)
 
