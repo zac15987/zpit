@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/zac15987/zpit/internal/broker"
@@ -37,7 +38,27 @@ const (
 	cursorMarker = " › "
 	boxHoriz     = "─"
 	boxVert      = "│"
+
+	// Dock layout constants.
+	focusBarChar       = "▎"
+	panelRuleChar      = "─"
+	dockMinRightWidth  = 22 // hotkeys column minimum width — keeps it docked right even on narrow terminals
+	dockMinLeftWidth   = 18 // left column minimum before we surrender the split
+	dockMinPanelHeight = 4  // title + rule + ≥2 body rows
 )
+
+// panelRect describes the placement of a single dock panel.
+type panelRect struct {
+	x, y, w, h int
+}
+
+// dockRects describes the layout of all four dock panels for a given terminal size.
+type dockRects struct {
+	projects  panelRect
+	terminals panelRect
+	loop      panelRect
+	hotkeys   panelRect
+}
 
 // DeployStatus indicates whether Zpit-managed files are fully, partially, or not present in a project.
 type DeployStatus int
@@ -114,43 +135,273 @@ func (m Model) viewProjects() string {
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	content := lipgloss.NewStyle().Width(m.width).Height(contentHeight).Render(m.viewport.View())
-	return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+	body := m.composeDockLayout(m.width, contentHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
-// renderProjectsHeader returns the fixed header above the scrollable area.
+// renderProjectsHeader returns the fixed header above the dock area.
 func (m Model) renderProjectsHeader() string {
-	return m.renderHeader() + "\n\n"
+	return m.renderHeader() + "\n"
 }
 
-// renderProjectsScrollable returns the scrollable content for the projects view.
-func (m Model) renderProjectsScrollable() string {
-	var b strings.Builder
-
-	// Two-column: project list (left) + hotkeys (right-aligned)
-	left := m.renderProjectList()
-	right := m.renderHotkeys()
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 4 {
-		gap = 4
-	}
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
-	b.WriteString(columns)
-
-	// Active terminals (if any)
-	if len(m.state.activeTerminals) > 0 {
-		b.WriteString("\n\n")
-		b.WriteString(m.renderActiveTerminals())
+// computePanelRects calculates the layout rectangles for all four dock panels.
+// Hotkeys always dock to the right column — even on narrow terminals — mirroring
+// lazygit's behavior. Caller must hold m.state RLock if accessing state.
+func (m Model) computePanelRects(width, contentHeight int) dockRects {
+	nTerms := len(m.state.activeTerminals)
+	hasLoop := false
+	for _, ls := range m.state.loops {
+		if ls.Active || len(ls.Slots) > 0 {
+			hasLoop = true
+			break
+		}
 	}
 
-	// Loop status (if any)
-	loopStatus := m.renderLoopStatus()
-	if loopStatus != "" {
-		b.WriteString("\n\n")
-		b.WriteString(loopStatus)
+	// Column split: 70/30 ideal; clamp hotkeys to min width and keep left readable.
+	leftW := int(float64(width) * 0.70)
+	rightW := width - leftW
+	if rightW < dockMinRightWidth {
+		rightW = dockMinRightWidth
+		leftW = width - rightW
+	}
+	// If the terminal is narrower than both minimums combined, shrink hotkeys
+	// so the left column still has at least dockMinLeftWidth to render.
+	if leftW < dockMinLeftWidth && width > dockMinLeftWidth {
+		leftW = dockMinLeftWidth
+		rightW = width - leftW
+		if rightW < 1 {
+			rightW = 0
+		}
+	}
+	if leftW < 0 {
+		leftW = 0
 	}
 
-	return b.String()
+	wP, wT, wL := 3, 0, 0
+	if nTerms > 0 {
+		wT = 2
+	}
+	if hasLoop {
+		wL = 2
+	}
+	total := wP + wT + wL
+	if total == 0 {
+		total = 1
+	}
+
+	pH := contentHeight * wP / total
+	tH := contentHeight * wT / total
+	lH := contentHeight - pH - tH
+	if wL == 0 {
+		lH = 0
+	}
+	if wT == 0 {
+		tH = 0
+	}
+
+	// Clamp minimums on present panels; projects absorbs slack.
+	if tH > 0 && tH < dockMinPanelHeight {
+		tH = dockMinPanelHeight
+	}
+	if lH > 0 && lH < dockMinPanelHeight {
+		lH = dockMinPanelHeight
+	}
+	pH = contentHeight - tH - lH
+	if pH < dockMinPanelHeight {
+		pH = dockMinPanelHeight
+	}
+
+	return dockRects{
+		projects:  panelRect{0, 0, leftW, pH},
+		terminals: panelRect{0, pH, leftW, tH},
+		loop:      panelRect{0, pH + tH, leftW, lH},
+		hotkeys:   panelRect{leftW, 0, rightW, contentHeight},
+	}
+}
+
+// layoutDockPanels computes rects and syncs all four panel viewports.
+// Must be called with m.state RLock held (reads activeTerminals, loops).
+// Panels stacked below the first in a column get a 1-row top gutter for breathing room.
+func (m *Model) layoutDockPanels(width, contentHeight int) {
+	r := m.computePanelRects(width, contentHeight)
+	m.lastDockRects = r
+
+	// In the left column, projects is always first (no gutter). Terminals sits
+	// below projects only when it has a non-zero rect; likewise loop below either.
+	m.syncProjectsPanel(r.projects, false)
+	m.syncTerminalsPanel(r.terminals, r.terminals.h > 0)
+	m.syncLoopPanel(r.loop, r.loop.h > 0)
+	// Hotkeys is the only panel in the right column — no stack above it.
+	m.syncHotkeysPanel(r.hotkeys, false)
+}
+
+// panelChromeRows returns the number of rows consumed by panel chrome.
+// Stacked (non-first) panels get a leading blank row as a gutter separator.
+func panelChromeRows(stacked bool) int {
+	if stacked {
+		return 3 // blank + title + rule
+	}
+	return 2 // title + rule
+}
+
+// composeDockLayout renders the dock by combining each panel's chrome + viewport view.
+// Reads m.lastDockRects (populated by layoutDockPanels before this is called).
+func (m Model) composeDockLayout(width, contentHeight int) string {
+	r := m.lastDockRects
+	renderOne := func(rect panelRect, vp viewport.Model, title string, count int, focused, focusable, stacked bool) string {
+		if rect.w == 0 || rect.h == 0 {
+			return ""
+		}
+		chrome := m.renderPanelChrome(title, count, focused, focusable, stacked, rect.w)
+		body := vp.View()
+		return lipgloss.NewStyle().Width(rect.w).Height(rect.h).Render(
+			lipgloss.JoinVertical(lipgloss.Left, chrome, body),
+		)
+	}
+	pStr := renderOne(r.projects, m.projectsVP, locale.T(locale.KeyProjects), len(m.state.projects),
+		m.focusedPanel == FocusProjects, true, false)
+	tStr := renderOne(r.terminals, m.terminalsVP, locale.T(locale.KeyActiveTerminals), len(m.state.activeTerminals),
+		m.focusedPanel == FocusTerminals, true, r.terminals.h > 0)
+	lStr := renderOne(r.loop, m.loopVP, locale.T(locale.KeyLoopStatus), m.totalLoopSlots(),
+		m.focusedPanel == FocusLoopSlots, true, r.loop.h > 0)
+	hStr := renderOne(r.hotkeys, m.hotkeysVP, locale.T(locale.KeyHotkeys), 0, false, false, false)
+
+	left := lipgloss.JoinVertical(lipgloss.Left, pStr, tStr, lStr)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, hStr)
+}
+
+// renderPanelChrome returns the title + rule rows that sit above each panel body.
+// When stacked=true, prepends a blank gutter row (used for panels below the first
+// in a column). focusable=false (Hotkeys) suppresses the focus bar column entirely.
+func (m Model) renderPanelChrome(title string, count int, focused, focusable, stacked bool, panelWidth int) string {
+	bar := "  "
+	if focusable && focused {
+		bar = focusBarStyle.Render(focusBarChar) + " "
+	}
+	titleStyle := panelTitleBlurredStyle
+	if focused {
+		titleStyle = panelTitleFocusedStyle
+	}
+	countStr := ""
+	if count > 0 {
+		countStr = "  " + panelCountStyle.Render(fmt.Sprintf("%d", count))
+	}
+	head := bar + titleStyle.Render(strings.ToUpper(title)) + countStr
+	ruleLen := 6
+	if panelWidth-2 < ruleLen {
+		ruleLen = panelWidth - 2
+	}
+	if ruleLen < 1 {
+		ruleLen = 1
+	}
+	rule := "  " + panelRuleStyle.Render(strings.Repeat(panelRuleChar, ruleLen))
+	if stacked {
+		return lipgloss.JoinVertical(lipgloss.Left, "", head, rule)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, head, rule)
+}
+
+// totalLoopSlots returns the count of slots across all active loops (for the panel count badge).
+func (m Model) totalLoopSlots() int {
+	total := 0
+	for _, ls := range m.state.loops {
+		total += len(ls.Slots)
+	}
+	return total
+}
+
+// syncProjectsPanel re-renders the Projects panel body into projectsVP and keeps
+// the cursor row visible.
+func (m *Model) syncProjectsPanel(r panelRect, stacked bool) {
+	if r.w == 0 || r.h == 0 {
+		return
+	}
+	innerW := r.w - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerH := r.h - panelChromeRows(stacked)
+	if innerH < 1 {
+		innerH = 1
+	}
+	body := m.renderProjectListBody(innerW)
+	m.projectsVP.Width = r.w
+	m.projectsVP.Height = innerH
+	m.projectsVP.SetContent(body)
+	m.projectsVP.SetYOffset(m.projectsVP.YOffset) // force clamp after content change
+	m.ensureCursorInPanel(&m.projectsVP, m.cursor*3)
+}
+
+// syncTerminalsPanel re-renders the Active Terminals panel body into terminalsVP and
+// refreshes m.termLineStarts for variable-stride cursor follow.
+func (m *Model) syncTerminalsPanel(r panelRect, stacked bool) {
+	if r.w == 0 || r.h == 0 {
+		m.termLineStarts = nil
+		return
+	}
+	innerW := r.w - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerH := r.h - panelChromeRows(stacked)
+	if innerH < 1 {
+		innerH = 1
+	}
+	body, starts := m.renderTerminalsBody(innerW)
+	m.termLineStarts = starts
+	m.terminalsVP.Width = r.w
+	m.terminalsVP.Height = innerH
+	m.terminalsVP.SetContent(body)
+	m.terminalsVP.SetYOffset(m.terminalsVP.YOffset)
+	if m.focusedPanel == FocusTerminals && m.termCursor >= 0 && m.termCursor < len(starts) {
+		m.ensureCursorInPanel(&m.terminalsVP, starts[m.termCursor])
+	}
+}
+
+// syncLoopPanel re-renders the Loop Engine panel body into loopVP and refreshes
+// m.loopLineStarts for the currently focused project's slots.
+func (m *Model) syncLoopPanel(r panelRect, stacked bool) {
+	if r.w == 0 || r.h == 0 {
+		m.loopLineStarts = nil
+		return
+	}
+	innerW := r.w - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerH := r.h - panelChromeRows(stacked)
+	if innerH < 1 {
+		innerH = 1
+	}
+	body, starts := m.renderLoopBody(innerW)
+	m.loopLineStarts = starts
+	m.loopVP.Width = r.w
+	m.loopVP.Height = innerH
+	m.loopVP.SetContent(body)
+	m.loopVP.SetYOffset(m.loopVP.YOffset)
+	if m.focusedPanel == FocusLoopSlots && m.loopCursor >= 0 && m.loopCursor < len(starts) {
+		m.ensureCursorInPanel(&m.loopVP, starts[m.loopCursor])
+	}
+}
+
+// syncHotkeysPanel re-renders the Hotkeys reference panel into hotkeysVP.
+func (m *Model) syncHotkeysPanel(r panelRect, stacked bool) {
+	if r.w == 0 || r.h == 0 {
+		return
+	}
+	innerW := r.w - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+	innerH := r.h - panelChromeRows(stacked)
+	if innerH < 1 {
+		innerH = 1
+	}
+	body := m.renderHotkeysBody(innerW, innerH)
+	m.hotkeysVP.Width = r.w
+	m.hotkeysVP.Height = innerH
+	m.hotkeysVP.SetContent(body)
+	m.hotkeysVP.SetYOffset(m.hotkeysVP.YOffset)
 }
 
 // renderProjectsFooter returns the fixed footer below the scrollable area.
@@ -186,15 +437,11 @@ func (m Model) renderHeader() string {
 	return headerBoxStyle.Width(m.width).Render(title)
 }
 
-func (m Model) renderProjectList() string {
+// renderProjectListBody emits the project rows for the Projects panel.
+// Each project takes 3 lines (name, detail, blank), matching the stride used by
+// ensureCursorInPanel(&m.projectsVP, m.cursor*3).
+func (m Model) renderProjectListBody(innerWidth int) string {
 	var b strings.Builder
-	titleStyle := sectionTitleStyle
-	if m.focusedPanel != FocusProjects {
-		titleStyle = detailStyle
-	}
-	b.WriteString(titleStyle.Render(locale.T(locale.KeyProjects)))
-	b.WriteString("\n")
-	b.WriteString("  " + strings.Repeat(boxHoriz, 32) + "\n\n")
 
 	for i, p := range m.state.projects {
 		icon := profileIcons[p.Profile]
@@ -202,10 +449,13 @@ func (m Model) renderProjectList() string {
 			icon = "  "
 		}
 
-		cursor := "   "
+		// 3-cell prefix: two spaces + selection marker. The focus bar (`▎`) lives
+		// on the panel chrome, not on every body row.
+		selMarker := " "
 		if i == m.cursor {
-			cursor = cursorMarker
+			selMarker = "›"
 		}
+		prefix := "  " + selMarker
 
 		name := p.Name
 		if i == m.cursor {
@@ -221,7 +471,7 @@ func (m Model) renderProjectList() string {
 
 		deployTag := renderDeployTag(deployStatus(platform.ResolvePath(p.Path.Windows, p.Path.WSL)))
 
-		b.WriteString(fmt.Sprintf("%s%s%s  %s\n", cursor, icon, name, deployTag))
+		b.WriteString(fmt.Sprintf("%s%s%s  %s\n", prefix, icon, name, deployTag))
 		b.WriteString(fmt.Sprintf("     %s",
 			detailStyle.Render(p.Profile)))
 		if tags != "" {
@@ -233,16 +483,14 @@ func (m Model) renderProjectList() string {
 	return b.String()
 }
 
-func (m Model) renderHotkeys() string {
-	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render(locale.T(locale.KeyHotkeys)))
-	b.WriteString("\n")
-	b.WriteString("  " + strings.Repeat(boxHoriz, 26) + "\n\n")
-
+// renderHotkeysBody emits the hotkey reference rows.
+// Auto-shrink: when innerHeight is tight, drops the blank-row separators; if still
+// overflowing, truncates the tail and shows a `…` marker.
+func (m Model) renderHotkeysBody(innerWidth, innerHeight int) string {
 	hotkeys := []struct {
 		key  string
 		desc string
-		sep  bool // insert blank line before this entry
+		sep  bool // preferred blank line before this entry
 	}{
 		{"Enter", locale.T(locale.KeyLaunchClaude), false},
 		{"c", locale.T(locale.KeyClarifyReq), false},
@@ -264,15 +512,45 @@ func (m Model) renderHotkeys() string {
 		{"q", locale.T(locale.KeyQuit), false},
 	}
 
+	// Decide whether blank separator rows fit.
+	sepCount := 0
 	for _, h := range hotkeys {
 		if h.sep {
-			b.WriteString("\n")
+			sepCount++
+		}
+	}
+	keepSeps := innerHeight <= 0 || len(hotkeys)+sepCount <= innerHeight
+
+	// Build rows.
+	type row struct {
+		blank bool
+		text  string
+	}
+	rows := make([]row, 0, len(hotkeys)+sepCount)
+	for _, h := range hotkeys {
+		if h.sep && keepSeps {
+			rows = append(rows, row{blank: true})
 		}
 		k := hotkeyLabelStyle.Render(fmt.Sprintf("[%s]", h.key))
 		d := hotkeyDescStyle.Render(h.desc)
-		b.WriteString(fmt.Sprintf("  %s %s\n", k, d))
+		rows = append(rows, row{text: fmt.Sprintf("  %s %s", k, d)})
 	}
 
+	// Truncate to innerHeight, appending `…` on overflow.
+	if innerHeight > 0 && len(rows) > innerHeight {
+		rows = rows[:innerHeight-1]
+		rows = append(rows, row{text: detailStyle.Render("  …")})
+	}
+
+	var b strings.Builder
+	for _, r := range rows {
+		if r.blank {
+			b.WriteString("\n")
+			continue
+		}
+		b.WriteString(r.text)
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
@@ -305,54 +583,53 @@ func (m Model) projectName(id string) string {
 	return id
 }
 
-func (m Model) renderActiveTerminals() string {
+// renderTerminalsBody emits the active-terminal rows. Returns the rendered body plus
+// a cumulative line-start slice (one entry per terminal) so ensureCursorInPanel can
+// locate the line for m.termCursor given variable stride.
+func (m Model) renderTerminalsBody(innerWidth int) (string, []int) {
 	var b strings.Builder
-	titleStyle := detailStyle
-	if m.focusedPanel == FocusTerminals {
-		titleStyle = sectionTitleStyle
-	}
-	b.WriteString(titleStyle.Render(locale.T(locale.KeyActiveTerminals)))
-	b.WriteString("\n")
-	b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
 
 	// Sort keys for stable render order.
-	// Use locked variant — caller (syncViewportContent) already holds RLock.
+	// Caller (syncViewportContent via layoutDockPanels) already holds RLock.
 	termKeys := m.sortedTerminalKeysLocked()
+	lineStarts := make([]int, 0, len(termKeys))
+	line := 0
 
-	i := 1
-	for _, projectID := range termKeys {
+	for i, projectID := range termKeys {
+		lineStarts = append(lineStarts, line)
+
 		at := m.state.activeTerminals[projectID]
-		// Status icon and text.
 		statusIcon, statusText := renderAgentStatus(at)
-
-		// Elapsed time since last state change.
 		elapsed := formatElapsed(time.Since(at.StateChangedAt))
 
-		// Build project display name with optional worktree branch indicator.
 		displayName := m.projectName(projectID)
 		if at.WorktreeBranch != "" {
 			displayName += " 🌿" + at.WorktreeBranch
 		}
 
-		prefix := "  "
-		if m.focusedPanel == FocusTerminals && (i-1) == m.termCursor {
-			prefix = " ›"
+		selMarker := " "
+		if i == m.termCursor {
+			selMarker = "›"
 		}
+		prefix := "  " + selMarker
+
 		b.WriteString(fmt.Sprintf("%s[%d] %s %s %s %s\n",
 			prefix,
-			i,
+			i+1,
 			selectedStyle.Render(displayName),
 			boxVert,
 			statusText,
 			detailStyle.Render(elapsed),
 		))
+		line++
 
 		// Context preview (question or permission message).
-		if prefix, text := agentContextPreview(at, statusIcon); text != "" {
+		if pfx, text := agentContextPreview(at, statusIcon); text != "" {
 			b.WriteString(fmt.Sprintf("      %s %s\n",
-				detailStyle.Render(prefix),
+				detailStyle.Render(pfx),
 				questionStyle.Render(text),
 			))
+			line++
 		}
 
 		// Switch hint.
@@ -360,6 +637,7 @@ func (m Model) renderActiveTerminals() string {
 			b.WriteString(fmt.Sprintf("      %s\n",
 				detailStyle.Render(at.LaunchResult.SwitchHint),
 			))
+			line++
 		}
 
 		// Channel event counts (own + listen projects) for this project.
@@ -375,13 +653,12 @@ func (m Model) renderActiveTerminals() string {
 			artCount, msgCount := countAllChannelEvents(allEvents)
 			if artCount > 0 || msgCount > 0 {
 				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
+				line++
 			}
 		}
-
-		i++
 	}
 
-	return b.String()
+	return b.String(), lineStarts
 }
 
 func renderAgentStatus(at *ActiveTerminal) (string, string) {
@@ -407,35 +684,31 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d", m, s)
 }
 
-func (m Model) renderLoopStatus() string {
+// renderLoopBody emits the loop-engine rows (all active loops, stable project order).
+// Returns body plus a cumulative line-start slice indexed by slot ordinal within the
+// currently focused project (m.focusProjectID). Slots outside that project map to -1.
+func (m Model) renderLoopBody(innerWidth int) (string, []int) {
+	focusedPanel := m.focusedPanel == FocusLoopSlots
 	var b strings.Builder
-	hasContent := false
 
-	// Sort project IDs for stable render order.
 	projectIDs := make([]string, 0, len(m.state.loops))
 	for pid := range m.state.loops {
 		projectIDs = append(projectIDs, pid)
 	}
 	sort.Strings(projectIDs)
 
+	// Line starts for slots in the focused project only (loopCursor indexes this).
+	var lineStarts []int
+	line := 0
+
 	for _, projectID := range projectIDs {
 		ls := m.state.loops[projectID]
 		if !ls.Active && len(ls.Slots) == 0 {
 			continue
 		}
-		isFocused := m.focusedPanel == FocusLoopSlots && projectID == m.focusProjectID
+		isFocusedProject := focusedPanel && projectID == m.focusProjectID
 
-		if !hasContent {
-			titleStyle := detailStyle
-			if m.focusedPanel == FocusLoopSlots {
-				titleStyle = sectionTitleStyle
-			}
-			b.WriteString(titleStyle.Render(locale.T(locale.KeyLoopStatus)))
-			b.WriteString("\n")
-			b.WriteString("  " + strings.Repeat(boxHoriz, 50) + "\n")
-			hasContent = true
-		}
-
+		// Per-project subheading row (1 line, counts toward stride).
 		projectName := m.projectName(projectID)
 		status := locale.T(locale.KeyLoopRunning)
 		if !ls.Active {
@@ -445,15 +718,21 @@ func (m Model) renderLoopStatus() string {
 			selectedStyle.Render(projectName),
 			detailStyle.Render(status),
 		))
+		line++
 
 		if len(ls.Slots) == 0 {
 			b.WriteString(fmt.Sprintf("    %s\n", detailStyle.Render(locale.T(locale.KeyPollingIssues))))
+			line++
 			continue
 		}
 
 		slotKeys := m.sortedSlotKeys(projectID)
 
 		for idx, key := range slotKeys {
+			if isFocusedProject {
+				lineStarts = append(lineStarts, line)
+			}
+
 			slot := ls.Slots[key]
 			icon := iconWorking
 			switch slot.State {
@@ -471,33 +750,40 @@ func (m Model) renderLoopStatus() string {
 				stateText += fmt.Sprintf(" (round %d/%d)", slot.ReviewRound, m.state.cfg.Worktree.MaxReviewRounds)
 			}
 
-			cursor := "    "
+			selMarker := " "
+			if isFocusedProject && idx == m.loopCursor {
+				selMarker = "›"
+			}
+			prefix := "  " + selMarker
+
 			titleText := truncate(slot.IssueTitle, 35)
-			if isFocused && idx == m.loopCursor {
-				cursor = "  " + cursorMarker[1:]
+			if isFocusedProject && idx == m.loopCursor {
 				titleText = selectedStyle.Render(titleText)
 			}
 
 			b.WriteString(fmt.Sprintf("%s%s #%s %s  %s\n",
-				cursor, icon, slot.IssueID,
+				prefix, icon, slot.IssueID,
 				titleText,
 				detailStyle.Render(stateText),
 			))
+			line++
+
 			if slot.Error != nil {
 				b.WriteString(fmt.Sprintf("      %s\n",
 					detailStyle.Render(slot.Error.Error()),
 				))
+				line++
 			}
 
-			// Channel event counts (artifact/message) for this issue.
 			artCount, msgCount := countChannelEvents(m.state.channelEvents[projectID], slot.IssueID)
 			if artCount > 0 || msgCount > 0 {
 				b.WriteString(fmt.Sprintf("      📦 %d artifacts  💬 %d messages\n", artCount, msgCount))
+				line++
 			}
 		}
 	}
 
-	return b.String()
+	return b.String(), lineStarts
 }
 
 // countChannelEvents counts artifact and message events matching the given issueID.

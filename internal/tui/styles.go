@@ -6,17 +6,39 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Color palette — ANSI 256 color codes.
+// Catppuccin Mocha palette — truecolor hex.
 var (
-	colorAccent   = lipgloss.Color("170") // pink-purple — selected items, hotkeys
-	colorText     = lipgloss.Color("252") // light gray — normal text
-	colorMuted    = lipgloss.Color("241") // dark gray — secondary text
-	colorTag      = lipgloss.Color("245") // mid gray — tags
-	colorStatusFg = lipgloss.Color("229") // bright yellow — status bar text
-	colorStatusBg = lipgloss.Color("236") // dark gray — status bar / header background
-	colorWorking  = lipgloss.Color("78")  // green — agent working
-	colorWaiting  = lipgloss.Color("220") // bright yellow-orange — agent waiting
-	colorError    = lipgloss.Color("203") // red — config error overlay border
+	mochaBase     = lipgloss.Color("#1e1e2e")
+	mochaMantle   = lipgloss.Color("#181825")
+	mochaCrust    = lipgloss.Color("#11111b")
+	mochaSurface0 = lipgloss.Color("#313244")
+	mochaSurface1 = lipgloss.Color("#45475a")
+	mochaSurface2 = lipgloss.Color("#585b70")
+	mochaOverlay0 = lipgloss.Color("#6c7086")
+	mochaOverlay1 = lipgloss.Color("#7f849c")
+	mochaSubtext0 = lipgloss.Color("#a6adc8")
+	mochaSubtext1 = lipgloss.Color("#bac2de")
+	mochaText     = lipgloss.Color("#cdd6f4")
+	mochaMauve    = lipgloss.Color("#cba6f7")
+	mochaTeal     = lipgloss.Color("#94e2d5")
+	mochaGreen    = lipgloss.Color("#a6e3a1")
+	mochaYellow   = lipgloss.Color("#f9e2af")
+	mochaPeach    = lipgloss.Color("#fab387")
+	mochaRed      = lipgloss.Color("#f38ba8")
+	mochaSky      = lipgloss.Color("#89dceb")
+)
+
+// Semantic aliases — keep existing names so call sites stay unchanged.
+var (
+	colorAccent   = mochaMauve   // selected, focused title, focus bar
+	colorText     = mochaText
+	colorMuted    = mochaOverlay0
+	colorTag      = mochaSubtext0
+	colorStatusFg = mochaText
+	colorStatusBg = mochaMantle
+	colorWorking  = mochaGreen  // agent working
+	colorWaiting  = mochaPeach  // agent waiting
+	colorError    = mochaRed
 )
 
 var (
@@ -80,6 +102,31 @@ var (
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorError).
 				Padding(1, 2)
+
+	// Dock panel chrome (ViewProjects).
+	panelTitleFocusedStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(mochaMauve)
+
+	panelTitleBlurredStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(mochaOverlay0)
+
+	panelCountStyle = lipgloss.NewStyle().
+			Foreground(mochaOverlay0)
+
+	panelRuleStyle = lipgloss.NewStyle().
+			Foreground(mochaSurface1)
+
+	focusBarStyle = lipgloss.NewStyle().
+			Foreground(mochaMauve)
+
+	permissionStyle = lipgloss.NewStyle().
+			Foreground(mochaYellow).
+			Bold(true)
+
+	endedStyle = lipgloss.NewStyle().
+			Foreground(mochaOverlay0)
 )
 
 // styledHotkeys highlights [key] patterns in s with hotkeyLabelStyle,

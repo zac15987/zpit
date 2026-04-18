@@ -710,9 +710,13 @@ func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {
 	switch next {
 	case FocusTerminals:
 		m.termCursor = 0
+		m.terminalsVP.GotoTop()
 	case FocusLoopSlots:
 		m.focusProjectID = project.ID
 		m.loopCursor = 0
+		m.loopVP.GotoTop()
+	case FocusProjects:
+		m.projectsVP.GotoTop()
 	}
 	return m, nil
 }
@@ -738,17 +742,23 @@ func (m Model) handleTerminalsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.termCursor > 0 {
 			m.termCursor--
 		}
+		if m.termCursor >= 0 && m.termCursor < len(m.termLineStarts) {
+			m.ensureCursorInPanel(&m.terminalsVP, m.termLineStarts[m.termCursor])
+		}
 
 	case key.Matches(msg, m.keys.Down):
 		if m.termCursor < len(termKeys)-1 {
 			m.termCursor++
 		}
+		if m.termCursor >= 0 && m.termCursor < len(m.termLineStarts) {
+			m.ensureCursorInPanel(&m.terminalsVP, m.termLineStarts[m.termCursor])
+		}
 
 	case key.Matches(msg, m.keys.PageUp):
-		m.viewport.PageUp()
+		m.terminalsVP.PageUp()
 
 	case key.Matches(msg, m.keys.PageDown):
-		m.viewport.PageDown()
+		m.terminalsVP.PageDown()
 
 	case key.Matches(msg, m.keys.Kill):
 		trackingKey := termKeys[m.termCursor]
@@ -818,17 +828,23 @@ func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.loopCursor > 0 {
 			m.loopCursor--
 		}
+		if m.loopCursor >= 0 && m.loopCursor < len(m.loopLineStarts) {
+			m.ensureCursorInPanel(&m.loopVP, m.loopLineStarts[m.loopCursor])
+		}
 
 	case key.Matches(msg, m.keys.Down):
 		if m.loopCursor < len(keys)-1 {
 			m.loopCursor++
 		}
+		if m.loopCursor >= 0 && m.loopCursor < len(m.loopLineStarts) {
+			m.ensureCursorInPanel(&m.loopVP, m.loopLineStarts[m.loopCursor])
+		}
 
 	case key.Matches(msg, m.keys.PageUp):
-		m.viewport.PageUp()
+		m.loopVP.PageUp()
 
 	case key.Matches(msg, m.keys.PageDown):
-		m.viewport.PageDown()
+		m.loopVP.PageDown()
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.launchFocusClaudeCmd(keys[m.loopCursor])

@@ -145,8 +145,22 @@ type Model struct {
 	termCursor     int
 	focusProjectID string
 
-	// Viewport for scrollable content
+	// Viewport for scrollable content (used by ViewStatus/Channel/EditConfig/GitStatus).
 	viewport viewport.Model
+
+	// Dock layout viewports (ViewProjects only). Each panel is independently scrollable.
+	projectsVP  viewport.Model
+	terminalsVP viewport.Model
+	loopVP      viewport.Model
+	hotkeysVP   viewport.Model
+
+	// Per-panel cumulative line offsets, rebuilt each sync; used by
+	// ensureCursorInPanel for variable-stride cursors (terminals/loop).
+	termLineStarts []int
+	loopLineStarts []int
+
+	// Last computed dock rects — used by mouse-wheel hit-testing.
+	lastDockRects dockRects
 
 	// Subscriber for cross-client state refresh broadcast
 	subscriberID int
@@ -159,10 +173,18 @@ type Model struct {
 // When isRemote is true, pressing q only closes this session without stopping
 // shared watchers or deactivating loops.
 func NewModelWithState(appState *AppState, isRemote bool) Model {
-	vp := viewport.New(0, 0)
-	vp.MouseWheelEnabled = true
-	vp.MouseWheelDelta = 3
-	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
+	mkVP := func() viewport.Model {
+		v := viewport.New(0, 0)
+		v.MouseWheelEnabled = true
+		v.MouseWheelDelta = 3
+		v.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
+		return v
+	}
+	vp := mkVP()
+	projectsVP := mkVP()
+	terminalsVP := mkVP()
+	loopVP := mkVP()
+	hotkeysVP := mkVP()
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 	sp.Style = lipgloss.NewStyle().Foreground(colorWorking)
@@ -176,6 +198,10 @@ func NewModelWithState(appState *AppState, isRemote bool) Model {
 		currentView:  ViewProjects,
 		spinner:      sp,
 		viewport:     vp,
+		projectsVP:   projectsVP,
+		terminalsVP:  terminalsVP,
+		loopVP:       loopVP,
+		hotkeysVP:    hotkeysVP,
 		subscriberID: id,
 		subscriberCh: ch,
 	}
@@ -233,7 +259,14 @@ func (m *Model) syncViewportContent() {
 	case ViewProjects:
 		header = m.renderProjectsHeader()
 		footer = m.renderProjectsFooter()
-		m.viewport.SetContent(m.renderProjectsScrollable())
+		contentH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+		if contentH < 1 {
+			contentH = 1
+		}
+		m.layoutDockPanels(m.width, contentH)
+		// For ViewProjects, width/height are applied per-panel in layoutDockPanels;
+		// the legacy m.viewport stays idle. Return before the shared width/height block.
+		return
 	case ViewStatus:
 		header = m.renderStatusHeader()
 		footer = m.renderStatusFooter()
@@ -259,13 +292,63 @@ func (m *Model) syncViewportContent() {
 	m.viewport.Height = h
 }
 
-// ensureCursorVisible adjusts the viewport offset so the given line is on screen.
+// ensureCursorVisible adjusts the legacy viewport offset so the given line is on screen.
+// Used by views that still share m.viewport (Status/Channel/EditConfig/GitStatus).
 func (m *Model) ensureCursorVisible(cursorLine int) {
-	if cursorLine < m.viewport.YOffset {
-		m.viewport.SetYOffset(cursorLine)
-	} else if cursorLine >= m.viewport.YOffset+m.viewport.Height {
-		m.viewport.SetYOffset(cursorLine - m.viewport.Height + 1)
+	m.ensureCursorInPanel(&m.viewport, cursorLine)
+}
+
+// ensureCursorInPanel adjusts a specific panel viewport's YOffset so cursorLine is visible.
+// Used by dock panels (projectsVP, terminalsVP, loopVP) with per-panel cursor tracking.
+func (m *Model) ensureCursorInPanel(vp *viewport.Model, cursorLine int) {
+	if cursorLine < vp.YOffset {
+		vp.SetYOffset(cursorLine)
+	} else if cursorLine >= vp.YOffset+vp.Height {
+		vp.SetYOffset(cursorLine - vp.Height + 1)
 	}
+}
+
+// focusedVP returns a pointer to the viewport owned by the currently focused dock panel.
+// Falls back to projectsVP for unknown focus states.
+func (m *Model) focusedVP() *viewport.Model {
+	switch m.focusedPanel {
+	case FocusTerminals:
+		return &m.terminalsVP
+	case FocusLoopSlots:
+		return &m.loopVP
+	default:
+		return &m.projectsVP
+	}
+}
+
+// hitTestDockPanel returns a pointer to the viewport under the given terminal
+// coordinates (in screen space), or nil if the point lies outside any dock panel.
+// Rect coordinates are content-relative; this offsets the mouse Y by the rendered
+// header height so the test uses the same frame as m.lastDockRects.
+func (m *Model) hitTestDockPanel(x, y int) *viewport.Model {
+	headerH := lipgloss.Height(m.renderProjectsHeader())
+	ry := y - headerH
+	if ry < 0 {
+		return nil
+	}
+	inside := func(r panelRect) bool {
+		if r.w == 0 || r.h == 0 {
+			return false
+		}
+		return x >= r.x && x < r.x+r.w && ry >= r.y && ry < r.y+r.h
+	}
+	r := m.lastDockRects
+	switch {
+	case inside(r.projects):
+		return &m.projectsVP
+	case inside(r.terminals):
+		return &m.terminalsVP
+	case inside(r.loop):
+		return &m.loopVP
+	case inside(r.hotkeys):
+		return &m.hotkeysVP
+	}
+	return nil
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -315,6 +398,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		var cmd tea.Cmd
+		if m.currentView == ViewProjects {
+			if vp := m.hitTestDockPanel(msg.X, msg.Y); vp != nil {
+				*vp, cmd = vp.Update(msg)
+				return m, cmd
+			}
+			// No hit → fall through to projectsVP as a sensible default.
+			m.projectsVP, cmd = m.projectsVP.Update(msg)
+			return m, cmd
+		}
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
@@ -564,19 +656,19 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
-		m.ensureCursorVisible(m.cursor * 3) // each project = 3 lines (name + detail + blank)
+		m.ensureCursorInPanel(&m.projectsVP, m.cursor*3) // each project = 3 lines (name + detail + blank)
 
 	case key.Matches(msg, m.keys.Down):
 		if m.cursor < len(m.state.projects)-1 {
 			m.cursor++
 		}
-		m.ensureCursorVisible(m.cursor * 3)
+		m.ensureCursorInPanel(&m.projectsVP, m.cursor*3)
 
 	case key.Matches(msg, m.keys.PageUp):
-		m.viewport.PageUp()
+		m.projectsVP.PageUp()
 
 	case key.Matches(msg, m.keys.PageDown):
-		m.viewport.PageDown()
+		m.projectsVP.PageDown()
 
 	case key.Matches(msg, m.keys.Enter):
 		if m.selectedProject() == nil {
