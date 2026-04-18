@@ -319,7 +319,16 @@ func (m Model) composeDockLayout(width, contentHeight int) string {
 		title: locale.T(locale.KeyHotkeys),
 	})
 
-	left := lipgloss.JoinVertical(lipgloss.Left, pStr, tStr, lStr)
+	// Filter empty panels before JoinVertical — lipgloss treats "" as a blank
+	// row and would otherwise inflate the left column beyond contentHeight,
+	// pushing the header off the top of the alt screen.
+	leftParts := make([]string, 0, 3)
+	for _, s := range []string{pStr, tStr, lStr} {
+		if s != "" {
+			leftParts = append(leftParts, s)
+		}
+	}
+	left := lipgloss.JoinVertical(lipgloss.Left, leftParts...)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, hStr)
 }
 
