@@ -137,6 +137,19 @@
 - [x] `showRedeployConfirm()` 沿用 huh confirm dialog pattern
 - [x] i18n：7 個新 locale key（KeyRedeploy、KeyRedeployConfirm/Button/Done、KeyDeployStatus{Full,Partial,None}）
 
+## M4g: Dock 版面 + Catppuccin Mocha
+
+> 已完成
+
+- [x] `ViewProjects` 從單一共用 viewport 改為四面板 dock：專案 / 活躍終端 / Loop（左欄堆疊）+ 快捷鍵（右欄固定）；每個面板各自擁有 `viewport.Model`，可獨立上下捲動
+- [x] 版面演算法 `computePanelRects`：70/30 欄寬 + `dockMinLeftWidth`/`dockMinRightWidth` clamp；左欄高度依權重分配（專案 3 / 終端 2 / Loop 2），空面板自動收合；不再有 `<100 cols` 單欄 fallback — 任何寬度 Hotkeys 永遠 dock 右邊
+- [x] 標題 chrome：`▎` mauve 焦點 bar（單欄寬，只出現在 focused 面板的標題列）+ 大寫 title + count badge + 6 字 rule；堆疊面板前加一列 gutter blank 分隔
+- [x] 256-color ANSI → Catppuccin Mocha 24-bit 色盤；`colorAccent/Text/Muted/...` 語意 alias 保留，call sites 不動
+- [x] 滑鼠滾輪 `hitTestDockPanel`：依游標位置分派到命中面板的 viewport，未命中回退 projectsVP
+- [x] `renderTerminalsBody` / `renderLoopBody` 建 `termLineStarts` / `loopLineStarts` 供可變 stride cursor-follow 使用
+- [x] `TestComputePanelRects` 8 個 case 覆蓋 wide/narrow/empty/clamp 邊界
+- [x] 後續 refactor：`panelInnerSize` + `applyPanelContent` 抽出 4 個 sync 函式的重複 prologue/epilogue；`dockPanel` struct 把 `renderOne`/`renderPanelChrome` 參數從 7/6 降到 1；magic number 全改為具名常數
+
 ---
 
 ## M5: 完整體驗（規劃中）

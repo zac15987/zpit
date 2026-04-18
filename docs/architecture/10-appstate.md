@@ -50,7 +50,10 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 │    │                                               │    │
 │    ├── SSH Client A ──► tea.Program ──► Model A    │    │
 │    │   (isRemote=true)    (alt screen)   ├─ cursor │    │
+│    │                                     ├─ dock VPs│   │
+│    │                                     │  (projects/term/loop/hotkeys) │
 │    │                                     ├─ viewport│   │
+│    │                                     │  (Status/Channel/GitStatus/EditConfig shared) │
 │    │                                     └─ overlays│   │
 │    │                                               │    │
 │    ├── SSH Client B ──► tea.Program ──► Model B    │    │

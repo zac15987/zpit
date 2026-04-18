@@ -8,53 +8,43 @@
 
 ### Main View
 
+Four independently scrollable dock panels — Projects, Active Terminals, Loop Engine (left column, stacked), Hotkeys (right column). Catppuccin Mocha palette with a single-column `▎` mauve bar marking the focused panel.
+
 ```
- Zpit v0.1                                        03/27 14:07  Windows Terminal
+ Zpit v0.1                                            04/19 15:04  Windows Terminal
 
 
-  Projects                                                Hotkeys
-  ────────────────────────────────                        ──────────────────────────
-
-   ⚙️ AI Inspection Cleaning Demo  🟢 deployed            [Enter] Launch Claude Code
-     machine │ wpf, ethercat, basler                      [c] Clarify requirement
-                                                          [l] Loop auto-implement
-   ⚙️ ENR DUC  🟡 partial                                 [r] Review changes
-     machine │ wpf, secsgem                               [f] Efficiency agent
-                                                          [s] Status overview
-   🖥️ DisplayProfileManager  ⚪ not deployed              [o] Open project folder
-     desktop │ wpf, nlog                                  [p] Open Issue Tracker
-                                                          [u] Undeploy agents
- › 🖥️ Zpit  🟢 deployed                                   [d] Redeploy all agents
-     desktop │ go, bubbletea                              [m] Channel communication
-
-                                                          [a] Add project
-                                                          [e] Edit config
-
-                                                          [x] Close Terminal
-                                                          [Tab] Switch Panel
-                                                          [?] Help
-                                                          [q] Quit
-
-
-  Active Terminals
-  ──────────────────────────────────────────────────
-  [1] AI Inspection Cleaning Demo │ 🟡 Waiting for input 04:15
-      Q: Issue B pushed: **[#25 — feat(manual-control): Safety Interlock + Soft Lim
-  [2] Zpit │ 🟡 Waiting for input 08:36
-      Q: Pushed to `origin/dev`. Commit `2094bea`.
-  [3] Zpit │ 🟢 Launched 00:09
-      Tab: Zpit
-
-
-  Loop Status
-  ──────────────────────────────────────────────────
-  AI Inspection Cleaning Demo (running)
-    🟢 #25 feat(manual-control): Safety Interlock...  coding
-
+▎ PROJECTS  7                                         HOTKEYS
+  ──────                                              ──────
+  › AI Inspection Cleaning Demo  ⚪ not deployed     [Enter] Launch Claude Code
+     machine │ wpf, ethercat, basler                  [c] Clarify requirement
+                                                      [l] Loop auto-implement
+    ENR DUC  ⚪ not deployed                          [r] Review changes
+     machine │ wpf, secsgem                           [f] Efficiency agent
+                                                      [s] Status overview
+    DisplayProfileManager  ⚪ not deployed            [o] Open project folder
+     desktop │ wpf, nlog                              [p] Open Issue Tracker
+                                                      [u] Undeploy agents
+    Zpit  🟢 deployed                                 [d] Redeploy all agents
+     terminal │ go, bubbletea                         [m] Channel communication
+                                                      [g] Git status
+    Zplex  ⚪ not deployed
+     desktop │ go, electron, xterm                    [a] Add project
+                                                      [e] Edit config
+    Zacfuse  🟢 deployed
+     web │ astro, typescript, docs                    [x] Close Terminal
+                                                      [Tab] Switch Panel
+                                                      [?] Help
+  ACTIVE TERMINALS  1                                 [q] Quit
+  ──────
+  ›[1] Zpit │ 🟡 Waiting for input 00:15
+      Q: Commit 2198be6 pushed to `origin/dev`, working tre
 
 
   Press ? for help, q to quit
 ```
+
+Tab cycles focus between Projects → Active Terminals (when any) → Loop Engine (when any slot exists); Hotkeys stays docked to the right as read-only reference. `↑↓/PgUp/PgDn` scroll the focused panel only; mouse wheel scrolls whichever panel the cursor hovers. Below ~40 cols the left/right widths auto-shrink, but Hotkeys never drops below the other panels.
 
 ### Status View
 

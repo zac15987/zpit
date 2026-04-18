@@ -4,61 +4,65 @@
 
 ---
 
-## 2.1 主畫面 — 專案總覽 + 終端調度 ✅ 已實作
+## 2.1 主畫面 — Dock 版面（Catppuccin Mocha + 獨立捲動的四面板）✅ 已實作
+
+主畫面採用 lazygit 風格的 dock 版面：左欄由上到下堆疊 Projects / Active Terminals / Loop Engine，
+右欄固定 Hotkeys。四個面板各自擁有獨立的 `viewport.Model`，互不干擾地上下捲動；
+Catppuccin Mocha 色盤，無邊框、單欄寬的 `▎` mauve accent bar 只出現在當下 focused 面板的標題列。
 
 ```
-╔══════════════════════════════════════════════════════════════════════╗
-║  Zpit v0.1                              03/18 14:32  WSL  ║
-╠══════════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  專案列表                          快捷鍵                          ║
-║  ─────────────────────────────     ──────────────────────          ║
-║                                                                    ║
-║  ⚙️  ASE 檢測清潔機台  🟢 已部署   [Enter] 開 Claude Code (新終端) ║
-║     WPF+硬體 │ 3 todo │ 1 進行中   [c] Clarify 需求               ║
-║     🟢 Agent 運行中 (tmux:2)       [l] Loop 自動實作               ║
-║                                    [r] Review 機台改動             ║
-║  ⚙️  ChipMOS 點膠機台  🟡 部分部署 [f] 效率 Agent                  ║
-║     WPF+硬體 │ 1 todo │ 0 進行中   [s] 狀態總覽                    ║
-║                                    [o] 開啟專案資料夾              ║
-║                                    [p] 開啟 Issue Tracker          ║
-║  🌐  個人品牌網頁  ⚪ 未部署         [u] Undeploy 部署檔案           ║
-║     Astro    │ 5 todo │ 0 進行中   [d] Redeploy 重新部署           ║
-║                                    ──────────────────────          ║
-║  🖥️  報警管理工具                   [x] 關閉終端                    ║
-║     WPF      │ 0 todo │ 0 進行中   [a] 新增專案                    ║
-║                                    [e] 編輯設定 (子選單)            ║
-║                                    [?] 說明                       ║
-║ ›📱  Android 監控 App  🟢 已部署    [q] 離開                       ║
-║     Kotlin   │ 2 todo │ 0 進行中                                  ║
-║                                                                    ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  活躍終端 (Tab 切換至此區域，↑↓ 選擇，x 關閉終端)                  ║
-║ ›[1] ASE 檢測  │ 🟢 實作中: EtherCAT reconnect backoff │ 02:15    ║
-║      切換: tmux select-window -t ase-inspection                    ║
-║  [2] 個人網頁  │ 🟢 AI Review 完成，等待你確認 PR                  ║
-║      切換: tmux select-window -t personal-site                     ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  最近活動  ⚠️ 尚未實作                                              ║
-║  14:20  ASE 檢測  │ 修改 EtherCatService.cs (新增 RetryBackoff)   ║
-║  14:18  ASE 檢測  │ 讀取 CLAUDE.md, AlarmManager.cs               ║
-║  13:45  個人網頁  │ Loop 完成 3 issues │ 已部署                    ║
-╚══════════════════════════════════════════════════════════════════════╝
+ Zpit v0.1                                            04/19 15:04  Windows Terminal
+
+
+▎ 專案  7                                             快捷鍵
+  ──────                                              ──────
+  › AI Inspection Cleaning Demo  ⚪ 未部署            [Enter] 啟動 Claude Code
+     machine │ wpf, ethercat, basler                  [c] 釐清需求
+                                                      [l] Loop 自動實作
+    ENR DUC  ⚪ 未部署                                [r] Review 變更
+     machine │ wpf, secsgem                           [f] 效率 Agent
+                                                      [s] 狀態總覽
+    DisplayProfileManager  ⚪ 未部署                  [o] 開啟專案資料夾
+     desktop │ wpf, nlog                              [p] 開啟 Issue Tracker
+                                                      [u] 清除部署檔案
+    Zpit  🟢 已部署                                   [d] 重新部署所有 agent
+     terminal │ go, bubbletea                         [m] Channel 通訊
+                                                      [g] 檢視 Git 狀態
+    Zplex  ⚪ 未部署
+     desktop │ go, electron, xterm                    [a] 新增專案
+                                                      [e] 編輯設定
+    Zacfuse  🟢 已部署
+     web │ astro, typescript, docs                    [x] 關閉終端
+                                                      [Tab] 切換面板
+                                                      [?] 說明
+  執行中終端  1                                       [q] 離開
+  ──────
+  ›[1] Zpit │ 🟡 等待輸入 00:15
+      Q: Commit 2198be6 已 push 到 `origin/dev`，working tre
+
+
+  按 ? 查看說明，q 離開
 ```
 
-操作方式：
-- ↑↓ 選擇專案
+**版面規則：**
+- 左右比例 70/30；Hotkeys 最小 22 欄、左欄最小 18 欄，寬度不足時兩邊互相擠壓（不會堆疊到下方）
+- 左欄高度依權重分配（專案 3 / 終端 2 / Loop 2）；空的面板收合、剩餘空間留給專案
+- `▎` mauve bar 是 *panel 級* 指示器，只出現在 focused 面板的 chrome，body row 不帶 `▎`
+- 每個 panel 標題右側有 count badge（例 `專案 7`）、下方一小段 6 字的 rule（surface1 dim 色）
+- 堆疊的面板（Terminals、Loop）chrome 前有一列空白 gutter，與上方面板拉開視覺呼吸
+
+**操作方式：**
+- ↑↓ 選擇：當下 focused 面板的 cursor，同時觸發該面板 viewport 的 cursor-follow 捲動
+- PgUp / PgDn：只捲動 focused 面板，其他面板 YOffset 維持不變
+- 滑鼠滾輪：滾動滑鼠游標所在的面板（命中測試，不看 focus）
 - Enter：在新終端開啟 Claude Code（Windows Terminal 新 tab / tmux 新 window）
 - 快捷鍵 [c][l][r][s]：同樣在新終端啟動對應的 agent
 - [u]：移除 Zpit 部署到專案的 agents/docs/hooks 檔案
 - [d]：清除現有部署後重新寫入 4 個 agents (clarifier/reviewer/task-runner/efficiency) + hooks + docs，**不啟動 Claude**（confirm 後執行）
 - 專案名稱旁的狀態標記：🟢 已部署（全部 10 個檔案齊全）、🟡 部分部署（部分檔案缺失或只部署過單一 agent）、⚪ 未部署
 - [f]：啟動效率 Agent（輕量模式，無 hooks、無 tracker、self-review）
-- Tab：三面板循環切換 — 專案列表 → 活躍終端（有終端時）→ Loop 狀態（有 slot 時）→ 專案列表
+- Tab：循環切換 focus panel — 專案 → 活躍終端（有終端時）→ Loop（有 slot 時）→ 專案；Hotkeys 面板不納入 Tab cycle（純參考資訊，空間不足時自動收合 separator blank row、尾端補 `…`）
 - [x]：當焦點在活躍終端時，關閉選中的終端（force kill process，需確認）
-- 「活躍終端」區域：即時顯示正在運行的 Claude Code session 狀態，支援 cursor 選擇和 x 鍵關閉
-  （資料來源：Claude Code session log + JSONL 解析）
-- 「最近活動」區域：**尚未實作** — 設計上從 session log 解析 agent 的具體操作
 
 ---
 
