@@ -173,6 +173,18 @@ SlotError               流程中發生錯誤
 - Coding agent 設定 `review` label → reviewer 啟動
 - Reviewer 設定 `ai-review` (PASS) 或 `needs-changes` (auto-retry)
 
+**Polling chain 的心跳實作（tick-driven）：** 三個等待型狀態各自對應一條獨立的 `tea.Tick` 心跳鏈：
+
+| 狀態 | Poll 內容 | 下一個 tick 由誰排 |
+|---|---|---|
+| 任何 Active loop | 抓 todo issues | `handleLoopPollTick` |
+| `SlotCoding` / `SlotReviewing` | 抓 issue labels | `handleLoopLabelPollTick` |
+| `SlotWaitingPRMerge` | 抓 PR 狀態 | `handleLoopPRPollTick` |
+
+**關鍵不變量：心跳的 reschedule 只發生在 `model.go` 的 tick case（`loop_handler.go` 的 `handleLoop*Tick` 系列），不發生在 business handler（`handleLoopPoll` / `handleLoopLabelPoll` / `handleLoopPRStatus`）。** 每個 tick handler 在入口檢查 gate（loop `Active` + slot state 正確），通過就 `tea.Batch(pollCmd, scheduleNextTick)` 預先排好下一跳；不通過就 return nil，心跳自然停止。business handler 只負責 state transition，不得自行 reschedule。
+
+這個設計避免了「handler return nil 路徑漏寫 reschedule 導致整條 poll 鏈永久啞掉」的 bug（2026-04-18 log 觀察到）。新增狀態或 poll 鏈時：`loopSchedulePoll` / `loopSchedulePRPoll` / `loopScheduleLabelPoll` 只能在 **kickoff** 時機呼叫（loop 啟動、transition 進入等待狀態、resume），禁止在 business handler 的 mid-chain 呼叫。`internal/tui/loop_tick_test.go` 覆蓋這個不變量。
+
 `Slot` struct 追蹤每個 issue 在 pipeline 中的狀態：
 
 ```go

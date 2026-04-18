@@ -46,7 +46,8 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		m.state.Unlock()
 		m.state.logger.Printf("loop: poll error key=%s err=%v", msg.ProjectID, msg.Err)
 		m.setStatus(fmt.Sprintf("Loop poll error: %s", msg.Err))
-		return m, m.loopSchedulePoll(msg.ProjectID)
+		// Tick handler has already rescheduled the next poll.
+		return m, nil
 	}
 
 	// Deduplicate circular dependency logging: only log on first detection or change.
@@ -137,7 +138,7 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 	if len(wtCmds) > 0 {
 		cmds = append(cmds, tea.Sequence(wtCmds...))
 	}
-	cmds = append(cmds, m.loopSchedulePoll(msg.ProjectID))
+	// Tick handler has already rescheduled the next poll — no reschedule here.
 	return m, tea.Batch(cmds...)
 }
 
@@ -252,7 +253,8 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 		m.state.Unlock()
 		m.state.logger.Printf("loop: label poll error key=%s issue=#%s err=%v", msg.ProjectID, msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("Label poll error #%s: %s", msg.IssueID, msg.Err))
-		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
+		// Tick handler has already rescheduled.
+		return m, nil
 	}
 
 	switch slot.State {
@@ -265,7 +267,8 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 			return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
 		}
 		m.state.Unlock()
-		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
+		// Tick handler has already rescheduled.
+		return m, nil
 
 	case loop.SlotReviewing:
 		if hasLabel(msg.Labels, "ai-review") {
@@ -301,7 +304,8 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 			return m, m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID)
 		}
 		m.state.Unlock()
-		return m, m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID)
+		// Tick handler has already rescheduled.
+		return m, nil
 	}
 
 	m.state.Unlock()
@@ -326,13 +330,15 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 		m.state.Unlock()
 		m.state.logger.Printf("loop: PR poll error key=%s issue=#%s err=%v", msg.ProjectID, msg.IssueID, msg.Err)
 		m.setStatus(fmt.Sprintf("PR poll error #%s: %s", msg.IssueID, msg.Err))
-		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
+		// Tick handler has already rescheduled.
+		return m, nil
 	}
 
 	// PR merged = done → cleanup
 	if msg.PR == nil || msg.PR.State == "open" {
 		m.state.Unlock()
-		return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
+		// Tick handler has already rescheduled.
+		return m, nil
 	}
 
 	if msg.PR.State == "merged" {
@@ -349,6 +355,65 @@ func (m Model) handleLoopPRStatus(msg LoopPRStatusMsg) (tea.Model, tea.Cmd) {
 	m.state.NotifyAll()
 	m.state.Unlock()
 	return m, nil
+}
+
+// handleLoopPollTick is the tick-driven heartbeat for the todo-issue poll chain.
+// Reschedules the next tick up-front so the chain survives any nil/error path
+// in the poll cmd or handleLoopPoll. Stops only when the loop is inactive.
+func (m Model) handleLoopPollTick(msg loopPollTickMsg) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	ls, ok := m.state.loops[msg.ProjectID]
+	active := ok && ls.Active
+	m.state.RUnlock()
+	if !active {
+		return m, nil
+	}
+	return m, tea.Batch(
+		m.loopPollCmd(msg.ProjectID),
+		m.loopSchedulePoll(msg.ProjectID),
+	)
+}
+
+// handleLoopPRPollTick is the tick-driven heartbeat for the PR-status poll chain.
+// Keeps ticking only while the slot is still in SlotWaitingPRMerge; state
+// transitions (cleanup, error) are owned by handleLoopPRStatus.
+func (m Model) handleLoopPRPollTick(msg loopPRPollTickMsg) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	keep := false
+	if ls, ok := m.state.loops[msg.ProjectID]; ok && ls.Active {
+		if slot, ok := ls.Slots[loop.SlotKey(msg.ProjectID, msg.IssueID)]; ok && slot.State == loop.SlotWaitingPRMerge {
+			keep = true
+		}
+	}
+	m.state.RUnlock()
+	if !keep {
+		return m, nil
+	}
+	return m, tea.Batch(
+		m.loopPollPRCmd(msg.ProjectID, msg.IssueID),
+		m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID),
+	)
+}
+
+// handleLoopLabelPollTick is the tick-driven heartbeat for the label-poll chain.
+// Keeps ticking while the slot is in SlotCoding or SlotReviewing; any other
+// state means the transition fired elsewhere and we stop.
+func (m Model) handleLoopLabelPollTick(msg loopLabelPollTickMsg) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	keep := false
+	if ls, ok := m.state.loops[msg.ProjectID]; ok && ls.Active {
+		if slot, ok := ls.Slots[loop.SlotKey(msg.ProjectID, msg.IssueID)]; ok && (slot.State == loop.SlotCoding || slot.State == loop.SlotReviewing) {
+			keep = true
+		}
+	}
+	m.state.RUnlock()
+	if !keep {
+		return m, nil
+	}
+	return m, tea.Batch(
+		m.loopPollLabelsCmd(msg.ProjectID, msg.IssueID),
+		m.loopScheduleLabelPoll(msg.ProjectID, msg.IssueID),
+	)
 }
 
 func (m Model) handleLoopCleanup(msg LoopCleanupMsg) (tea.Model, tea.Cmd) {

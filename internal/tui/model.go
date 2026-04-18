@@ -392,21 +392,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LoopOpenPRsMsg:
 		return m.handleLoopOpenPRs(msg)
 	case loopPollTickMsg:
-		m.state.RLock()
-		ls, ok := m.state.loops[msg.ProjectID]
-		active := ok && ls.Active
-		m.state.RUnlock()
-		if active {
-			return m, m.loopPollCmd(msg.ProjectID)
-		}
-		return m, nil
+		return m.handleLoopPollTick(msg)
 	case loopPRPollTickMsg:
-		// loopPollPRCmd acquires its own RLock internally.
-		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+		return m.handleLoopPRPollTick(msg)
 	case LoopLabelPollMsg:
 		return m.handleLoopLabelPoll(msg)
 	case loopLabelPollTickMsg:
-		return m, m.loopPollLabelsCmd(msg.ProjectID, msg.IssueID)
+		return m.handleLoopLabelPollTick(msg)
 
 	// Channel event messages
 	case ChannelEventMsg:

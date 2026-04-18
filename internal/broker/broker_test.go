@@ -286,7 +286,10 @@ func TestBroker_ProjectIsolation(t *testing.T) {
 	resp.Body.Close()
 
 	// List proj-b should be empty.
-	resp2, _ := http.Get(base + "/api/artifacts/proj-b")
+	resp2, err := http.Get(base + "/api/artifacts/proj-b")
+	if err != nil {
+		t.Fatalf("GET proj-b artifacts: %v", err)
+	}
 	defer resp2.Body.Close()
 	var arts []Artifact
 	json.NewDecoder(resp2.Body).Decode(&arts)

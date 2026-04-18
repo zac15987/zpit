@@ -218,6 +218,9 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 			m.loopCleanupMergedCmd(project.ID),
 			m.loopScanOpenPRsCmd(project.ID),
 			m.loopPollCmd(project.ID),
+			// Kick off tick-driven heartbeat. handleLoopPoll no longer reschedules;
+			// the tick handler reschedules itself as long as the loop is active.
+			m.loopSchedulePoll(project.ID),
 		}
 		if project.ChannelEnabled && m.state.broker != nil {
 			cmds = append(cmds, m.channelSubscribeCmd(project.ID))
