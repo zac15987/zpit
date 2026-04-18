@@ -69,7 +69,6 @@ func (m Model) resolveAgentModel(agentName string) string {
 func (m Model) launchClaudeCmd() tea.Cmd {
 	project := m.state.projects[m.cursor]
 	cfg := m.state.cfg.Terminal
-	model := m.state.cfg.AgentModels.Coding
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 	logger := m.state.logger
 
@@ -93,7 +92,7 @@ func (m Model) launchClaudeCmd() tea.Cmd {
 			}
 		}
 
-		args := []string{"--model", model}
+		var args []string
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
