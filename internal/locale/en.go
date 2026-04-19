@@ -17,6 +17,9 @@ var en = map[Key]string{
 	KeyStatusOverview: "Status overview",
 	KeyOpenFolder:     "Open project folder",
 	KeyOpenTracker:    "Open Issue Tracker",
+	KeyOpenPR:         "Open PR",
+	KeyLazygit:        "Open lazygit",
+	KeyClaudeUpdate:   "Run claude update",
 	KeyAddProject:     "Add project",
 	KeyEditConfig:     "Edit config",
 	KeyUndeploy:       "Undeploy agents",
@@ -91,7 +94,7 @@ var en = map[Key]string{
 	KeyFocusSlot:      "Switch to slots",
 	KeyCannotLaunch:   "Cannot launch in this state",
 	KeyNoWorktreePath: "Slot has no worktree",
-	KeyLoopSlotHelp:   "Enter: open Claude  o: open folder  p: open issue  \u2191\u2193: navigate  Tab/Esc: back",
+	KeyLoopSlotHelp:   "Enter: open Claude  o: folder  i: issue  p: PR  G: lazygit  \u2191\u2193: navigate  Tab/Esc: back",
 
 	// Terminal focus panel
 	KeyKillTerminal:         "Terminal killed: %s (PID %d)",

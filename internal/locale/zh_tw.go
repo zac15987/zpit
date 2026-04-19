@@ -17,6 +17,9 @@ var zhTW = map[Key]string{
 	KeyStatusOverview: "狀態總覽",
 	KeyOpenFolder:     "開啟專案資料夾",
 	KeyOpenTracker:    "開啟 Issue Tracker",
+	KeyOpenPR:         "開啟 PR",
+	KeyLazygit:        "開啟 lazygit",
+	KeyClaudeUpdate:   "執行 claude update",
 	KeyAddProject:     "新增專案",
 	KeyEditConfig:     "編輯設定",
 	KeyUndeploy:       "清除部署檔案",
@@ -91,7 +94,7 @@ var zhTW = map[Key]string{
 	KeyFocusSlot:      "切換至 Slot",
 	KeyCannotLaunch:   "此狀態無法啟動",
 	KeyNoWorktreePath: "Slot 無 worktree 路徑",
-	KeyLoopSlotHelp:   "Enter: 開啟 Claude  o: 開啟資料夾  p: 開啟 issue  \u2191\u2193: 選擇  Tab/Esc: 返回",
+	KeyLoopSlotHelp:   "Enter: 開啟 Claude  o: 資料夾  i: issue  p: PR  G: lazygit  \u2191\u2193: 選擇  Tab/Esc: 返回",
 
 	// Terminal focus panel
 	KeyKillTerminal:         "終端已關閉：%s (PID %d)",

@@ -13,6 +13,7 @@ package tui
 //   - Free functions (openInBrowser, deployDocs, injectLangInstruction): stateless, no lock.
 
 import (
+	"context"
 	crypto_rand "crypto/rand"
 	"fmt"
 	"os"
@@ -20,10 +21,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
@@ -611,6 +614,129 @@ func (m Model) openTrackerCmd() tea.Cmd {
 	return openInBrowser(url)
 }
 
+// openPRCmd opens the project's PR list page in the browser.
+func (m Model) openPRCmd() tea.Cmd {
+	project := m.state.projects[m.cursor]
+	provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		return func() tea.Msg {
+			return StatusMsg{Text: locale.T(locale.KeyNoTrackerConfigured)}
+		}
+	}
+	url := tracker.BuildPRListURL(provider, project.Repo)
+	if url == "" {
+		return func() tea.Msg {
+			return StatusMsg{Text: fmt.Sprintf("Unknown tracker type: %s", provider.Type)}
+		}
+	}
+	return openInBrowser(url)
+}
+
+// openSlotPRCmd opens the slot's PR in the browser. If FindPRByBranch locates a
+// specific PR, its direct URL is used; otherwise falls back to a filtered PR list
+// URL (?head=<branch>).
+func (m Model) openSlotPRCmd(slotKey string) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	ls, ok := m.state.loops[m.focusProjectID]
+	if !ok {
+		m.state.RUnlock()
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok {
+		m.state.RUnlock()
+		return m, nil
+	}
+	branch := slot.BranchName
+	m.state.RUnlock()
+
+	project := m.findProject(m.focusProjectID)
+	if project == nil {
+		return m, nil
+	}
+	provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]
+	if !ok {
+		m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		return m, nil
+	}
+	client, ok := m.state.clients[project.Tracker]
+	if !ok {
+		m.setStatus(locale.T(locale.KeyNoTrackerConfigured))
+		return m, nil
+	}
+	fallback := tracker.BuildPRFilterURL(provider, project.Repo, branch)
+	repo := project.Repo
+
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		pr, err := client.FindPRByBranch(ctx, repo, branch)
+		if err == nil && pr != nil && pr.URL != "" {
+			return openInBrowser(pr.URL)()
+		}
+		if fallback == "" {
+			return StatusMsg{Text: fmt.Sprintf("Cannot build PR URL for tracker type: %s", provider.Type)}
+		}
+		return openInBrowser(fallback)()
+	}
+}
+
+// runLazygitCmd returns a tea.Cmd that spawns lazygit in a new terminal.
+func runLazygitCmd(workDir, title string, cfg config.TerminalConfig) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := terminal.LaunchLazygit(workDir, title, cfg); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("lazygit launch failed: %s", err)}
+		}
+		return StatusMsg{Text: fmt.Sprintf("Opened lazygit in %s", workDir)}
+	}
+}
+
+// launchLazygitCmd opens lazygit in a new terminal at the selected project root.
+func (m Model) launchLazygitCmd() tea.Cmd {
+	project := m.state.projects[m.cursor]
+	workDir := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+	title := fmt.Sprintf("lazygit — %s", project.Name)
+	return runLazygitCmd(workDir, title, m.state.cfg.Terminal)
+}
+
+// launchSlotLazygitCmd opens lazygit in a new terminal at the slot's worktree.
+func (m Model) launchSlotLazygitCmd(slotKey string) (tea.Model, tea.Cmd) {
+	m.state.RLock()
+	ls, ok := m.state.loops[m.focusProjectID]
+	if !ok {
+		m.state.RUnlock()
+		return m, nil
+	}
+	slot, ok := ls.Slots[slotKey]
+	if !ok || slot.WorktreePath == "" {
+		m.state.RUnlock()
+		m.setStatus(locale.T(locale.KeyNoWorktreePath))
+		return m, nil
+	}
+	workDir := slot.WorktreePath
+	issueID := slot.IssueID
+	m.state.RUnlock()
+
+	if _, err := os.Stat(workDir); err != nil {
+		m.showErrorOverlay([]string{locale.T(locale.KeyErrWorktreeMissing)})
+		return m, nil
+	}
+	title := fmt.Sprintf("lazygit — #%s", issueID)
+	return m, runLazygitCmd(workDir, title, m.state.cfg.Terminal)
+}
+
+// launchClaudeUpdateCmd runs `claude update` in a new terminal. The terminal
+// stays open after the command finishes so the user can read the result.
+func (m Model) launchClaudeUpdateCmd() tea.Cmd {
+	cfg := m.state.cfg.Terminal
+	return func() tea.Msg {
+		if _, err := terminal.LaunchClaudeUpdate(cfg); err != nil {
+			return StatusMsg{Text: fmt.Sprintf("claude update launch failed: %s", err)}
+		}
+		return StatusMsg{Text: "Launched claude update"}
+	}
+}
+
 // openInBrowser opens a URL in the default browser.
 func openInBrowser(url string) tea.Cmd {
 	return func() tea.Msg {
@@ -853,6 +979,15 @@ func (m Model) handleLoopSlotsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Tracker):
 		return m.openSlotIssueCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.OpenPR):
+		return m.openSlotPRCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.Lazygit):
+		return m.launchSlotLazygitCmd(keys[m.loopCursor])
+
+	case key.Matches(msg, m.keys.ClaudeUpdate):
+		return m, m.launchClaudeUpdateCmd()
 	}
 
 	return m, nil

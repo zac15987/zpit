@@ -47,6 +47,34 @@ func LaunchClaudeInDir(workDir, tabTitle string, cfg config.TerminalConfig, extr
 	}
 }
 
+// LaunchLazygit opens lazygit in a new terminal with a custom working directory.
+// Does NOT go through the ZPIT_AGENT hook wrapper — lazygit is a plain user tool.
+func LaunchLazygit(workDir, tabTitle string, cfg config.TerminalConfig) (*LaunchResult, error) {
+	env := platform.Detect()
+	switch env {
+	case platform.EnvWindowsTerminal:
+		return launchLazygitWindows(tabTitle, cfg, workDir)
+	case platform.EnvWSLTmux, platform.EnvLinuxTmux:
+		return launchLazygitTmux(tabTitle, cfg, workDir)
+	default:
+		return nil, fmt.Errorf("unsupported environment: %s", env)
+	}
+}
+
+// LaunchClaudeUpdate runs `claude update` in a new terminal and keeps the window
+// open after the command exits so the user can read the result.
+func LaunchClaudeUpdate(cfg config.TerminalConfig) (*LaunchResult, error) {
+	env := platform.Detect()
+	switch env {
+	case platform.EnvWindowsTerminal:
+		return launchClaudeUpdateWindows(cfg)
+	case platform.EnvWSLTmux, platform.EnvLinuxTmux:
+		return launchClaudeUpdateTmux(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported environment: %s", env)
+	}
+}
+
 // buildClaudeArgs returns "claude" followed by any extra arguments as separate elements.
 // If --channel-enabled is present, it is removed from the args and
 // --dangerously-load-development-channels server:zpit-channel is injected instead.
@@ -116,14 +144,7 @@ func getAgentRole(extraArgs []string) string {
 //
 // shell should be "cmd", "pwsh", or "powershell" (empty defaults to "cmd").
 func BuildWindowsArgs(projectName, projectPath, mode, profile, shell string, extraArgs []string) []string {
-	var base []string
-	switch mode {
-	case "new_window":
-		base = []string{"-w", "new"}
-	default: // "new_tab"
-		base = []string{"new-tab"}
-	}
-
+	base := buildWindowsBase(mode)
 	if profile != "" {
 		base = append(base, "-p", profile)
 	}
@@ -163,6 +184,61 @@ func buildShellWrapper(shell, scriptBase string) []string {
 		return []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
 	default: // "cmd" or empty
 		return []string{"cmd", "/c", ".claude\\hooks\\" + scriptBase + ".cmd"}
+	}
+}
+
+// BuildLazygitWindowsArgs constructs wt.exe arguments for lazygit in a new tab/window.
+// No wrapper is used — WT's default closeOnExit closes the tab when lazygit exits.
+func BuildLazygitWindowsArgs(tabTitle, workDir, mode, profile string) []string {
+	base := buildWindowsBase(mode)
+	if profile != "" {
+		base = append(base, "-p", profile)
+	}
+	base = append(base, "-d", workDir, "--title", tabTitle, "--", "lazygit")
+	return base
+}
+
+// BuildLazygitTmuxArgs constructs tmux arguments for lazygit.
+func BuildLazygitTmuxArgs(tabTitle, workDir, mode string) []string {
+	switch mode {
+	case "new_pane":
+		return []string{"split-window", "-h", "-c", workDir, "lazygit"}
+	default:
+		return []string{"new-window", "-n", tabTitle, "-c", workDir, "lazygit"}
+	}
+}
+
+// BuildClaudeUpdateWindowsArgs constructs wt.exe arguments for `claude update`
+// with a trailing `pause` so the tab stays open after the command finishes.
+func BuildClaudeUpdateWindowsArgs(mode, profile string) []string {
+	base := buildWindowsBase(mode)
+	if profile != "" {
+		base = append(base, "-p", profile)
+	}
+	base = append(base, "--title", "claude update", "--",
+		"cmd", "/c", "claude update & pause")
+	return base
+}
+
+// BuildClaudeUpdateTmuxArgs constructs tmux arguments for `claude update`
+// with a trailing `read` so the window stays open for the user to read output.
+func BuildClaudeUpdateTmuxArgs(mode string) []string {
+	cmd := `claude update; read -n1 -r -p "Press any key to close..."`
+	switch mode {
+	case "new_pane":
+		return []string{"split-window", "-h", cmd}
+	default:
+		return []string{"new-window", "-n", "claude-update", cmd}
+	}
+}
+
+// buildWindowsBase returns the leading wt.exe args for the requested mode.
+func buildWindowsBase(mode string) []string {
+	switch mode {
+	case "new_window":
+		return []string{"-w", "new"}
+	default:
+		return []string{"new-tab"}
 	}
 }
 

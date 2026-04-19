@@ -15,7 +15,10 @@ type KeyMap struct {
 	Efficiency key.Binding
 	Status     key.Binding
 	Open    key.Binding
-	Tracker    key.Binding
+	Tracker      key.Binding
+	OpenPR       key.Binding
+	Lazygit      key.Binding
+	ClaudeUpdate key.Binding
 	Add        key.Binding
 	EditConfig key.Binding
 	Channel    key.Binding
@@ -56,7 +59,10 @@ func DefaultKeyMap() KeyMap {
 		Efficiency: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "efficiency")),
 		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "status")),
 		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open folder")),
-		Tracker:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "tracker")),
+		Tracker:      key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "tracker")),
+		OpenPR:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "open PR")),
+		Lazygit:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "lazygit")),
+		ClaudeUpdate: key.NewBinding(key.WithKeys("U"), key.WithHelp("U", "claude update")),
 		Add:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add project")),
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
 		Channel:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "channel")),

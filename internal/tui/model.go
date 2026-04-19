@@ -691,10 +691,33 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p == nil {
 			return m, nil
 		}
-		if !m.checkConfig("[p]", *p, valTrackerURL) {
+		if !m.checkConfig("[i]", *p, valTrackerURL) {
 			return m, nil
 		}
 		return m, m.openTrackerCmd()
+
+	case key.Matches(msg, m.keys.OpenPR):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[p]", *p, valTrackerURL) {
+			return m, nil
+		}
+		return m, m.openPRCmd()
+
+	case key.Matches(msg, m.keys.Lazygit):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[G]", *p, valPath) {
+			return m, nil
+		}
+		return m, m.launchLazygitCmd()
+
+	case key.Matches(msg, m.keys.ClaudeUpdate):
+		return m, m.launchClaudeUpdateCmd()
 
 	case key.Matches(msg, m.keys.Clarify):
 		p := m.selectedProject()
@@ -913,7 +936,7 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if project == nil {
 			return m, nil
 		}
-		if !m.checkConfig("[p]", *project, valTrackerURL) {
+		if !m.checkConfig("[i]", *project, valTrackerURL) {
 			return m, nil
 		}
 		return m, m.openIssueURLCmd()

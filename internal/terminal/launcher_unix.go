@@ -56,3 +56,47 @@ func launchTmuxInDir(tabTitle string, cfg config.TerminalConfig, path string, ex
 		SwitchHint: hint,
 	}, nil
 }
+
+func launchLazygitWindows(_ string, _ config.TerminalConfig, _ string) (*LaunchResult, error) {
+	return nil, fmt.Errorf("Windows Terminal not available on this platform")
+}
+
+func launchLazygitTmux(tabTitle string, cfg config.TerminalConfig, workDir string) (*LaunchResult, error) {
+	args := BuildLazygitTmuxArgs(tabTitle, workDir, cfg.TmuxMode)
+	cmd := exec.Command("tmux", args...)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching lazygit: %w", err)
+	}
+	hint := fmt.Sprintf("tmux select-window -t %s", tabTitle)
+	if cfg.TmuxMode == "new_pane" {
+		hint = "Visible in split pane"
+	}
+	return &LaunchResult{
+		Env:        platform.Detect(),
+		Command:    "tmux",
+		Args:       args,
+		SwitchHint: hint,
+	}, nil
+}
+
+func launchClaudeUpdateWindows(_ config.TerminalConfig) (*LaunchResult, error) {
+	return nil, fmt.Errorf("Windows Terminal not available on this platform")
+}
+
+func launchClaudeUpdateTmux(cfg config.TerminalConfig) (*LaunchResult, error) {
+	args := BuildClaudeUpdateTmuxArgs(cfg.TmuxMode)
+	cmd := exec.Command("tmux", args...)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching claude update: %w", err)
+	}
+	hint := "tmux select-window -t claude-update"
+	if cfg.TmuxMode == "new_pane" {
+		hint = "Visible in split pane"
+	}
+	return &LaunchResult{
+		Env:        platform.Detect(),
+		Command:    "tmux",
+		Args:       args,
+		SwitchHint: hint,
+	}, nil
+}

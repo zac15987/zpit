@@ -29,8 +29,8 @@
 - [x] Issue Spec 格式驗證模組（ValidateIssueSpec + ParseIssueSpec）
 - [x] Clarifier agent 定義（agents/clarifier.md，go:embed 嵌入）
 - [x] TUI [c] clarify：開新終端啟動 claude --agent clarifier（未部署時 huh confirm 自動部署）
-- [x] TUI [s] status：唯讀 issue 列表（透過 TrackerClient 拉取）+ [y] 確認 + [p] 開瀏覽器
-- [x] TUI [p] open tracker：主畫面開瀏覽器到 issue list
+- [x] TUI [s] status：唯讀 issue 列表（透過 TrackerClient 拉取）+ [y] 確認 + [i] 開瀏覽器
+- [x] TUI [i] open tracker：主畫面開瀏覽器到 issue list
 - [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerClient 改 label）
 
 ## M4a: Worktree + Prompt 模板 + Profile ✅

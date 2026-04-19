@@ -401,3 +401,73 @@ func TestBuildTmuxArgs_EfficiencyNoPrefix(t *testing.T) {
 		t.Errorf("got %v, want %v", args, want)
 	}
 }
+
+// --- Lazygit / claude update arg builder tests ---
+
+func TestBuildLazygitWindowsArgs_NewTabNoProfile(t *testing.T) {
+	args := BuildLazygitWindowsArgs("lazygit", "D:/Projects/Foo", "new_tab", "")
+	want := []string{"new-tab", "-d", "D:/Projects/Foo", "--title", "lazygit", "--", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildLazygitWindowsArgs_NewWindowWithProfile(t *testing.T) {
+	args := BuildLazygitWindowsArgs("lazygit", "/path", "new_window", "PowerShell 7")
+	want := []string{"-w", "new", "-p", "PowerShell 7", "-d", "/path", "--title", "lazygit", "--", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildLazygitTmuxArgs_NewWindow(t *testing.T) {
+	args := BuildLazygitTmuxArgs("lazygit", "/mnt/d/proj", "new_window")
+	want := []string{"new-window", "-n", "lazygit", "-c", "/mnt/d/proj", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildLazygitTmuxArgs_NewPane(t *testing.T) {
+	args := BuildLazygitTmuxArgs("lazygit", "/mnt/d/proj", "new_pane")
+	want := []string{"split-window", "-h", "-c", "/mnt/d/proj", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateWindowsArgs_NewTab(t *testing.T) {
+	args := BuildClaudeUpdateWindowsArgs("new_tab", "")
+	want := []string{"new-tab", "--title", "claude update", "--",
+		"cmd", "/c", "claude update & pause"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateWindowsArgs_NewWindowWithProfile(t *testing.T) {
+	args := BuildClaudeUpdateWindowsArgs("new_window", "CMD")
+	want := []string{"-w", "new", "-p", "CMD", "--title", "claude update", "--",
+		"cmd", "/c", "claude update & pause"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateTmuxArgs_NewWindow(t *testing.T) {
+	args := BuildClaudeUpdateTmuxArgs("new_window")
+	want := []string{"new-window", "-n", "claude-update",
+		`claude update; read -n1 -r -p "Press any key to close..."`}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateTmuxArgs_NewPane(t *testing.T) {
+	args := BuildClaudeUpdateTmuxArgs("new_pane")
+	want := []string{"split-window", "-h",
+		`claude update; read -n1 -r -p "Press any key to close..."`}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}

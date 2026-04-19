@@ -23,20 +23,20 @@ Catppuccin Mocha 色盤，無邊框、單欄寬的 `▎` mauve accent bar 只出
      machine │ wpf, secsgem                           [f] 效率 Agent
                                                       [s] 狀態總覽
     DisplayProfileManager  ⚪ 未部署                  [o] 開啟專案資料夾
-     desktop │ wpf, nlog                              [p] 開啟 Issue Tracker
-                                                      [u] 清除部署檔案
-    Zpit  🟢 已部署                                   [d] 重新部署所有 agent
-     terminal │ go, bubbletea                         [m] Channel 通訊
-                                                      [g] 檢視 Git 狀態
-    Zplex  ⚪ 未部署
-     desktop │ go, electron, xterm                    [a] 新增專案
-                                                      [e] 編輯設定
-    Zacfuse  🟢 已部署
-     web │ astro, typescript, docs                    [x] 關閉終端
+     desktop │ wpf, nlog                              [i] 開啟 Issue Tracker
+                                                      [p] 開啟 PR
+    Zpit  🟢 已部署                                   [u] 清除部署檔案
+     terminal │ go, bubbletea                         [d] 重新部署所有 agent
+                                                      [m] Channel 通訊
+    Zplex  ⚪ 未部署                                   [g] 檢視 Git 狀態
+     desktop │ go, electron, xterm                    [G] 開啟 lazygit
+                                                      [U] 執行 claude update
+    Zacfuse  🟢 已部署                                [a] 新增專案
+     web │ astro, typescript, docs                    [e] 編輯設定
+                                                      [x] 關閉終端
                                                       [Tab] 切換面板
-                                                      [?] 說明
-  執行中終端  1                                       [q] 離開
-  ──────
+  執行中終端  1                                       [?] 說明
+  ──────                                              [q] 離開
   ›[1] Zpit │ 🟡 等待輸入 00:15
       Q: Commit 2198be6 已 push 到 `origin/dev`，working tre
 
@@ -57,6 +57,10 @@ Catppuccin Mocha 色盤，無邊框、單欄寬的 `▎` mauve accent bar 只出
 - 滑鼠滾輪：滾動滑鼠游標所在的面板（命中測試，不看 focus）
 - Enter：在新終端開啟 Claude Code（Windows Terminal 新 tab / tmux 新 window）
 - 快捷鍵 [c][l][r][s]：同樣在新終端啟動對應的 agent
+- [i]：開啟專案的 Issue Tracker 列表（Loop Slot 焦點時開該 slot 的 issue 頁）
+- [p]：開啟 PR 頁面 — 主畫面開專案 PR 列表；Loop Slot 焦點時以 `FindPRByBranch` 定位該 slot 的 PR，查不到則 fallback `/pulls?head=<branch>`
+- [G]：在新終端開啟 lazygit — 主畫面以專案根為工作目錄；Loop Slot 焦點時以 slot 的 worktree 為工作目錄
+- [U]：在新終端執行 `claude update`（Windows 用 `cmd /c "claude update & pause"` 保留畫面，tmux 用 `read -n1` 等待按鍵）
 - [u]：移除 Zpit 部署到專案的 agents/docs/hooks 檔案
 - [d]：清除現有部署後重新寫入 4 個 agents (clarifier/reviewer/task-runner/efficiency) + hooks + docs，**不啟動 Claude**（confirm 後執行）
 - 專案名稱旁的狀態標記：🟢 已部署（全部 10 個檔案齊全）、🟡 部分部署（部分檔案缺失或只部署過單一 agent）、⚪ 未部署
@@ -172,7 +176,7 @@ TUI 本身透過 session log 即時顯示進度摘要。
 ║  待機台驗證 (1)                                                    ║
 ║    ASE-44  Motion 軸 homing 順序修正      已 merge，待機台測試     ║
 ║                                                                    ║
-║  操作: [y] 確認 issue → Todo  [p] 在瀏覽器開啟 issue               ║
+║  操作: [y] 確認 issue → Todo  [i] 在瀏覽器開啟 issue               ║
 ║                                                                    ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```

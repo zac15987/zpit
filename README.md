@@ -23,20 +23,20 @@ Four independently scrollable dock panels — Projects, Active Terminals, Loop E
      machine │ wpf, secsgem                           [f] Efficiency agent
                                                       [s] Status overview
     DisplayProfileManager  ⚪ not deployed            [o] Open project folder
-     desktop │ wpf, nlog                              [p] Open Issue Tracker
-                                                      [u] Undeploy agents
-    Zpit  🟢 deployed                                 [d] Redeploy all agents
-     terminal │ go, bubbletea                         [m] Channel communication
-                                                      [g] Git status
-    Zplex  ⚪ not deployed
-     desktop │ go, electron, xterm                    [a] Add project
-                                                      [e] Edit config
-    Zacfuse  🟢 deployed
-     web │ astro, typescript, docs                    [x] Close Terminal
+     desktop │ wpf, nlog                              [i] Open Issue Tracker
+                                                      [p] Open PR
+    Zpit  🟢 deployed                                 [u] Undeploy agents
+     terminal │ go, bubbletea                         [d] Redeploy all agents
+                                                      [m] Channel communication
+    Zplex  ⚪ not deployed                             [g] Git status
+     desktop │ go, electron, xterm                    [G] Open lazygit
+                                                      [U] Run claude update
+    Zacfuse  🟢 deployed                              [a] Add project
+     web │ astro, typescript, docs                    [e] Edit config
+                                                      [x] Close Terminal
                                                       [Tab] Switch Panel
-                                                      [?] Help
-  ACTIVE TERMINALS  1                                 [q] Quit
-  ──────
+  ACTIVE TERMINALS  1                                 [?] Help
+  ──────                                              [q] Quit
   ›[1] Zpit │ 🟡 Waiting for input 00:15
       Q: Commit 2198be6 pushed to `origin/dev`, working tre
 
@@ -60,7 +60,7 @@ Tab cycles focus between Projects → Active Terminals (when any) → Loop Engin
 
 
 
-  [y] Confirm (pending→todo)  [p] Open in browser  [Esc] Back
+  [y] Confirm (pending→todo)  [i] Open in browser  [Esc] Back
 ```
 
 ## How It Works
@@ -227,11 +227,14 @@ wsl = "/mnt/d/Projects/my-project"
 | `f` | Efficiency — lightweight agent (no hooks, no tracker, self-review) |
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
-| `p` | Open issue tracker in browser |
+| `i` | Open issue tracker in browser |
+| `p` | Open pull request in browser (in Loop Slot focus: the slot's PR; falls back to `/pulls?head=<branch>` if not yet open) |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
 | `d` | Redeploy — undeploy then re-write all 4 agents + hooks + docs (no Claude launch) |
 | `m` | Channel — view cross-agent communication events |
 | `g` | Git Status — view branches (local + remote-only) and commit graph; [f] fetch, [p] pull (--ff-only) |
+| `G` | Open lazygit in new terminal (project root; in Loop Slot focus: slot's worktree) |
+| `U` | Run `claude update` in new terminal (stays open to show result) |
 | `a` | Add project (coming soon) |
 | `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
 | `x` | Close Terminal — force-close selected terminal (when Terminals panel focused) |
