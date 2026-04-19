@@ -48,14 +48,15 @@ pr_poll_seconds = 10          # PR/label 狀態 polling 間隔（秒）
 # Per-Role Model Selection
 # ──────────────────────────────────────────────
 # 啟動 agent 時透過 --model <id> 傳給 Claude Code。
-# 接受 full model ID（推薦，跨 provider 行為一致）或 short alias（opus/sonnet/haiku，
-# 會依 provider 解析到不同版本）。詳見 §6.7。
+# 接受 short alias（opus/sonnet/haiku，依 provider 解析到不同版本）或
+# full model ID（跨 provider 行為一致）。附加 [1m] 啟用 1M-context tier。
+# 詳見 §6.7。
 [agent_models]
-clarifier = "claude-opus-4-7"       # 需求澄清 — 最深層推理
-coding = "claude-sonnet-4-6"        # 功能實作
-reviewer = "claude-sonnet-4-6"      # PR review
-task_runner = "claude-sonnet-4-6"   # advisory — 由 coding session 繼承
-efficiency = "claude-sonnet-4-6"    # 效能檢視 agent（[f] 啟動）
+clarifier = "opus[1m]"      # 需求澄清 — 最深層推理（1M context）
+coding = "sonnet[1m]"       # 功能實作（1M context）
+reviewer = "sonnet[1m]"     # PR review（1M context）
+task_runner = "sonnet[1m]"  # advisory — 由 coding session 繼承
+efficiency = "opus[1m]"     # 效能檢視 agent（[f] 啟動）— 深層推理
 
 # ──────────────────────────────────────────────
 # SSH Server（zpit serve）

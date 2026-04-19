@@ -173,19 +173,20 @@ main.go (go:embed vars)
 
 ```toml
 [agent_models]
-clarifier = "claude-opus-4-7"       # 需求澄清 — 最深層推理
-coding = "claude-sonnet-4-6"        # 功能實作
-reviewer = "claude-sonnet-4-6"      # PR review
-task_runner = "claude-sonnet-4-6"   # advisory — 由 coding session 繼承
-efficiency = "claude-sonnet-4-6"    # 效能檢視 agent
+clarifier = "opus[1m]"      # 需求澄清 — 最深層推理（1M context）
+coding = "sonnet[1m]"       # 功能實作（1M context）
+reviewer = "sonnet[1m]"     # PR review（1M context）
+task_runner = "sonnet[1m]"  # advisory — 由 coding session 繼承
+efficiency = "opus[1m]"     # 效能檢視 agent — 深層推理
 ```
 
 **設計決策**：
 
-- **為什麼 clarifier 用 Opus**：需求澄清是品質關鍵點（一次錯全 loop 錯），且整個 issue 生命週期通常只跑一次，成本佔比小。
+- **為什麼 clarifier/efficiency 用 Opus**：需求澄清是品質關鍵點（一次錯全 loop 錯），且整個 issue 生命週期通常只跑一次，成本佔比小；efficiency 檢視則需要對整份 diff 做深層品質判斷，與 clarifier 同屬「單次、高價值」的推理場景。
 - **為什麼 coding/reviewer 用 Sonnet**：Sonnet 4.6 在代碼實作與 review 能力足夠，單價約 Opus 的 1/5；loop 可能跑多個 review round，差距在這裡放大。
-- **為什麼用 full ID 而不是 alias**：`opus` / `sonnet` alias 解析行為隨 provider 而異 — Anthropic API 指向 Opus 4.7 / Sonnet 4.6，但 Bedrock / Vertex / Foundry 指向 Opus 4.6 / Sonnet 4.5（落後一版）。Full ID 保證跨 provider 一致性。使用者仍可在自己 config 覆寫為 alias。
-- **task_runner 目前 advisory**：task-runner subagent 透過 Claude Code Agent tool 由 coding orchestrator spawn，預設繼承父 session 的 model（目前即 Sonnet 4.6），所以 `task_runner` 欄位在 prompt builder 尚未主動使用，保留作為未來 escape hatch（例如想讓平行 `[P]` 任務全跑 Haiku）。
+- **為什麼全部加 `[1m]`**：agent 生命週期內可能吃進整份 Issue Spec + 多檔案 diff + channel 訊息串，1M context tier 消除 context 窗口壓力；API / pay-as-you-go 直連時 1M 無 long-context premium，實質僅增加 token 消耗，不增加單價。
+- **為什麼用 alias 而不是 full ID**：Anthropic API 直連情境下，alias（`opus` → 4.7、`sonnet` → 4.6）自動追蹤官方最新版，不需隨著模型更新手動改 config。代價是跨 provider 不一致（Bedrock/Vertex/Foundry 上 `opus` 會解析成 4.6），走這些 provider 的使用者應改用 full ID 覆寫（例如 `claude-opus-4-7[1m]`）。
+- **task_runner 目前 advisory**：task-runner subagent 透過 Claude Code Agent tool 由 coding orchestrator spawn，預設繼承父 session 的 model（目前即 Sonnet 4.6 1M），所以 `task_runner` 欄位在 prompt builder 尚未主動使用，保留作為未來 escape hatch（例如想讓平行 `[P]` 任務全跑 Haiku）。
 
 **Wiring**：
 

@@ -39,14 +39,14 @@ poll_seconds = 10
 pr_poll_seconds = 10
 
 # Per-role model selection — passed to Claude Code via --model at launch.
-# Full IDs pin a specific version (identical across Anthropic API / Bedrock /
-# Vertex / Foundry). Short aliases (opus/sonnet/haiku) resolve per provider.
+# Aliases (opus/sonnet/haiku) resolve per provider; [1m] enables the 1M-context tier.
+# Pin to a full ID (e.g. claude-opus-4-7[1m]) if you need cross-provider consistency.
 [agent_models]
-clarifier = "claude-opus-4-7"
-coding = "claude-sonnet-4-6"
-reviewer = "claude-sonnet-4-6"
-task_runner = "claude-sonnet-4-6"
-efficiency = "claude-sonnet-4-6"
+clarifier = "opus[1m]"
+coding = "sonnet[1m]"
+reviewer = "sonnet[1m]"
+task_runner = "sonnet[1m]"
+efficiency = "opus[1m]"
 
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"

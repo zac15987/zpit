@@ -28,11 +28,11 @@ const (
 	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
 	defaultSSHAuthorizedKeysPath = "~/.ssh/authorized_keys"
 
-	defaultClarifierModel  = "claude-opus-4-7"
-	defaultCodingModel     = "claude-sonnet-4-6"
-	defaultReviewerModel   = "claude-sonnet-4-6"
-	defaultTaskRunnerModel = "claude-sonnet-4-6"
-	defaultEfficiencyModel = "claude-sonnet-4-6"
+	defaultClarifierModel  = "opus[1m]"
+	defaultCodingModel     = "sonnet[1m]"
+	defaultReviewerModel   = "sonnet[1m]"
+	defaultTaskRunnerModel = "sonnet[1m]"
+	defaultEfficiencyModel = "opus[1m]"
 )
 
 // Config is the top-level configuration loaded from config.toml.
@@ -180,20 +180,20 @@ max_per_project = 5
 
 # --- Agent Models ---
 # Model passed to Claude Code via --model when launching each agent role.
-# Accepts either a full model ID (claude-opus-4-7, claude-sonnet-4-6,
-# claude-haiku-4-5-20251001) or a short alias (opus, sonnet, haiku).
+# Accepts either a short alias (opus, sonnet, haiku) or a full model ID
+# (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001).
+# Append [1m] to opt into the 1M-context tier (Opus 4.7 / Sonnet 4.6 / Opus 4.6).
 #
-# Full IDs pin to a specific version and behave identically across the
-# Anthropic API, Bedrock, Vertex, and Foundry. Short aliases track the
-# "recommended" version for your provider and differ across backends —
-# e.g. "opus" is Opus 4.7 on the Anthropic API but Opus 4.6 on
-# Bedrock/Vertex/Foundry.
+# Aliases track the "recommended" version for your provider — on the
+# Anthropic API "opus" = Opus 4.7 and "sonnet" = Sonnet 4.6, but on
+# Bedrock/Vertex/Foundry they resolve one version behind (4.6 / 4.5).
+# Pin to a full ID if you need cross-provider consistency.
 [agent_models]
-clarifier = "claude-opus-4-7"       # requirement clarification — deepest reasoning
-coding = "claude-sonnet-4-6"        # feature implementation
-reviewer = "claude-sonnet-4-6"      # PR review
-task_runner = "claude-sonnet-4-6"   # advisory only — task-runner subagents inherit the coding session's model
-efficiency = "claude-sonnet-4-6"    # efficiency-review agent (manual [f])
+clarifier = "opus[1m]"      # requirement clarification — deepest reasoning (1M context)
+coding = "sonnet[1m]"       # feature implementation (1M context)
+reviewer = "sonnet[1m]"     # PR review (1M context)
+task_runner = "sonnet[1m]"  # advisory only — task-runner subagents inherit the coding session's model
+efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
 
 # --- SSH Server (zpit serve) ---
 # [ssh]

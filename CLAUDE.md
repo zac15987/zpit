@@ -265,7 +265,7 @@ Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 
 See `testdata/config.toml` for a working example and `README.md` for full config reference.
 
-**`[agent_models]`**: global per-role model selection, passed to Claude Code via `--model <id>` at launch. Defaults: `clarifier = claude-opus-4-7`, `coding/reviewer/task_runner/efficiency = claude-sonnet-4-6`. Accepts full model IDs (preferred — same behavior across Anthropic API / Bedrock / Vertex / Foundry) or short aliases (`opus` / `sonnet` / `haiku` — provider-dependent). `task_runner` is advisory — task-runner subagents currently inherit the coding orchestrator's model via Claude Code's Agent tool. Wired in `launch.go` (manual `[c]`/`[r]`/`[f]`/enter/`[d]`) and `loop_cmds.go` (`loopLaunchCoderCmd`, `loopWriteAndLaunchReviewerCmd`).
+**`[agent_models]`**: global per-role model selection, passed to Claude Code via `--model <id>` at launch. Defaults (all 1M context): `clarifier = opus[1m]`, `coding/reviewer/task_runner = sonnet[1m]`, `efficiency = opus[1m]`. Accepts short aliases (`opus` / `sonnet` / `haiku` — provider-dependent; Anthropic API resolves to latest, Bedrock/Vertex/Foundry one version behind) or full model IDs (pin exact version, cross-provider-consistent — e.g. `claude-opus-4-7[1m]`). `task_runner` is advisory — task-runner subagents currently inherit the coding orchestrator's model via Claude Code's Agent tool. Wired in `launch.go` (manual `[c]`/`[r]`/`[f]`/enter/`[d]`) and `loop_cmds.go` (`loopLaunchCoderCmd`, `loopWriteAndLaunchReviewerCmd`).
 
 ## Conventions
 

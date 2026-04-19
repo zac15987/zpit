@@ -101,7 +101,7 @@ You (TUI)                    Claude Code Agents
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
 - **i18n** — TUI chrome localized to English or Traditional Chinese (zh-TW) via `locale.T()`; all agent output (Issue Specs, commits, PR bodies, channel messages) is always English regardless of TUI locale, for token efficiency
-- **Per-role model selection** — `[agent_models]` lets you choose a model per agent role (Opus for clarifier, Sonnet for coding/reviewer by default); override any value in config
+- **Per-role model selection** — `[agent_models]` lets you choose a model per agent role (Opus for clarifier/efficiency, Sonnet for coding/reviewer by default, all with 1M context); override any value in config
 - **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
 
 ## Requirements
@@ -163,15 +163,15 @@ max_review_rounds = 3       # auto-retry rounds before needs-human
 # auto_cleanup = false
 
 # Per-role model selection — passed to Claude Code via --model at launch.
-# Full IDs are recommended (identical across Anthropic API / Bedrock /
-# Vertex / Foundry). Short aliases (opus/sonnet/haiku) work too, but
-# resolve to different versions per backend.
+# Aliases (opus/sonnet/haiku) resolve per provider; append [1m] to opt
+# into the 1M-context tier. Pin to a full ID (e.g. claude-opus-4-7[1m])
+# if you need cross-provider consistency.
 [agent_models]
-clarifier = "claude-opus-4-7"      # requirement clarification — deepest reasoning
-coding = "claude-sonnet-4-6"       # feature implementation
-reviewer = "claude-sonnet-4-6"     # PR review
-task_runner = "claude-sonnet-4-6"  # advisory — subagents inherit the coding session's model
-efficiency = "claude-sonnet-4-6"   # efficiency-review agent (manual [f])
+clarifier = "opus[1m]"      # requirement clarification — deepest reasoning (1M context)
+coding = "sonnet[1m]"       # feature implementation (1M context)
+reviewer = "sonnet[1m]"     # PR review (1M context)
+task_runner = "sonnet[1m]"  # advisory — subagents inherit the coding session's model
+efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
 
 # Tracker providers — token read from env var, never stored in config
 [providers.tracker.my-forgejo]

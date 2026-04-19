@@ -98,20 +98,20 @@ func TestLoad(t *testing.T) {
 	}
 
 	// Agent models — testdata/config.toml explicitly sets all five
-	if cfg.AgentModels.Clarifier != "claude-opus-4-7" {
-		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, "claude-opus-4-7")
+	if cfg.AgentModels.Clarifier != "opus[1m]" {
+		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, "opus[1m]")
 	}
-	if cfg.AgentModels.Coding != "claude-sonnet-4-6" {
-		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, "claude-sonnet-4-6")
+	if cfg.AgentModels.Coding != "sonnet[1m]" {
+		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, "sonnet[1m]")
 	}
-	if cfg.AgentModels.Reviewer != "claude-sonnet-4-6" {
-		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "claude-sonnet-4-6")
+	if cfg.AgentModels.Reviewer != "sonnet[1m]" {
+		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "sonnet[1m]")
 	}
-	if cfg.AgentModels.TaskRunner != "claude-sonnet-4-6" {
-		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "claude-sonnet-4-6")
+	if cfg.AgentModels.TaskRunner != "sonnet[1m]" {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "sonnet[1m]")
 	}
-	if cfg.AgentModels.Efficiency != "claude-sonnet-4-6" {
-		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, "claude-sonnet-4-6")
+	if cfg.AgentModels.Efficiency != "opus[1m]" {
+		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, "opus[1m]")
 	}
 
 	// log_policy is now per-project: verify a different project has a different policy
