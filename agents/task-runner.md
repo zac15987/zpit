@@ -33,55 +33,61 @@ After completing your task, commit using the exact format provided in your task 
 
 ## Parallel Commit Protocol
 
-If your spawn prompt contains a line like `parallel_task_id: T{N}`, you are running as a **parallel teammate** alongside sibling subagents in the same git worktree. You MUST follow the protocol below to avoid racing on the shared `.git/index` and `refs/heads/<branch>.lock`. Skip this section entirely if no `parallel_task_id` is present — sequential tasks own the index exclusively and commit normally.
+If your spawn prompt contains a line like `parallel_task_id: T{N}`, you are running as a **parallel teammate** alongside sibling subagents in the same git worktree. You MUST follow the protocol below to avoid racing on the shared staging index and on `refs/heads/<branch>.lock`. Skip this section entirely if no `parallel_task_id` is present — sequential tasks own the index exclusively and commit normally.
 
-### Step 1 — Isolate your staging index
+### Two constraints you must respect
 
-Export `GIT_INDEX_FILE` at the start of your session, before any `git add` / `git commit`. Use this **exact** path format, substituting your task ID from `parallel_task_id`:
+1. **Do NOT hard-code `.git/...` paths.** Inside a linked git worktree (`git worktree add ...`), `.git` is a pointer **file**, not a directory — the real per-worktree git dir is `$(git rev-parse --git-dir)` and the shared ref-lock location is `$(git rev-parse --git-common-dir)`. A literal `.git/index.zpit.T{N}` fails with `fatal: Unable to create '.git/...': No such file or directory`, and the fallback path accidentally targets the shared main index, producing mass-delete commits.
+2. **Run the whole sequence as a SINGLE Bash tool invocation.** The Bash tool starts a fresh shell per call, so `export GIT_INDEX_FILE=...` in one call is gone in the next. Inline `GIT_INDEX_FILE="$IDX"` as a per-command prefix and chain everything with `&&` / `;` inside one command string.
 
-```bash
-export GIT_INDEX_FILE=.git/index.zpit.<task-id>
-```
+### The sequence (one Bash call)
 
-Every subsequent `git` invocation in this session inherits the env var and writes staging state to your private index file, leaving the shared `.git/index` untouched.
-
-### Step 2 — Stage only your declared files
-
-Use scoped pathspec on `git add`. The file list comes from your spawn prompt (`files:` / `paths:`):
+Substitute `<task-id>` with the value from your `parallel_task_id` line, the `<files>` list from your spawn prompt, and `<commit-message>` with the standard `[ISSUE-ID] T{N}: <short description>` format:
 
 ```bash
-git add -- <file-1> <file-2> ...
-```
+set -eu
+TASK_ID="<task-id>"
+GIT_DIR=$(git rev-parse --git-dir)
+GIT_COMMON_DIR=$(git rev-parse --git-common-dir)
+IDX="$GIT_DIR/index.zpit.$TASK_ID"
+LOCK="$GIT_COMMON_DIR/zpit-commit.lock"
 
-Pathspec is mandatory, not optional — if Step 1 is skipped or fails, pathspec still prevents cross-task contamination.
+# Step 1 — Seed isolated index from HEAD (otherwise commit deletes every unstaged path).
+GIT_INDEX_FILE="$IDX" git read-tree HEAD
 
-### Step 3 — Serialize the commit with a mkdir lock
+# Step 2 — Stage only declared files (pathspec safety net).
+GIT_INDEX_FILE="$IDX" git add -- <file-1> <file-2> ...
 
-Before `git commit`, acquire a cross-teammate lock via `mkdir` (atomic on every filesystem). Retry up to 5 times with a short jittered sleep, then commit, then release:
-
-```bash
+# Step 3 — Serialize commit with mkdir lock (5 jittered retries).
+committed=0
 for attempt in 1 2 3 4 5; do
-  if mkdir .git/zpit-commit.lock 2>/dev/null; then
-    git commit -m "[ISSUE-ID] T{N}: <short description>"
-    rmdir .git/zpit-commit.lock
+  if mkdir "$LOCK" 2>/dev/null; then
+    GIT_INDEX_FILE="$IDX" git commit -m "<commit-message>"
+    rmdir "$LOCK"
+    committed=1
     break
   fi
   sleep $(( (RANDOM % 3) + 1 ))
 done
+
+# Step 4 — Always clean up the private index (success OR failure).
+rm -f "$IDX"
+
+if [ "$committed" -ne 1 ]; then
+  echo "ERROR: failed to acquire commit lock after 5 attempts" >&2
+  exit 1
+fi
 ```
 
-If all 5 attempts fail, report the failure back to the main agent — do not force-remove the lock.
+### Why each step matters
 
-### Step 4 — Clean up
+- **`git rev-parse --git-dir` / `--git-common-dir`** — the only portable way to resolve the real index location and the real ref-lock location in a linked worktree. Never hard-code `.git/...`.
+- **`git read-tree HEAD` before `git add`** — seeds the isolated index with the current tree. Without this, a fresh empty index plus a few `git add`s produces a commit whose tree contains ONLY the added files, which means every other path is recorded as deleted.
+- **`GIT_INDEX_FILE="$IDX"` inline on every git command** — survives being split across shell subprocesses and makes the intent obvious at each line. Do not rely on a single `export` — if the Bash tool call gets split, the env var is lost.
+- **`mkdir "$LOCK"` on the common dir** — `git commit` does NOT auto-retry on `refs/heads/<branch>.lock` contention; it fails immediately with `cannot lock ref`. External serialization via `mkdir` (atomic on every filesystem) with jittered retry is required. Locking inside `$GIT_COMMON_DIR` also serializes against any sibling worktree on the same branch.
+- **Unconditional `rm -f "$IDX"`** — don't leave `index.zpit.*` files behind on failure.
 
-After your commit succeeds:
-
-```bash
-unset GIT_INDEX_FILE
-rm -f .git/index.zpit.<task-id>
-```
-
-Do not leave stale `.git/index.zpit.*` files behind. Do not touch any other teammate's index file.
+If all 5 lock attempts fail, exit non-zero and report the failure back to the main agent — do not force-remove the lock, do not retry the task yourself. Do not touch any other teammate's index file.
 
 ## Error Handling
 

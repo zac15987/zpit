@@ -91,12 +91,15 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 
 **Parallel Commit Protocol（平行 `[P]` teammate 專用）：**
 
-當 spawn prompt 帶有 `parallel_task_id: T{N}` 行時啟動，解決多個 teammate 共用同一 worktree 時 `.git/index` 與 `refs/heads/<branch>.lock` 的 race（真實案例見 `docs/known-issues.md`）：
+當 spawn prompt 帶有 `parallel_task_id: T{N}` 行時啟動，解決多個 teammate 共用同一 linked worktree 時共用 staging index 與 `refs/heads/<branch>.lock` 的 race（真實案例與 v1/v2 修復歷程見 `docs/known-issues.md` §2）：
 
-1. `export GIT_INDEX_FILE=.git/index.zpit.T{N}` — 每個 teammate 用獨立 staging index
-2. `git add -- <declared files only>` — pathspec 強制（hook 也擋 `-A` / `.`）
-3. `mkdir .git/zpit-commit.lock` 取得 commit 鎖（重試 5 次、jittered sleep）→ `git commit` → `rmdir` 釋放
-4. 清理：`unset GIT_INDEX_FILE` + `rm -f .git/index.zpit.T{N}`
+**前提 —** 在 linked worktree 裡 `.git` 是 pointer file 不是 directory，所以所有路徑必須透過 `git rev-parse` 解析，不可 hard-code `.git/...`。整段序列必須在 SINGLE Bash tool 呼叫裡跑完（每個 Bash tool call 都是全新 shell，`export` 不跨呼叫生效）。
+
+1. 解析路徑：`GIT_DIR=$(git rev-parse --git-dir)`、`GIT_COMMON_DIR=$(git rev-parse --git-common-dir)`；定義 `IDX="$GIT_DIR/index.zpit.T{N}"`、`LOCK="$GIT_COMMON_DIR/zpit-commit.lock"`
+2. Seed 私有 index：`GIT_INDEX_FILE="$IDX" git read-tree HEAD` — 沒做這步，commit 會把未 stage 的檔案全部記為刪除
+3. Stage 指定檔案：`GIT_INDEX_FILE="$IDX" git add -- <declared files only>` — pathspec 強制（hook 也擋 `-A` / `.`）
+4. Serialize commit：`mkdir "$LOCK"` 取得鎖（重試 5 次、jittered sleep）→ `GIT_INDEX_FILE="$IDX" git commit ...` → `rmdir "$LOCK"` 釋放
+5. 清理：`rm -f "$IDX"`（成功與失敗路徑都做）
 
 循序 task 獨佔 index，不走此協定。完整命令與錯誤處理見 `agents/task-runner.md` → Parallel Commit Protocol。
 

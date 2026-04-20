@@ -279,16 +279,18 @@ func buildTeamDelegation(b *strings.Builder, p CodingParams) {
 	b.WriteString("- After the team finishes, verify all commits exist and are consistent.\n\n")
 
 	b.WriteString("#### Parallel Commit Protocol (required for every `[P]` teammate)\n\n")
-	b.WriteString("Parallel teammates share one worktree, so naive `git add` / `git commit` races on `.git/index` and on `refs/heads/<branch>.lock`. This has caused real commit-content corruption in the past. You MUST brief every teammate in its spawn prompt so it can follow `.claude/agents/task-runner.md` → **Parallel Commit Protocol**.\n\n")
+	b.WriteString("Parallel teammates share one linked worktree, so naive `git add` / `git commit` races on the shared staging index and on `refs/heads/<branch>.lock`. This has caused real commit-content corruption (and mass-delete commits) in the past. You MUST brief every teammate in its spawn prompt so it can follow `.claude/agents/task-runner.md` → **Parallel Commit Protocol**.\n\n")
+	b.WriteString("**Important:** in a linked worktree, `.git` is a pointer file — not a directory. Paths MUST be resolved via `git rev-parse --git-dir` / `git rev-parse --git-common-dir`; hard-coding `.git/...` fails with `fatal: Unable to create '.git/...': No such file or directory`.\n\n")
 	b.WriteString("Each teammate's spawn prompt must include, on its own line:\n\n")
 	b.WriteString("```\nparallel_task_id: T{N}\n```\n\n")
 	b.WriteString("(substitute the teammate's task ID). The `task-runner` agent reads this line as the signal to switch on the protocol. In the same spawn prompt, include the explicit `files:` / `paths:` list from the task — teammates use it as the `git add -- <files>` pathspec.\n\n")
-	b.WriteString("Summary of what every teammate will do (the agent doc has the exact commands):\n\n")
-	b.WriteString("1. `export GIT_INDEX_FILE=.git/index.zpit.T{N}` so staging writes to a private index.\n")
-	b.WriteString("2. `git add -- <declared files only>` (pathspec required by hook and by this protocol).\n")
-	b.WriteString("3. Acquire `.git/zpit-commit.lock` via `mkdir` (retry up to 5× with jittered sleep), run `git commit`, then `rmdir` the lock.\n")
-	b.WriteString("4. `unset GIT_INDEX_FILE` and `rm -f .git/index.zpit.T{N}` after the commit.\n\n")
-	b.WriteString("If any teammate fails all 5 lock attempts or returns without a commit, stop the group — do NOT force-remove `.git/zpit-commit.lock` and do NOT retry the batch automatically. Report the failure and wait for the user.\n\n")
+	b.WriteString("Summary of what every teammate will do — the agent doc has the exact commands, and they MUST be run as a SINGLE Bash invocation (the Bash tool starts a fresh shell per call, so `export GIT_INDEX_FILE` does not persist across calls):\n\n")
+	b.WriteString("1. Resolve paths: `GIT_DIR=$(git rev-parse --git-dir)` and `GIT_COMMON_DIR=$(git rev-parse --git-common-dir)`; define `IDX=\"$GIT_DIR/index.zpit.T{N}\"` and `LOCK=\"$GIT_COMMON_DIR/zpit-commit.lock\"`.\n")
+	b.WriteString("2. Seed the private index from HEAD: `GIT_INDEX_FILE=\"$IDX\" git read-tree HEAD` — without this, the commit's tree contains ONLY the newly-staged files and records every other path as deleted.\n")
+	b.WriteString("3. Stage declared files only: `GIT_INDEX_FILE=\"$IDX\" git add -- <declared files>` (pathspec required by hook and by this protocol).\n")
+	b.WriteString("4. Serialize commit: retry `mkdir \"$LOCK\"` up to 5× with jittered sleep, then `GIT_INDEX_FILE=\"$IDX\" git commit ...`, then `rmdir \"$LOCK\"`.\n")
+	b.WriteString("5. Clean up: `rm -f \"$IDX\"` on both success and failure paths.\n\n")
+	b.WriteString("If any teammate fails all 5 lock attempts or returns without a commit, stop the group — do NOT force-remove the lock and do NOT retry the batch automatically. Report the failure and wait for the user.\n\n")
 }
 
 // coordinationReviewGate returns the review gate text for when CoordinatesWith is non-empty.

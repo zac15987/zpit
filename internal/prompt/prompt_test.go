@@ -312,7 +312,9 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 		"Parallel Commit Protocol",
 		"parallel_task_id",
 		"GIT_INDEX_FILE",
-		".git/zpit-commit.lock",
+		"zpit-commit.lock",
+		"git rev-parse --git-common-dir",
+		"git read-tree HEAD",
 	}
 	for _, c := range mustNotContain {
 		if strings.Contains(result, c) {
@@ -362,7 +364,9 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"Parallel Commit Protocol",
 		"parallel_task_id",
 		"GIT_INDEX_FILE",
-		".git/zpit-commit.lock",
+		"zpit-commit.lock",
+		"git rev-parse --git-common-dir",
+		"git read-tree HEAD",
 	}
 	for _, c := range mustContain {
 		if !strings.Contains(result, c) {
