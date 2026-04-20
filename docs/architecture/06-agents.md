@@ -53,15 +53,24 @@ disallowedTools: Edit
 - 逐條比對 ACCEPTANCE_CRITERIA：✅ / ❌ / ⚠️
 - 檢查 SCOPE 越界和 CONSTRAINTS 合規
 - 驗證 PR target branch 是否匹配預期的 base branch
-- 依 `code-construction-principles.md` 抽樣檢查 code 品質
+- 依 `code-construction-principles.md` 抽樣檢查 code 品質（**所有違反一律標 🔴**）
 - 產出 Review Report（嚴重度標記：🔴 MUST FIX / 🟡 SUGGEST / 🟢 NICE）
 - 將 report 寫到 PR comment 和 issue comment
 - 設定判定 label：ai-review (PASS) 或 needs-changes (NEEDS CHANGES)
 
+**嚴重度分級（重要）：**
+- 🔴 MUST FIX：AC 未達、CONSTRAINTS 違反、**正確性 bug（功能壞掉、dead code、懸空引用、`void x` 類噪音抑制）**、code-construction-principles 違反、任何需要後續 PR 才能清掉的技術債
+- 🟡 SUGGEST：**僅限真正的風格/品味偏好**（等價重構、命名替代、可選抽取）。若為正確性問題一律升為 🔴，不得以「non-blocking / minor / nit」為由放行
+- 🟢 NICE：做得好的地方
+
 **判定規則：**
+- 任何 🔴 MUST FIX → NEEDS CHANGES（無論 AC 是否全 ✅）
 - 任何 AC ❌ → NEEDS CHANGES
-- 全部 AC ✅ 但有建議 → PASS with suggestions
 - SCOPE/CONSTRAINTS 違反 → NEEDS CHANGES（無論 AC 狀態）
+- 全部 AC ✅、無 🔴、僅有 🟡 → PASS with suggestions
+- 全部 AC ✅、無 🔴、無 🟡 → PASS
+
+**設計動機**：原版把 AC 當作唯一正確性判準，導致 `.blink` CSS 未定義、`void TAB_ANCHORS` dead code 這類真實 bug 因「AC 沒寫」被降級為 🟡 放行，累積成技術債。新規則把「正確性」從 AC 解耦，reviewer 遇到明顯壞掉的行為必須 🔴，AC 沉默不構成放行許可。
 
 完整模板見 `agents/reviewer.md`。
 

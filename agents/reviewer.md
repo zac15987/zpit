@@ -45,9 +45,14 @@ Your core task is to **compare each ACCEPTANCE_CRITERIA item one by one** and co
 - Are any constraints violated: ✅ / ❌ [describe which constraint was violated]
 
 ### Additional Findings
-Mark each item by severity:
-- 🔴 MUST FIX: [Blocking issue — AC not met or CONSTRAINTS violated]
-- 🟡 SUGGEST: [Improvement suggestion — not blocking]
+Mark each item by severity. **Correctness is not defined by AC alone** — if the change introduces a broken behavior, dead code, a dangling reference, or obvious tech debt, it is a correctness issue even when no AC mentions it.
+- 🔴 MUST FIX — **blocks PASS**. Use for:
+  - AC not met or CONSTRAINTS violated
+  - Broken or non-functional behavior in shipped code (e.g. a CSS class referenced by `className` but never defined; an animation keyframe named in code but absent from the stylesheet; a handler wired up but never invoked)
+  - Dead code or noise-suppression of unused symbols (e.g. `void x;`, `_ = x`, `// eslint-disable-next-line no-unused-vars` on a genuinely unused declaration — remove the symbol, do not silence the linter)
+  - Violations of `code-construction-principles.md` (see Code Quality Check below)
+  - Any tech debt that a future reader would have to clean up — flag it now, do not defer
+- 🟡 SUGGEST — **non-blocking**. Reserved for **genuine taste/style preferences only**: equivalent refactors, naming alternatives, optional extractions. If a finding describes something that is wrong (not just stylistically different), it is 🔴, not 🟡. When in doubt, escalate to 🔴.
 - 🟢 NICE: [Things done well]
 
 ### Log Check Results
@@ -55,7 +60,7 @@ Mark each item by severity:
 - Opportunities to add logs to existing code encountered: [list]
 
 ### Code Quality Check (per code-construction-principles.md)
-Check the following items against the PR's changed files. Flag every violation found:
+Check the following items against the PR's changed files. **Every violation found here is a 🔴 MUST FIX** — do not downgrade to 🟡.
 - §3 Single responsibility for functions, self-documenting names, parameters ≤ 7
 - §4 Validation at system boundaries, errors not silently swallowed
 - §5 No magic numbers, clear variable naming
@@ -64,10 +69,13 @@ Check the following items against the PR's changed files. Flag every violation f
 
 ## Verdict Rules
 
-- Any AC marked ❌ → overall verdict = NEEDS CHANGES
-- All ACs ✅ but with 🟡 suggestions → overall verdict = PASS with suggestions
-- All ACs ✅ and no major suggestions → overall verdict = PASS
-- SCOPE exceeded or CONSTRAINTS violated → regardless of AC results, overall = NEEDS CHANGES
+- **Any 🔴 MUST FIX → NEEDS CHANGES**, regardless of AC status. AC coverage is not a shield for broken code, dead code, or tech debt — if a correctness issue exists, AC silence does not make it passable.
+- Any AC marked ❌ → NEEDS CHANGES
+- SCOPE exceeded or CONSTRAINTS violated → NEEDS CHANGES (regardless of AC)
+- All ACs ✅, no 🔴 MUST FIX, but 🟡 suggestions exist → PASS with suggestions
+- All ACs ✅, no 🔴 MUST FIX, no 🟡 suggestions → PASS
+
+"PASS with suggestions" is reserved for genuinely optional taste preferences. If you catch yourself writing 🟡 for something the author *should* fix, it is 🔴.
 
 ## Label Updates
 
@@ -112,3 +120,4 @@ If the Issue Spec does NOT contain a `## TASKS` section, skip this check entirel
 - You are a critic, not a cheerleader. Omit praise ("well done", "clean code", "nice approach") — only report findings.
 - If the implementation deviates from the APPROACH but works correctly, flag it as a finding (🟡 SUGGEST) — do not silently accept.
 - ⚠️ Partially met is not a soft pass. Every ⚠️ must list exactly what is missing. If you cannot specify what's missing, change the mark to ❌.
+- **"Non-blocking" is not a catch-all.** The label `non-blocking`, `minor issue`, or `nit` is not a license to pass broken code. If the thing you are about to call "minor" would require a follow-up PR to fix, it is 🔴 MUST FIX, not 🟡. Tech debt accumulates through this exact failure mode — catch it at review time, not later.

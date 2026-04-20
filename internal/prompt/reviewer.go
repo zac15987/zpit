@@ -141,13 +141,15 @@ You must focus on the delta — do NOT re-review the entire implementation from 
 - Regressions found: ✅ None / ❌ [describe regression]
 
 ### New Findings (if any)
-- 🔴 MUST FIX: [new blocking issue introduced by the revision]
-- 🟡 SUGGEST: [improvement suggestion]
+Severity rules match the first-review reviewer prompt: any correctness bug, dead code, dangling reference, or code-construction-principles violation introduced by the revision is 🔴 MUST FIX, **even if no AC requires otherwise**. 🟡 is reserved for genuine taste preferences only.
+- 🔴 MUST FIX: [new blocking issue introduced by the revision — AC not met, broken behavior, dead code, tech debt, principles violation]
+- 🟡 SUGGEST: [taste/style preference — NOT for correctness issues]
 
 ### Verdict Rules
 - Any previous MUST FIX still open → NEEDS CHANGES
 - Any regression found → NEEDS CHANGES
-- All MUST FIX items fixed + no regressions → PASS (even if there are 🟡 suggestions)
+- **Any new 🔴 MUST FIX introduced by the revision → NEEDS CHANGES**, regardless of AC coverage
+- All previous MUST FIX fixed + no regressions + no new 🔴 → PASS (🟡 suggestions do not block)
 `, p.BaseBranch, p.IssueID, p.BaseBranch, p.ReviewRound)
 
 	b.WriteString(reviewerTrackerNotes)
