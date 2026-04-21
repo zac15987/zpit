@@ -197,6 +197,7 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 			}
 			fmt.Fprintf(b, "%d. **Parallel group [%s]**: Create an Agent Team. For each task in the group, spawn a teammate using `task-runner` subagent type. ", step, strings.Join(ids, ", "))
 			b.WriteString("Each teammate receives its task assignment as the spawn prompt. Wait for all teammates to complete and verify each commit.\n")
+			b.WriteString("   **Resync main index after the batch.** Each teammate committed via an isolated `GIT_INDEX_FILE`, which advanced HEAD but left the shared main index stale at the pre-batch tree. Before ANY later operation that touches the main index (next sequential task's `git add` / `git commit`, or your own final-adjustment commit in the workflow), run this as ONE Bash call in the worktree root: `git read-tree HEAD`. Without this, the next `git commit` against the main index silently reverts every file the batch just modified — this is the issue #13 regression that the restore commit `fe3a799` had to fix after T10 dropped T1–T9's work.\n")
 		} else {
 			t := g.tasks[0]
 			fmt.Fprintf(b, "%d. **%s** (sequential): Delegate to a `task-runner` subagent via the Agent tool. ", step, t.ID)

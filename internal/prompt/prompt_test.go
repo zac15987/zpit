@@ -315,6 +315,7 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 		"zpit-commit.lock",
 		"git rev-parse --git-common-dir",
 		"git read-tree HEAD",
+		"Resync main index", // no parallel groups → no orchestrator-side resync
 	}
 	for _, c := range mustNotContain {
 		if strings.Contains(result, c) {
@@ -367,6 +368,7 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"zpit-commit.lock",
 		"git rev-parse --git-common-dir",
 		"git read-tree HEAD",
+		"Resync main index", // orchestrator-side post-batch resync (issue #13 regression fix)
 	}
 	for _, c := range mustContain {
 		if !strings.Contains(result, c) {
@@ -377,6 +379,59 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 	// Verify the parallel group contains T2, T3
 	if !strings.Contains(result, "Parallel group [T2, T3]") {
 		t.Error("parallel task prompt should group T2 and T3 together")
+	}
+
+	// Verify the orchestrator-side resync instruction appears AFTER the Parallel group line,
+	// not just as part of the in-teammate protocol summary. Order proves the resync is a
+	// post-batch orchestrator action, not a teammate action.
+	groupIdx := strings.Index(result, "Parallel group [T2, T3]")
+	resyncIdx := strings.Index(result, "Resync main index")
+	if groupIdx == -1 || resyncIdx == -1 || resyncIdx <= groupIdx {
+		t.Errorf("Resync main index instruction must appear after the Parallel group line (groupIdx=%d, resyncIdx=%d)", groupIdx, resyncIdx)
+	}
+}
+
+// TestBuildCodingPrompt_ParallelBatchResync asserts the orchestrator-side main-index
+// resync is emitted for every parallel group in the Task Execution Order. This is
+// the issue #13 regression fix: a parallel batch leaves the shared main index stale,
+// so any later main-index commit silently reverts the batch's work unless the
+// orchestrator runs `git read-tree HEAD` before continuing.
+func TestBuildCodingPrompt_ParallelBatchResync(t *testing.T) {
+	// Two parallel groups separated by a sequential task — resync must appear for BOTH groups.
+	spec := testSpec()
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "seed", Parallel: true, Paths: []string{"a.go"}, DependsOn: nil},
+		{ID: "T2", Description: "seed2", Parallel: true, Paths: []string{"b.go"}, DependsOn: nil},
+		{ID: "T3", Description: "bridge", Paths: []string{"c.go"}, DependsOn: []string{"T1", "T2"}},
+		{ID: "T4", Description: "tail", Parallel: true, Paths: []string{"d.go"}, DependsOn: []string{"T3"}},
+		{ID: "T5", Description: "tail2", Parallel: true, Paths: []string{"e.go"}, DependsOn: []string{"T3"}},
+	}
+
+	result := BuildCodingPrompt(CodingParams{
+		IssueID:    "TEST-13",
+		IssueTitle: "resync coverage",
+		Spec:       spec,
+		LogPolicy:  "minimal",
+		BaseBranch: "dev",
+	})
+
+	// Each parallel group must trigger one resync instruction — so the prompt contains
+	// the "Resync main index" phrase at least twice (once per [P] batch).
+	count := strings.Count(result, "Resync main index")
+	if count != 2 {
+		t.Errorf("expected 2 resync instructions (one per parallel group), got %d", count)
+	}
+
+	// The resync instruction must reference the exact plumbing command.
+	if !strings.Contains(result, "git read-tree HEAD") {
+		t.Error("resync instruction must name the `git read-tree HEAD` command")
+	}
+
+	// The resync must not be scheduled as the teammate's responsibility — it's an orchestrator action.
+	// Cheap proxy: the instruction talks about the "main index" being stale, which is a
+	// property visible only from the orchestrator's vantage point.
+	if !strings.Contains(result, "shared main index") {
+		t.Error("resync instruction must explain that the shared main index is stale post-batch")
 	}
 }
 

@@ -89,6 +89,10 @@ fi
 
 If all 5 lock attempts fail, exit non-zero and report the failure back to the main agent — do not force-remove the lock, do not retry the task yourself. Do not touch any other teammate's index file.
 
+### What NOT to do
+
+**Do not resync the shared main index yourself.** Your isolated `GIT_INDEX_FILE` advanced HEAD successfully; the shared main index at `$GIT_DIR/index` is now stale (it still reflects the pre-batch tree), and that is the orchestrator's problem to handle once the whole `[P]` batch completes — not yours. If every teammate ran `git read-tree HEAD` on the main index concurrently, 8 out of 9 would hit `index.lock` contention and fail. Your contract ends at `rm -f "$IDX"`.
+
 ## Error Handling
 
 - If a build error or test failure occurs after your changes, attempt to fix it once.
