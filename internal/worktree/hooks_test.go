@@ -451,8 +451,14 @@ func TestZpitIgnoreRules_ContainsAllDeployedArtifacts(t *testing.T) {
 			t.Errorf("ZpitDeployedFiles entry %q missing from zpitIgnoreRules", f)
 		}
 	}
+	if !strings.Contains(rules, ".claude/settings.json") {
+		t.Error("settings.json missing from zpitIgnoreRules — committing it creates a latent fresh-clone bug because the hook commands it references live in gitignored dirs")
+	}
 	if !strings.Contains(rules, ".claude/settings.local.json") {
 		t.Error("settings.local.json missing from zpitIgnoreRules")
+	}
+	if !strings.Contains(rules, ".zpit-children/") {
+		t.Error(".zpit-children/ missing from zpitIgnoreRules")
 	}
 }
 

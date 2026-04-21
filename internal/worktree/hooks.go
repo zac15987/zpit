@@ -183,11 +183,23 @@ var ZpitDeployedFiles = []string{".mcp.json"}
 
 // zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
 // Derived from ZpitDeployedDirs and ZpitDeployedFiles to stay in sync.
+//
+// Policy: everything under .claude/ that zpit writes is gitignored,
+// including settings.json itself. That file is merged by mergeSettingsHooks
+// on every agent launch, and committing it creates a latent fresh-clone
+// bug because the hook commands it references
+// (.claude/hooks/*.sh) live in gitignored directories and don't exist
+// until zpit has deployed at least once. Team-shared user config (plugin
+// enablement, custom CC keys) should live in a hand-maintained file
+// outside zpit's deployment scope, e.g. a project-root CLAUDE.md note.
+// Per-machine user config goes in .claude/settings.local.json (also
+// gitignored here for the same reason).
 var zpitIgnoreRules = func() []string {
 	var rules []string
 	for _, d := range ZpitDeployedDirs {
 		rules = append(rules, ".claude/"+d+"/")
 	}
+	rules = append(rules, ".claude/settings.json")
 	rules = append(rules, ".claude/settings.local.json")
 	rules = append(rules, ZpitDeployedFiles...)
 	// .zpit-children/ holds ephemeral per-teammate worktrees created by the

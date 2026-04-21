@@ -34,6 +34,8 @@ go.work.sum
 # Zpit auto-deploy
 .claude/agents/
 .claude/docs/
-.claude/settings.local.json
 .claude/hooks/
+.claude/settings.json
+.claude/settings.local.json
 .mcp.json
+.zpit-children/
