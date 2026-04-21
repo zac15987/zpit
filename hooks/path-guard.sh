@@ -19,8 +19,16 @@ FILE_PATH=$(echo "$INPUT" | jq -r '
 # Skip enforcement for non-agent sessions (plain Claude Code)
 [ -z "${ZPIT_AGENT:-}" ] && exit 0
 
-# Allowed working directory (Claude Code sets this to cwd at startup)
-ALLOWED_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+# Allowed working directory — the root of the *active* git worktree.
+# Claude Code pins CLAUDE_PROJECT_DIR to the orchestrator's project root
+# (not the worktree path — see claude-code-source-code src/utils/hooks.ts:813),
+# so when a task-runner teammate runs with isolation:'worktree', its child
+# worktree would otherwise be judged by the parent project's boundary —
+# too permissive (teammate could write to any sibling of the child dir).
+# git rev-parse --show-toplevel self-adapts: parent worktree returns the
+# parent, child worktree returns the child. Falls back to CLAUDE_PROJECT_DIR
+# when the CWD is not inside a git repo.
+ALLOWED_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$(pwd)}")"
 
 # Resolve relative paths to absolute
 if [[ "$FILE_PATH" != /* ]]; then

@@ -142,3 +142,23 @@ Root Cause：
 
 - 若未來 `[P]` batch 普遍超過 5 個或 `[P]` 規則頻繁被違反（真的 touch 同檔案），本協定擋不住語意層的衝突，需升級為「每個 `[P]` task 一個 worktree」；或改採 plumbing `commit-tree` + `update-ref` CAS retry 完全繞開 index/ref lock。當時的討論留在 plan `C:\Users\Jeff\.claude\plans\1-2-vast-lark.md` §Design 開頭。
 - **Fix v3 是第三次在 shared-worktree 模型上打補丁。** 產業慣例（Cursor, Claude Code docs, Augment, spec-kit）皆走「per-teammate worktree」。若再出現一次（v4 規模）incident，正確回應不是 v4 補丁，而是切換到 per-teammate worktree 架構——現有 `internal/worktree/` 已經提供 worktree 生命週期管理，延伸到 batch-ephemeral worktree 的工程成本可控，勝於持續堆疊 shared-worktree 協定複雜度。
+
+### Resolution (2026-04-21, per-teammate worktree via Claude Code `WorktreeCreate` hook)
+
+Fix v1/v2/v3 are now dormant archive — the Parallel Commit Protocol string is no longer emitted by `buildTeamDelegation` and the orchestrator-side `git read-tree HEAD` resync is no longer emitted by `buildTaskWorkflow`. Migration triggered by the predicted v4 incident risk, not by a new regression: zacfuse issue #11 (PR #12, 2026-04-20, ran under Fix v2) produced three recovery commits (`799267c`, `effbe57`, `febda14`) for silent index-bleed during parallel batches, confirming shared-worktree races were not fully closed by v2. Rather than wait for a v4 incident, the architecture was switched.
+
+**New design** — see CLAUDE.md §Task Execution Model → "Per-Teammate Worktree Model":
+
+1. Orchestrator calls the Agent tool with `isolation: "worktree"` per `[P]` teammate.
+2. Claude Code invokes zpit's `WorktreeCreate` hook (`hooks/worktree-create.sh`), which forks a child worktree from orchestrator's current HEAD under `<parent>/.zpit-children/<slug>` (Claude Code's built-in path would fork from `origin/<defaultBranch>` — confirmed in `D:\Documents\MyProjects\claude-code-source-code\src\utils\worktree.ts:284-302` — losing any sequential task commits landed earlier in the loop).
+3. Hook copies `.claude/` + `.mcp.json` into the child so path-guard/bash-firewall/git-guard fire correctly there.
+4. Teammate commits normally inside the child on branch `<parent-branch>-<slug>` — no shared index, no shared ref-lock.
+5. Agent tool returns `{worktreePath, worktreeBranch}` per teammate; orchestrator post-batch emits `git cherry-pick <branch1> <branch2> ...` in task-ID order, then `git worktree remove` + `git branch -D`. Cherry-pick conflicts (spec bug: two `[P]` tasks share a file) surface as `cherry-pick --abort` → NeedsHuman instead of silent reverts.
+
+**Supporting changes:**
+- `hooks/path-guard.sh` — `ALLOWED_DIR` now uses `git rev-parse --show-toplevel` so it self-adapts to whichever worktree the teammate is running inside. Claude Code pins `CLAUDE_PROJECT_DIR` to the orchestrator's project root (not the worktree path — see `claude-code-source-code/src/utils/hooks.ts:813,884`), so the old behavior would have made the check too permissive inside child worktrees.
+- `internal/worktree/hooks.go` — `WorktreeCreate` hook registered in all three `hookModeTemplates`; `.zpit-children/` added to `zpitIgnoreRules`.
+- `internal/prompt/prompt_test.go` — `TestBuildCodingPrompt_ParallelBatchResync` deleted; `TestBuildCodingPrompt_WithParallelTasks` rewritten to assert the new worktree-isolation strings; new `TestBuildCodingPrompt_ParallelBatchIntegration` asserts every `[P]` group emits its own cherry-pick + cleanup block.
+- `agents/task-runner.md` — entire Parallel Commit Protocol section removed; frontmatter unchanged (Claude Code source confirms `isolation` is a runtime tool parameter, not a frontmatter key — `claude-code-source-code/src/tools/AgentTool/AgentTool.tsx:99`).
+
+The three incident fixes above stay in this document as history — useful if we ever need to diagnose a symptom that resembles shared-worktree index bleed in another codebase.

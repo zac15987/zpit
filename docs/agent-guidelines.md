@@ -11,7 +11,7 @@ Allowed:
 - `git status` / `git diff` / `git log`
 - `git push` to your `feat/*` branch (needed to open PRs)
 
-When running as a parallel `[P]` teammate (spawn prompt contains `parallel_task_id: T{N}`), you MUST follow the **Parallel Commit Protocol** in `.claude/agents/task-runner.md` — resolve paths via `git rev-parse --git-dir` / `--git-common-dir` (never hard-code `.git/...` — it's a pointer file in a linked worktree), seed your isolated `GIT_INDEX_FILE` with `git read-tree HEAD`, use scoped `git add -- <files>`, and acquire `$GIT_COMMON_DIR/zpit-commit.lock` via `mkdir` around `git commit`. Run the whole sequence in ONE Bash tool call (env vars don't persist across calls). Sequential tasks do not need this.
+When running as a parallel `[P]` teammate, the orchestrator spawns you through Claude Code's `isolation: "worktree"` mechanism, so you already have your own child worktree on your own branch. Just `git add -- <your-scoped-files>` + `git commit` normally; the orchestrator will cherry-pick your branch back onto the parent branch and remove your worktree after the batch. You do NOT need to `git push`, `git worktree remove`, or `git branch -D` yourself.
 
 Forbidden:
 - Force push (`--force`, `-f`)

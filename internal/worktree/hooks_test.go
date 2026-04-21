@@ -91,6 +91,7 @@ var testScripts = HookScripts{
 	BashFirewall:     []byte("#!/bin/bash\n# bash-firewall"),
 	GitGuard:         []byte("#!/bin/bash\n# git-guard"),
 	NotifyPermission: []byte("#!/bin/bash\n# notify-permission"),
+	WorktreeCreate:   []byte("#!/bin/bash\n# worktree-create"),
 }
 
 func TestDeployHooksToProject_ScriptsWritten(t *testing.T) {

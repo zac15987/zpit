@@ -98,21 +98,19 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 - 循序 task：主 coding agent 透過 Agent tool 的 `subagent_type: "task-runner"` 逐一委派
 - 平行 task（`[P]`）：主 coding agent 建立 Agent Team，每個 teammate 使用 `task-runner` subagent type
 
-**Parallel Commit Protocol（平行 `[P]` teammate 專用）：**
+**Per-Teammate Worktree Model（取代歷代 Parallel Commit Protocol v1/v2/v3）：**
 
-當 spawn prompt 帶有 `parallel_task_id: T{N}` 行時啟動，解決多個 teammate 共用同一 linked worktree 時共用 staging index 與 `refs/heads/<branch>.lock` 的 race（真實案例與 v1/v2 修復歷程見 `docs/known-issues.md` §2）：
+每個 `[P]` teammate 跑在自己的 child worktree、自己的 branch 上，所以 staging index 與 `refs/heads/<branch>.lock` 的 race 從架構層面被消除（v1/v2/v3 修復的歷史脈絡見 `docs/known-issues.md` §2）。
 
-**前提 —** 在 linked worktree 裡 `.git` 是 pointer file 不是 directory，所以所有路徑必須透過 `git rev-parse` 解析，不可 hard-code `.git/...`。整段序列必須在 SINGLE Bash tool 呼叫裡跑完（每個 Bash tool call 都是全新 shell，`export` 不跨呼叫生效）。
+流程：
 
-1. 解析路徑：`GIT_DIR=$(git rev-parse --git-dir)`、`GIT_COMMON_DIR=$(git rev-parse --git-common-dir)`；定義 `IDX="$GIT_DIR/index.zpit.T{N}"`、`LOCK="$GIT_COMMON_DIR/zpit-commit.lock"`
-2. Seed 私有 index：`GIT_INDEX_FILE="$IDX" git read-tree HEAD` — 沒做這步，commit 會把未 stage 的檔案全部記為刪除
-3. Stage 指定檔案：`GIT_INDEX_FILE="$IDX" git add -- <declared files only>` — pathspec 強制（hook 也擋 `-A` / `.`）
-4. Serialize commit：`mkdir "$LOCK"` 取得鎖（重試 5 次、jittered sleep）→ `GIT_INDEX_FILE="$IDX" git commit ...` → `rmdir "$LOCK"` 釋放
-5. 清理：`rm -f "$IDX"`（成功與失敗路徑都做）
+1. **Orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`**（這是 Claude Code 的 runtime parameter，不是 subagent frontmatter）— 見 `agents/task-runner.md` frontmatter 故意保持不變。
+2. Claude Code 觸發 zpit 的 `WorktreeCreate` hook（`hooks/worktree-create.sh`），hook 讀取 stdin JSON 的 `cwd` 與 `name`，執行 `git -C <cwd> worktree add -B <parent-branch>-<slug> <cwd>/.zpit-children/<slug> HEAD`（關鍵：fork 自 orchestrator 的 HEAD，而非 Claude Code 內建的 `origin/<defaultBranch>`，否則會錯過先前循序 task 的 commit），然後 `cp -r .claude/` + `.mcp.json` 進 child，把 worktree path 印到 stdout 交還 Claude Code。
+3. Teammate 在 child worktree 以 `git add -- <files> && git commit` 正常 commit，沒有任何 index 隔離、沒有 `mkdir` lock、沒有跨 shell 的 env 問題。
+4. Agent tool 回傳 `{worktreePath, worktreeBranch}` 給 orchestrator。
+5. Batch 結束後 orchestrator 在父 worktree 跑一次性 `git cherry-pick <branch1> <branch2> ...`（task-ID 順序），然後 `git worktree remove <path>` + `git branch -D <branch>` 清理。Cherry-pick 衝突（spec bug：兩個 `[P]` task 寫同檔）會被 `git cherry-pick --abort` 當面擋下 → 停機等使用者，**不會**靜默半 merge。
 
-循序 task 獨佔 index，不走此協定。完整命令與錯誤處理見 `agents/task-runner.md` → Parallel Commit Protocol。
-
-完整模板見 `agents/task-runner.md`。
+循序 task 不走此流程（不呼叫 `isolation: "worktree"`），直接在父 worktree commit。Teammate 的行為規範見 `agents/task-runner.md`（`Parallel Commit Protocol` 段已移除）。
 
 ---
 

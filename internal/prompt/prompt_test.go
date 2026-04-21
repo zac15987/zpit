@@ -304,18 +304,24 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 		}
 	}
 
-	// AC-1: pure sequential tasks must NOT contain Agent Team instructions
-	// or any of the Parallel Commit Protocol strings (sequential owns the index).
+	// AC-1: pure sequential tasks must NOT contain Agent Team / worktree-isolation
+	// instructions (sequential tasks commit directly in the parent worktree) nor
+	// any of the retired Parallel Commit Protocol strings.
 	mustNotContain := []string{
 		"Agent Team Delegation",
 		"Parallel group",
+		"Worktree Isolation",
+		"isolation: \"worktree\"",
+		"git cherry-pick",
+		"git worktree remove",
+		// Retired Parallel Commit Protocol — must not reappear in any flow.
 		"Parallel Commit Protocol",
 		"parallel_task_id",
 		"GIT_INDEX_FILE",
 		"zpit-commit.lock",
 		"git rev-parse --git-common-dir",
 		"git read-tree HEAD",
-		"Resync main index", // no parallel groups → no orchestrator-side resync
+		"Resync main index",
 	}
 	for _, c := range mustNotContain {
 		if strings.Contains(result, c) {
@@ -344,8 +350,9 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 
 	result := BuildCodingPrompt(p)
 
-	// Must contain both subagent and Agent Team delegation sections,
-	// plus the Parallel Commit Protocol hand-off that protects against index/ref races.
+	// Must contain subagent + Agent Team delegation plus the new worktree-isolation
+	// hand-off (isolation:"worktree" Agent-tool param + cherry-pick batch integration).
+	// The Parallel Commit Protocol is retired — none of its strings should appear.
 	mustContain := []string{
 		"Task Decomposition",
 		"Execution Strategy",
@@ -362,17 +369,35 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"sequential",
 		"teammate",
 		"self-check against each ACCEPTANCE_CRITERIA",
+		// New worktree-isolation flow
+		"Worktree Isolation",
+		"isolation: \"worktree\"",
+		"worktreePath",
+		"worktreeBranch",
+		"git cherry-pick",
+		"git worktree remove",
+		"git branch -D",
+		"git cherry-pick --abort",
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(result, c) {
+			t.Errorf("parallel task prompt missing %q", c)
+		}
+	}
+
+	// Retired Parallel Commit Protocol — must not reappear.
+	mustNotContain := []string{
 		"Parallel Commit Protocol",
 		"parallel_task_id",
 		"GIT_INDEX_FILE",
 		"zpit-commit.lock",
 		"git rev-parse --git-common-dir",
 		"git read-tree HEAD",
-		"Resync main index", // orchestrator-side post-batch resync (issue #13 regression fix)
+		"Resync main index",
 	}
-	for _, c := range mustContain {
-		if !strings.Contains(result, c) {
-			t.Errorf("parallel task prompt missing %q", c)
+	for _, c := range mustNotContain {
+		if strings.Contains(result, c) {
+			t.Errorf("parallel task prompt must NOT contain retired-protocol string %q", c)
 		}
 	}
 
@@ -381,23 +406,24 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		t.Error("parallel task prompt should group T2 and T3 together")
 	}
 
-	// Verify the orchestrator-side resync instruction appears AFTER the Parallel group line,
-	// not just as part of the in-teammate protocol summary. Order proves the resync is a
-	// post-batch orchestrator action, not a teammate action.
+	// Cherry-pick integration must be emitted AFTER the Parallel group line,
+	// because it's the post-batch step the orchestrator runs once all teammates
+	// have returned their worktreeBranch values.
 	groupIdx := strings.Index(result, "Parallel group [T2, T3]")
-	resyncIdx := strings.Index(result, "Resync main index")
-	if groupIdx == -1 || resyncIdx == -1 || resyncIdx <= groupIdx {
-		t.Errorf("Resync main index instruction must appear after the Parallel group line (groupIdx=%d, resyncIdx=%d)", groupIdx, resyncIdx)
+	cherryIdx := strings.Index(result, "git cherry-pick")
+	if groupIdx == -1 || cherryIdx == -1 || cherryIdx <= groupIdx {
+		t.Errorf("git cherry-pick instruction must appear after the Parallel group line (groupIdx=%d, cherryIdx=%d)", groupIdx, cherryIdx)
 	}
 }
 
-// TestBuildCodingPrompt_ParallelBatchResync asserts the orchestrator-side main-index
-// resync is emitted for every parallel group in the Task Execution Order. This is
-// the issue #13 regression fix: a parallel batch leaves the shared main index stale,
-// so any later main-index commit silently reverts the batch's work unless the
-// orchestrator runs `git read-tree HEAD` before continuing.
-func TestBuildCodingPrompt_ParallelBatchResync(t *testing.T) {
-	// Two parallel groups separated by a sequential task — resync must appear for BOTH groups.
+// TestBuildCodingPrompt_ParallelBatchIntegration asserts every [P] group gets its
+// own cherry-pick + worktree-cleanup block in the Task Execution Order. Replaces
+// the retired TestBuildCodingPrompt_ParallelBatchResync: under per-teammate
+// worktrees there is no main-index to resync, but the orchestrator still owes
+// one cherry-pick block per batch.
+func TestBuildCodingPrompt_ParallelBatchIntegration(t *testing.T) {
+	// Two parallel groups separated by a sequential task — cherry-pick + cleanup
+	// must appear for BOTH groups.
 	spec := testSpec()
 	spec.Tasks = []tracker.TaskEntry{
 		{ID: "T1", Description: "seed", Parallel: true, Paths: []string{"a.go"}, DependsOn: nil},
@@ -409,29 +435,29 @@ func TestBuildCodingPrompt_ParallelBatchResync(t *testing.T) {
 
 	result := BuildCodingPrompt(CodingParams{
 		IssueID:    "TEST-13",
-		IssueTitle: "resync coverage",
+		IssueTitle: "batch integration coverage",
 		Spec:       spec,
 		LogPolicy:  "minimal",
 		BaseBranch: "dev",
 	})
 
-	// Each parallel group must trigger one resync instruction — so the prompt contains
-	// the "Resync main index" phrase at least twice (once per [P] batch).
-	count := strings.Count(result, "Resync main index")
-	if count != 2 {
-		t.Errorf("expected 2 resync instructions (one per parallel group), got %d", count)
+	// Each parallel group must emit an Integrate-the-batch cherry-pick block —
+	// so the prompt contains "git cherry-pick" at least twice (once per [P] batch).
+	cherryCount := strings.Count(result, "git cherry-pick ")
+	if cherryCount < 2 {
+		t.Errorf("expected >=2 cherry-pick instructions (one per parallel group), got %d", cherryCount)
 	}
 
-	// The resync instruction must reference the exact plumbing command.
-	if !strings.Contains(result, "git read-tree HEAD") {
-		t.Error("resync instruction must name the `git read-tree HEAD` command")
+	// Each parallel group must emit its worktree cleanup block too.
+	removeCount := strings.Count(result, "git worktree remove")
+	if removeCount < 2 {
+		t.Errorf("expected >=2 worktree-remove instructions (one per parallel group), got %d", removeCount)
 	}
 
-	// The resync must not be scheduled as the teammate's responsibility — it's an orchestrator action.
-	// Cheap proxy: the instruction talks about the "main index" being stale, which is a
-	// property visible only from the orchestrator's vantage point.
-	if !strings.Contains(result, "shared main index") {
-		t.Error("resync instruction must explain that the shared main index is stale post-batch")
+	// Conflict-abort instruction must be present so the orchestrator stops on
+	// spec bugs (two [P] tasks sharing a file) instead of retrying blindly.
+	if !strings.Contains(result, "git cherry-pick --abort") {
+		t.Error("batch-integration block must name `git cherry-pick --abort` for the conflict path")
 	}
 }
 

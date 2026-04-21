@@ -195,9 +195,19 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 			for i, t := range g.tasks {
 				ids[i] = t.ID
 			}
-			fmt.Fprintf(b, "%d. **Parallel group [%s]**: Create an Agent Team. For each task in the group, spawn a teammate using `task-runner` subagent type. ", step, strings.Join(ids, ", "))
-			b.WriteString("Each teammate receives its task assignment as the spawn prompt. Wait for all teammates to complete and verify each commit.\n")
-			b.WriteString("   **Resync main index after the batch.** Each teammate committed via an isolated `GIT_INDEX_FILE`, which advanced HEAD but left the shared main index stale at the pre-batch tree. Before ANY later operation that touches the main index (next sequential task's `git add` / `git commit`, or your own final-adjustment commit in the workflow), run this as ONE Bash call in the worktree root: `git read-tree HEAD`. Without this, the next `git commit` against the main index silently reverts every file the batch just modified — this is the issue #13 regression that the restore commit `fe3a799` had to fix after T10 dropped T1–T9's work.\n")
+			fmt.Fprintf(b, "%d. **Parallel group [%s]**: Create an Agent Team. For each task in the group, spawn a teammate using `task-runner` subagent type with `isolation: \"worktree\"`. ", step, strings.Join(ids, ", "))
+			b.WriteString("Each teammate receives its task assignment as the spawn prompt and runs inside an isolated child worktree. Wait for all teammates to complete, capture each `worktreePath` and `worktreeBranch` returned by the Agent tool, and verify each commit.\n")
+			b.WriteString("   **Integrate the batch.** After all teammates return, run as ONE Bash call in your parent worktree root (in task-ID order T{N1}, T{N2}, …):\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   git cherry-pick <worktreeBranch-T{N1}> <worktreeBranch-T{N2}> ...\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   Each cherry-pick lands that teammate's single commit on your branch, preserving its original message. **If any cherry-pick fails**, immediately run `git cherry-pick --abort`, then STOP: post an issue comment listing the conflicting paths (spec bug — two `[P]` tasks that share a file), and do NOT retry automatically. The user must re-scope the spec.\n")
+			b.WriteString("   On success, clean up each child worktree + branch (one Bash call):\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   for path in <worktreePath-T{N1}> <worktreePath-T{N2}> ...; do git worktree remove \"$path\"; done\n")
+			b.WriteString("   for branch in <worktreeBranch-T{N1}> <worktreeBranch-T{N2}> ...; do git branch -D \"$branch\"; done\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   Only after this cleanup should you proceed to the next step. The parent worktree's HEAD has advanced by N commits (one per teammate), so subsequent sequential tasks and final-adjustment commits run against the correct tree.\n")
 		} else {
 			t := g.tasks[0]
 			fmt.Fprintf(b, "%d. **%s** (sequential): Delegate to a `task-runner` subagent via the Agent tool. ", step, t.ID)
@@ -279,19 +289,18 @@ func buildTeamDelegation(b *strings.Builder, p CodingParams) {
 	b.WriteString("- Wait for ALL teammates to complete before proceeding to the next task group.\n")
 	b.WriteString("- After the team finishes, verify all commits exist and are consistent.\n\n")
 
-	b.WriteString("#### Parallel Commit Protocol (required for every `[P]` teammate)\n\n")
-	b.WriteString("Parallel teammates share one linked worktree, so naive `git add` / `git commit` races on the shared staging index and on `refs/heads/<branch>.lock`. This has caused real commit-content corruption (and mass-delete commits) in the past. You MUST brief every teammate in its spawn prompt so it can follow `.claude/agents/task-runner.md` → **Parallel Commit Protocol**.\n\n")
-	b.WriteString("**Important:** in a linked worktree, `.git` is a pointer file — not a directory. Paths MUST be resolved via `git rev-parse --git-dir` / `git rev-parse --git-common-dir`; hard-coding `.git/...` fails with `fatal: Unable to create '.git/...': No such file or directory`.\n\n")
-	b.WriteString("Each teammate's spawn prompt must include, on its own line:\n\n")
-	b.WriteString("```\nparallel_task_id: T{N}\n```\n\n")
-	b.WriteString("(substitute the teammate's task ID). The `task-runner` agent reads this line as the signal to switch on the protocol. In the same spawn prompt, include the explicit `files:` / `paths:` list from the task — teammates use it as the `git add -- <files>` pathspec.\n\n")
-	b.WriteString("Summary of what every teammate will do — the agent doc has the exact commands, and they MUST be run as a SINGLE Bash invocation (the Bash tool starts a fresh shell per call, so `export GIT_INDEX_FILE` does not persist across calls):\n\n")
-	b.WriteString("1. Resolve paths: `GIT_DIR=$(git rev-parse --git-dir)` and `GIT_COMMON_DIR=$(git rev-parse --git-common-dir)`; define `IDX=\"$GIT_DIR/index.zpit.T{N}\"` and `LOCK=\"$GIT_COMMON_DIR/zpit-commit.lock\"`.\n")
-	b.WriteString("2. Seed the private index from HEAD: `GIT_INDEX_FILE=\"$IDX\" git read-tree HEAD` — without this, the commit's tree contains ONLY the newly-staged files and records every other path as deleted.\n")
-	b.WriteString("3. Stage declared files only: `GIT_INDEX_FILE=\"$IDX\" git add -- <declared files>` (pathspec required by hook and by this protocol).\n")
-	b.WriteString("4. Serialize commit: retry `mkdir \"$LOCK\"` up to 5× with jittered sleep, then `GIT_INDEX_FILE=\"$IDX\" git commit ...`, then `rmdir \"$LOCK\"`.\n")
-	b.WriteString("5. Clean up: `rm -f \"$IDX\"` on both success and failure paths.\n\n")
-	b.WriteString("If any teammate fails all 5 lock attempts or returns without a commit, stop the group — do NOT force-remove the lock and do NOT retry the batch automatically. Report the failure and wait for the user.\n\n")
+	b.WriteString("#### Worktree Isolation (required for every `[P]` teammate)\n\n")
+	b.WriteString("Parallel teammates previously shared your worktree and raced on the staging index + branch ref. That model is retired. Each `[P]` teammate now runs in its own git worktree forked from your current HEAD via Claude Code's `isolation: \"worktree\"` mechanism, so commits can't collide.\n\n")
+	b.WriteString("For each teammate, call the Agent tool with:\n\n")
+	b.WriteString("```\n")
+	b.WriteString("Agent tool parameters:\n")
+	b.WriteString("  subagent_type: \"task-runner\"\n")
+	b.WriteString("  isolation: \"worktree\"\n")
+	b.WriteString("  description: \"[ISSUE-ID] T{N}: {short description}\"\n")
+	b.WriteString("  prompt: <full task context including issue ID, task ID, description, file paths, APPROACH, and commit format>\n")
+	b.WriteString("```\n\n")
+	b.WriteString("Claude Code invokes zpit's `WorktreeCreate` hook (`.claude/hooks/worktree-create.sh`), which forks a child worktree under `.zpit-children/<slug>` from your current HEAD (not `origin/<defaultBranch>` — that's why we bypass Claude Code's built-in path), deploys the `.claude/` directory, and hands the path to the teammate. The teammate commits normally inside the child worktree on branch `<your-branch>-<slug>`.\n\n")
+	b.WriteString("The Agent tool result for each teammate includes `worktreePath` and `worktreeBranch`. **Capture both per teammate — you will need them for the batch integration step below.** If a teammate returns without `worktreeBranch`, its worktree creation failed and you must abort the batch.\n\n")
 }
 
 // coordinationReviewGate returns the review gate text for when CoordinatesWith is non-empty.

@@ -70,6 +70,9 @@ var zpitExitPS1 []byte
 //go:embed hooks/notify-permission.sh
 var notifyPermissionSH []byte
 
+//go:embed hooks/worktree-create.sh
+var worktreeCreateSH []byte
+
 func main() {
 	// Subcommand routing via os.Args.
 	subcmd := ""
@@ -341,6 +344,7 @@ func buildHookScripts() worktree.HookScripts {
 		ExitWrapper:      zpitExitCMD,
 		ExitWrapperPS1:   zpitExitPS1,
 		NotifyPermission: notifyPermissionSH,
+		WorktreeCreate:   worktreeCreateSH,
 	}
 }
 
