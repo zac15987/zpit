@@ -162,3 +162,110 @@ Fix v1/v2/v3 are now dormant archive — the Parallel Commit Protocol string is 
 - `agents/task-runner.md` — entire Parallel Commit Protocol section removed; frontmatter unchanged (Claude Code source confirms `isolation` is a runtime tool parameter, not a frontmatter key — `claude-code-source-code/src/tools/AgentTool/AgentTool.tsx:99`).
 
 The three incident fixes above stay in this document as history — useful if we ever need to diagnose a symptom that resembles shared-worktree index bleed in another codebase.
+
+---
+
+## 3. Claude Code `WorktreeCreate` hook does not propagate `worktreeBranch`
+
+### Symptom
+
+When the orchestrator calls the Agent tool with `isolation: "worktree"` and zpit's `WorktreeCreate` hook is registered, the Agent tool result populates `worktreePath` but returns `worktreeBranch: undefined`.
+
+Observed during the per-teammate worktree smoke test (`zpit-test-worktree` issue #1, 2026-04-22, session `092f074a-…`):
+
+```
+tool_result: worktreePath = D:\Documents\.worktrees\...\.zpit-children\agent-a977314b
+             worktreeBranch = undefined
+```
+
+The orchestrator guessed the actual branch name from the zpit naming convention (`<parent-branch>-<slug>`) and proceeded successfully, but this is fragile — if zpit's naming ever drifts the inference silently breaks.
+
+### Root Cause
+
+Confirmed in Claude Code source (`D:\Documents\MyProjects\claude-code-source-code`):
+
+- `src/utils/hooks.ts` — `executeWorktreeCreateHook()` parses stdout as plain text and returns `{worktreePath: string}`. No mechanism to parse or propagate a branch name.
+- `src/utils/worktree.ts:902–951` — `createAgentWorktree()` branches on `hasWorktreeCreateHook()`. In the hook path it returns `{worktreePath, hookBased: true}` and never sets `worktreeBranch`. Only the built-in `git worktree add -b` path sets it.
+- `src/tools/AgentTool/AgentTool.tsx:643–685` — `cleanupWorktreeIfNeeded()` forwards `worktreeBranch` from the internal worktreeInfo object. If `hookBased` it's never set, hence `undefined`.
+- `src/entrypoints/sdk/coreSchemas.ts:961–970` — `WorktreeCreateHookSpecificOutputSchema` documents the hook's output as `{hookEventName, worktreePath}` only.
+
+This is a Claude Code design gap, not a bug in zpit's hook.
+
+### Workaround
+
+Orchestrator discovers each teammate's branch via `git`:
+
+```
+for path in <worktreePath-T{N1}> <worktreePath-T{N2}> ...; do
+  git -C "$path" rev-parse --abbrev-ref HEAD
+done
+```
+
+Authoritative (doesn't depend on slug inference or any naming convention), cheap (one git call per teammate), and must run BEFORE cleanup — removing the worktree also removes the branch mapping.
+
+### Related code
+
+- `internal/prompt/coding.go` — `buildTeamDelegation` notes the gap; `buildTaskWorkflow` emits the rev-parse discovery step before the cherry-pick block.
+
+### Upstream fix options (for future if Claude Code addresses this)
+
+- Extend `WorktreeCreateHookSpecificOutputSchema` to accept `{worktreePath, worktreeBranch}` JSON on stdout instead of plain text.
+- Have `createAgentWorktree()` run `git -C <path> rev-parse --abbrev-ref HEAD` after the hook returns, since it already has `worktreePath` in hand.
+
+Neither is in current Claude Code — workaround lives in zpit's orchestrator prompt until then.
+
+---
+
+## 4. `git-guard.sh` blocked `git branch -D`, breaking per-teammate cleanup
+
+### Symptom
+
+After the per-teammate worktree cherry-pick, the orchestrator's cleanup attempted:
+
+```
+git worktree remove --force ... && git branch -D <teammate-branch>
+```
+
+git-guard.sh blocked the compound command with `BLOCKED: Git operation … is not allowed`. Orchestrator split the call but never retried `git branch -D` separately, leaking teammate branches (`feat/1-…-agent-a4035b9d`, `…-agent-a977314b`) as local orphans.
+
+### Root Cause
+
+Two issues compounded:
+
+1. `hooks/git-guard.sh` blocklist (`GIT_BLOCKED`) included `git\s+branch\s+-[dD]\s`, intended to prevent agents from deleting real feature branches. The per-teammate worktree migration (commit `ec6b95e`) introduced a legitimate need to delete ephemeral teammate branches, but did not update the hook.
+2. `internal/prompt/coding.go` `buildTaskWorkflow` emitted the cleanup as a single `for … done; for … done` bash compound, so any hook rejection on the `git branch -D` portion killed the `git worktree remove` portion too. The orchestrator fallback split the commands but did not retry the blocked step.
+
+Also observed: `git worktree remove` without `--force` failed because child worktrees contain the copied `.claude/` directory, which `git worktree remove` considers "untracked files".
+
+### Fix (2026-04-22)
+
+- `hooks/git-guard.sh` — whitelist `git branch -D` when every branch argument matches the teammate convention `…-agent-<hex>` (Claude Code's default isolation slug). Arbitrary `git branch -D` still blocked.
+- `internal/prompt/coding.go` — emit cleanup as TWO SEPARATE Bash tool calls (worktree-remove, branch-delete), always pass `--force` to `git worktree remove`, instruct orchestrator to retry `branch -D` independently if it fails.
+
+### Code locations
+
+- `hooks/git-guard.sh` — teammate whitelist block (inserted before `GIT_BLOCKED` loop).
+- `internal/prompt/coding.go` — `buildTaskWorkflow` parallel-group cleanup block.
+- `hooks/hooks_test.go` — `TestGitGuard_AllowsTeammateBranchDelete`, `TestGitGuard_BlocksMixedTeammateAndOtherBranchDelete`.
+
+---
+
+## 5. Stale `.claude/settings.json text eol=lf` in `.gitattributes` + `.claude/settings.local.json` in `.gitignore`
+
+### Symptom
+
+Fresh agent launches on pre-existing zpit projects showed uncommitted drift in `.gitignore` (`.claude/settings.local.json` being auto-appended on every launch). Some projects also carried a dead `.claude/settings.json text eol=lf` line in `.gitattributes` — leftover from when `.claude/settings.json` was committed to git (pre-`202a0f3`, 2026-04-21).
+
+### Root Cause
+
+Commit `202a0f3` gitignored `.claude/settings.json` (closing a fresh-clone bug) but left two artifacts:
+
+1. `EnsureGitattributes` still wrote `.claude/settings.json text eol=lf` — pointless once the file is gitignored, but kept appending the line on every launch, polluting user-owned `.gitattributes`.
+2. `EnsureGitignore` auto-added `.claude/settings.local.json` to every project's `.gitignore` at agent launch, causing drift on each run.
+
+### Fix (2026-04-22)
+
+- `internal/worktree/hooks.go` — drop `.claude/settings.local.json` from `zpitIgnoreRules`; delete `zpitGitattributesRules` and `EnsureGitattributes` entirely.
+- `internal/tui/launch.go`, `internal/tui/loop_cmds.go` — remove the four `EnsureGitattributes` call sites.
+
+`.claude/settings.json` itself remains in `zpitIgnoreRules` — that's the invariant from `202a0f3`. Users with stale `.gitattributes` / `.gitignore` entries in existing projects can clean them manually; zpit does not retroactively edit user-owned files.

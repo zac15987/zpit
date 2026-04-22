@@ -284,6 +284,37 @@ func TestGitGuard_BlocksBranchDelete(t *testing.T) {
 	}
 }
 
+// Teammate-branch whitelist: per-teammate worktree cleanup emits
+// `git branch -D <parent>-agent-<hex>` — hook must allow it.
+func TestGitGuard_AllowsTeammateBranchDelete(t *testing.T) {
+	code, msg := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git branch -D feat/1-foo-agent-a4035b9d"}}`,
+		agentEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d: %s", code, msg)
+	}
+}
+
+func TestGitGuard_AllowsMultipleTeammateBranchDelete(t *testing.T) {
+	code, msg := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git branch -D feat/1-foo-agent-a4035b9d feat/1-foo-agent-a977314b"}}`,
+		agentEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d: %s", code, msg)
+	}
+}
+
+// If even one arg is not a teammate branch, block — prevents the whitelist
+// from being used as an escape hatch for arbitrary branch deletion.
+func TestGitGuard_BlocksMixedTeammateAndOtherBranchDelete(t *testing.T) {
+	code, _ := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git branch -D feat/1-foo-agent-a4035b9d dev"}}`,
+		agentEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
 func TestGitGuard_AllowsCommit(t *testing.T) {
 	code, msg := runHook(t, "git-guard.sh",
 		`{"tool_input":{"command":"git commit -m \"[ASE-47] add retry backoff\""}}`,

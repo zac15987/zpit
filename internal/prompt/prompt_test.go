@@ -373,11 +373,16 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"Worktree Isolation",
 		"isolation: \"worktree\"",
 		"worktreePath",
-		"worktreeBranch",
 		"git cherry-pick",
-		"git worktree remove",
+		"git worktree remove --force",
 		"git branch -D",
 		"git cherry-pick --abort",
+		// Per-teammate cleanup split into two separate Bash calls so a hook
+		// block on one cannot nuke the other (see docs/known-issues.md §4).
+		"TWO SEPARATE Bash tool calls",
+		// Branch discovery via git — Claude Code's WorktreeCreate hook path
+		// does not populate worktreeBranch (see docs/known-issues.md §3).
+		"rev-parse --abbrev-ref HEAD",
 	}
 	for _, c := range mustContain {
 		if !strings.Contains(result, c) {
@@ -408,11 +413,24 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 
 	// Cherry-pick integration must be emitted AFTER the Parallel group line,
 	// because it's the post-batch step the orchestrator runs once all teammates
-	// have returned their worktreeBranch values.
+	// have returned (and it has discovered each teammate's branch via
+	// `git -C <worktreePath> rev-parse --abbrev-ref HEAD` — Claude Code's
+	// WorktreeCreate-hook path does not populate worktreeBranch on the Agent
+	// tool result, see docs/known-issues.md §3).
 	groupIdx := strings.Index(result, "Parallel group [T2, T3]")
 	cherryIdx := strings.Index(result, "git cherry-pick")
 	if groupIdx == -1 || cherryIdx == -1 || cherryIdx <= groupIdx {
 		t.Errorf("git cherry-pick instruction must appear after the Parallel group line (groupIdx=%d, cherryIdx=%d)", groupIdx, cherryIdx)
+	}
+
+	// rev-parse discovery step must come BEFORE cherry-pick, since cleanup
+	// (which removes the worktree) runs after cherry-pick — if rev-parse
+	// landed after cherry-pick, the discovered branch values would be fine,
+	// but if it landed after cleanup (typo in future refactor) discovery
+	// would fail silently because the worktree path no longer exists.
+	revParseIdx := strings.Index(result, "rev-parse --abbrev-ref HEAD")
+	if revParseIdx == -1 || revParseIdx >= cherryIdx {
+		t.Errorf("rev-parse branch discovery must appear before cherry-pick (revParseIdx=%d, cherryIdx=%d)", revParseIdx, cherryIdx)
 	}
 }
 

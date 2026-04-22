@@ -196,17 +196,28 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 				ids[i] = t.ID
 			}
 			fmt.Fprintf(b, "%d. **Parallel group [%s]**: Create an Agent Team. For each task in the group, spawn a teammate using `task-runner` subagent type with `isolation: \"worktree\"`. ", step, strings.Join(ids, ", "))
-			b.WriteString("Each teammate receives its task assignment as the spawn prompt and runs inside an isolated child worktree. Wait for all teammates to complete, capture each `worktreePath` and `worktreeBranch` returned by the Agent tool, and verify each commit.\n")
-			b.WriteString("   **Integrate the batch.** After all teammates return, run as ONE Bash call in your parent worktree root (in task-ID order T{N1}, T{N2}, …):\n")
+			b.WriteString("Each teammate receives its task assignment as the spawn prompt and runs inside an isolated child worktree. Wait for all teammates to complete, capture each `worktreePath` returned by the Agent tool, and verify each commit.\n")
+			b.WriteString("   **Discover each teammate's branch name.** The Agent tool result does NOT include `worktreeBranch` (Claude Code's WorktreeCreate-hook path returns only the path). Before any cleanup, run ONE Bash call from your parent worktree root:\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   for path in <worktreePath-T{N1}> <worktreePath-T{N2}> ...; do git -C \"$path\" rev-parse --abbrev-ref HEAD; done\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   Capture each line of output as the corresponding teammate's `worktreeBranch`. Use these values for the cherry-pick and cleanup steps below.\n")
+			b.WriteString("   **Integrate the batch.** Run as ONE Bash call in your parent worktree root (in task-ID order T{N1}, T{N2}, …):\n")
 			b.WriteString("   ```\n")
 			b.WriteString("   git cherry-pick <worktreeBranch-T{N1}> <worktreeBranch-T{N2}> ...\n")
 			b.WriteString("   ```\n")
 			b.WriteString("   Each cherry-pick lands that teammate's single commit on your branch, preserving its original message. **If any cherry-pick fails**, immediately run `git cherry-pick --abort`, then STOP: post an issue comment listing the conflicting paths (spec bug — two `[P]` tasks that share a file), and do NOT retry automatically. The user must re-scope the spec.\n")
-			b.WriteString("   On success, clean up each child worktree + branch (one Bash call):\n")
+			b.WriteString("   **Cleanup — TWO SEPARATE Bash tool calls** (never chained with `&&` — a hook block on one must not kill the other):\n\n")
+			b.WriteString("   Bash call 1 — remove worktrees:\n")
 			b.WriteString("   ```\n")
-			b.WriteString("   for path in <worktreePath-T{N1}> <worktreePath-T{N2}> ...; do git worktree remove \"$path\"; done\n")
+			b.WriteString("   for path in <worktreePath-T{N1}> <worktreePath-T{N2}> ...; do git worktree remove --force \"$path\"; done\n")
+			b.WriteString("   ```\n")
+			b.WriteString("   Always pass `--force` from the start — child worktrees contain the copied `.claude/` directory and will not remove without it.\n\n")
+			b.WriteString("   Bash call 2 — delete teammate branches:\n")
+			b.WriteString("   ```\n")
 			b.WriteString("   for branch in <worktreeBranch-T{N1}> <worktreeBranch-T{N2}> ...; do git branch -D \"$branch\"; done\n")
 			b.WriteString("   ```\n")
+			b.WriteString("   If Bash call 2 is blocked by a hook or fails for any other reason, retry it as a standalone Bash call before moving on — do NOT skip branch deletion just because worktree removal already succeeded. Leaked teammate branches pollute the local branch list.\n")
 			b.WriteString("   Only after this cleanup should you proceed to the next step. The parent worktree's HEAD has advanced by N commits (one per teammate), so subsequent sequential tasks and final-adjustment commits run against the correct tree.\n")
 		} else {
 			t := g.tasks[0]
@@ -300,7 +311,7 @@ func buildTeamDelegation(b *strings.Builder, p CodingParams) {
 	b.WriteString("  prompt: <full task context including issue ID, task ID, description, file paths, APPROACH, and commit format>\n")
 	b.WriteString("```\n\n")
 	b.WriteString("Claude Code invokes zpit's `WorktreeCreate` hook (`.claude/hooks/worktree-create.sh`), which forks a child worktree under `.zpit-children/<slug>` from your current HEAD (not `origin/<defaultBranch>` — that's why we bypass Claude Code's built-in path), deploys the `.claude/` directory, and hands the path to the teammate. The teammate commits normally inside the child worktree on branch `<your-branch>-<slug>`.\n\n")
-	b.WriteString("The Agent tool result for each teammate includes `worktreePath` and `worktreeBranch`. **Capture both per teammate — you will need them for the batch integration step below.** If a teammate returns without `worktreeBranch`, its worktree creation failed and you must abort the batch.\n\n")
+	b.WriteString("The Agent tool result for each teammate includes `worktreePath`. **It does NOT include `worktreeBranch`** — Claude Code's `WorktreeCreate`-hook path returns only the path (`executeWorktreeCreateHook` in Claude Code's `src/utils/hooks.ts` does not propagate branch names). The Task Execution Order section below instructs you to discover each teammate's branch via `git -C <worktreePath> rev-parse --abbrev-ref HEAD` before cleanup — do not try to read `worktreeBranch` from the Agent tool result. If a teammate returns without `worktreePath`, its worktree creation failed and you must abort the batch.\n\n")
 }
 
 // coordinationReviewGate returns the review gate text for when CoordinatesWith is non-empty.

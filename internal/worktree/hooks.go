@@ -192,15 +192,16 @@ var ZpitDeployedFiles = []string{".mcp.json"}
 // until zpit has deployed at least once. Team-shared user config (plugin
 // enablement, custom CC keys) should live in a hand-maintained file
 // outside zpit's deployment scope, e.g. a project-root CLAUDE.md note.
-// Per-machine user config goes in .claude/settings.local.json (also
-// gitignored here for the same reason).
+// Per-machine user config goes in .claude/settings.local.json — that file
+// is Claude Code's conventional local-override slot and is gitignored by
+// Claude Code's own init/defaults on most projects; zpit does not add it
+// here to avoid polluting user-owned .gitignore on every launch.
 var zpitIgnoreRules = func() []string {
 	var rules []string
 	for _, d := range ZpitDeployedDirs {
 		rules = append(rules, ".claude/"+d+"/")
 	}
 	rules = append(rules, ".claude/settings.json")
-	rules = append(rules, ".claude/settings.local.json")
 	rules = append(rules, ZpitDeployedFiles...)
 	// .zpit-children/ holds ephemeral per-teammate worktrees created by the
 	// WorktreeCreate hook during [P] batches. Cleaned up by the orchestrator
@@ -252,16 +253,6 @@ func ensureFileRules(filePath string, rules []string) {
 // EnsureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
 func EnsureGitignore(projectPath string) {
 	ensureFileRules(filepath.Join(projectPath, ".gitignore"), zpitIgnoreRules)
-}
-
-// zpitGitattributesRules are .gitattributes rules for Zpit-managed files.
-var zpitGitattributesRules = []string{
-	".claude/settings.json text eol=lf",
-}
-
-// EnsureGitattributes appends missing Zpit gitattributes rules to a project's .gitattributes.
-func EnsureGitattributes(projectPath string) {
-	ensureFileRules(filepath.Join(projectPath, ".gitattributes"), zpitGitattributesRules)
 }
 
 // DeployHooksToProject writes hook scripts to .claude/hooks/ and merges hook config

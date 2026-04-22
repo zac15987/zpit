@@ -260,9 +260,8 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	zpitBin := m.state.cfg.ZpitBin
 
 	return func() tea.Msg {
-		// Deploy hooks + gitignore + gitattributes
+		// Deploy hooks + gitignore
 		worktree.EnsureGitignore(projectPath)
-		worktree.EnsureGitattributes(projectPath)
 		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
 		}
@@ -331,9 +330,8 @@ func (m Model) deployAndLaunchAgentLite() tea.Cmd {
 	zpitBin := m.state.cfg.ZpitBin
 
 	return func() tea.Msg {
-		// (a) Ensure gitignore + gitattributes
+		// (a) Ensure gitignore
 		worktree.EnsureGitignore(projectPath)
-		worktree.EnsureGitattributes(projectPath)
 
 		// (b) Deploy agent — NO hooks deployed
 		agentDir := filepath.Join(projectPath, ".claude", "agents")
@@ -404,7 +402,6 @@ func (m Model) deployAllCmd() tea.Cmd {
 		logger.Printf("[redeploy] %s: cleared %d prior item(s)", projectName, removed)
 
 		worktree.EnsureGitignore(projectPath)
-		worktree.EnsureGitattributes(projectPath)
 
 		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
 			logger.Printf("[redeploy] %s: hook deploy failed: %v", projectName, err)

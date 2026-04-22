@@ -221,7 +221,6 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
 		worktree.EnsureGitignore(wtPath)
-		worktree.EnsureGitattributes(projectPath)
 		if err := worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts); err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
