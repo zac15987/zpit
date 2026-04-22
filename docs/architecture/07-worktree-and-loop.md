@@ -57,6 +57,13 @@ Issue 進入 In Progress
     └─ 7. Issue → Done
 ```
 
+**Zpit 有兩層 worktree**（本節描述的是 **issue 層**）：
+
+- **Issue 層**（本節）：每個 Loop slot / issue 一個 worktree，由 `internal/worktree/Manager` 在 Go 端管理，掛在 `base_dir_*` 下。這是 coding agent / reviewer 的工作目錄。
+- **Teammate 層**（Task Execution Model）：`[P]` 平行批次時，orchestrator 在 issue worktree 內建立 child worktree — 路徑 `<issue-wt>/.zpit-children/<slug>`，由 `WorktreeCreate` hook（`hooks/worktree-create.sh`）管理，不走 Go Manager。Batch 結束後 orchestrator 自己 `git worktree remove --force` + `git branch -D`。`.zpit-children/` 是 zpit gitignore rule，所以永遠不會進 PR。詳見 `06-agents.md §6.3`。
+
+兩層互不干涉：issue worktree 的 lifecycle（建→ agent 工作 → PR merge → 清理）在 Go 層；teammate worktree 的 lifecycle 在 coding agent 的 prompt 層（hook 建、orchestrator 清）。
+
 ---
 
 ## 7.3 Worktree Config
