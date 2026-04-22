@@ -101,14 +101,14 @@ func TestLoad(t *testing.T) {
 	if cfg.AgentModels.Clarifier != "opus[1m]" {
 		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, "opus[1m]")
 	}
-	if cfg.AgentModels.Coding != "sonnet[1m]" {
-		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, "sonnet[1m]")
+	if cfg.AgentModels.Coding != "opus[1m]" {
+		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, "opus[1m]")
 	}
-	if cfg.AgentModels.Reviewer != "sonnet[1m]" {
-		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "sonnet[1m]")
+	if cfg.AgentModels.Reviewer != "opus[1m]" {
+		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "opus[1m]")
 	}
-	if cfg.AgentModels.TaskRunner != "sonnet[1m]" {
-		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "sonnet[1m]")
+	if cfg.AgentModels.TaskRunner != "opus[1m]" {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "opus[1m]")
 	}
 	if cfg.AgentModels.Efficiency != "opus[1m]" {
 		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, "opus[1m]")

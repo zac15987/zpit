@@ -29,9 +29,9 @@ const (
 	defaultSSHAuthorizedKeysPath = "~/.ssh/authorized_keys"
 
 	defaultClarifierModel  = "opus[1m]"
-	defaultCodingModel     = "sonnet[1m]"
-	defaultReviewerModel   = "sonnet[1m]"
-	defaultTaskRunnerModel = "sonnet[1m]"
+	defaultCodingModel     = "opus[1m]"
+	defaultReviewerModel   = "opus[1m]"
+	defaultTaskRunnerModel = "opus[1m]"
 	defaultEfficiencyModel = "opus[1m]"
 )
 
@@ -190,9 +190,9 @@ max_per_project = 5
 # Pin to a full ID if you need cross-provider consistency.
 [agent_models]
 clarifier = "opus[1m]"      # requirement clarification — deepest reasoning (1M context)
-coding = "sonnet[1m]"       # feature implementation (1M context)
-reviewer = "sonnet[1m]"     # PR review (1M context)
-task_runner = "sonnet[1m]"  # advisory only — task-runner subagents inherit the coding session's model
+coding = "opus[1m]"         # feature implementation (1M context)
+reviewer = "opus[1m]"       # PR review (1M context)
+task_runner = "opus[1m]"    # advisory only — task-runner subagents inherit the coding session's model
 efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
 
 # --- SSH Server (zpit serve) ---

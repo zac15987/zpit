@@ -43,9 +43,9 @@ pr_poll_seconds = 10
 # Pin to a full ID (e.g. claude-opus-4-7[1m]) if you need cross-provider consistency.
 [agent_models]
 clarifier = "opus[1m]"
-coding = "sonnet[1m]"
-reviewer = "sonnet[1m]"
-task_runner = "sonnet[1m]"
+coding = "opus[1m]"
+reviewer = "opus[1m]"
+task_runner = "opus[1m]"
 efficiency = "opus[1m]"
 
 [providers.tracker.forgejo-leyu]

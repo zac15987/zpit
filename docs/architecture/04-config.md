@@ -53,9 +53,9 @@ pr_poll_seconds = 10          # PR/label 狀態 polling 間隔（秒）
 # 詳見 §6.7。
 [agent_models]
 clarifier = "opus[1m]"      # 需求澄清 — 最深層推理（1M context）
-coding = "sonnet[1m]"       # 功能實作（1M context）
-reviewer = "sonnet[1m]"     # PR review（1M context）
-task_runner = "sonnet[1m]"  # advisory — 由 coding session 繼承
+coding = "opus[1m]"         # 功能實作（1M context）
+reviewer = "opus[1m]"       # PR review（1M context）
+task_runner = "opus[1m]"    # advisory — 由 coding session 繼承
 efficiency = "opus[1m]"     # 效能檢視 agent（[f] 啟動）— 深層推理
 
 # ──────────────────────────────────────────────
