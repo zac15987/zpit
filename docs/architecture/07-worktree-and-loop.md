@@ -53,6 +53,7 @@ Issue 進入 In Progress
     ├─ 6. PR merge 後清理
     │     git worktree remove <worktree-path>
     │     git branch -d feat/ISSUE-ID-slug
+    │     git fetch origin <base>:<base>  （更新主目錄本地 base branch ref）
     │
     └─ 7. Issue → Done
 ```
@@ -140,6 +141,8 @@ TUI 按 [l]
 │  │    └─ label 未變 → 繼續輪詢                            │
 │  │                                                        │
 │  │ 9. 偵測 PR merged → 清理 worktree + branch             │
+│  │    + 同步本地 base branch（git fetch origin <base>:<base>）│
+│  │    失敗時 log warning，不中斷 issue 關閉流程             │
 │  │                                                        │
 │  │ 10. 回到步驟 1 抓下一個 issue                          │
 │  │                                                        │
@@ -167,7 +170,7 @@ SlotReviewing           reviewer 工作中（poll labels 等待 "ai-review" 或 
        ↓                           ↓
 SlotWaitingPRMerge      SlotCoding (needs-changes → 重跑，round++)
        ↓
-SlotCleaningUp          清理 worktree + branch
+SlotCleaningUp          清理 worktree + branch + 同步本地 base branch ref
        ↓
 SlotDone                完成
 

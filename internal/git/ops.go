@@ -42,6 +42,14 @@ func Pull(ctx context.Context, cwd string) (stdout, stderr string, err error) {
 	return runGitSeparate(ctx, cwd, "pull", "--ff-only")
 }
 
+// FetchBranch runs `git fetch origin <branch>:<branch>` in cwd.
+// This updates the local branch ref to match the remote without touching the working tree.
+// Returns stdout, stderr, and any error from git.
+func FetchBranch(ctx context.Context, cwd, branch string) (stdout, stderr string, err error) {
+	refspec := branch + ":" + branch
+	return runGitSeparate(ctx, cwd, "fetch", "origin", refspec)
+}
+
 // LogGraph runs `git log --graph --oneline --all --decorate --color=always -n 50`.
 // Returns the raw (ANSI-colored) stdout. If stderr contains "does not have any commits yet"
 // or exit code indicates no commits, return ("", nil) so the caller can render a sentinel.

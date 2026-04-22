@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/zac15987/zpit/internal/git"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
@@ -620,6 +621,7 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	wtPath := slot.WorktreePath
+	baseBranch := slot.BaseBranch
 	m.state.RUnlock()
 
 	mgr := m.state.wtManager
@@ -633,6 +635,21 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 		removeErr := mgr.Remove(projectPath, wtPath, true)
 		if removeErr != nil {
 			logger.Printf("loop: worktree remove failed #%s: %v (will still close issue)", issueID, removeErr)
+		}
+
+		// Sync the main project directory's local base branch ref.
+		// Use a separate 15-second timeout so a slow fetch does not eat into CloseIssue budget.
+		// fetchCancel is called explicitly (not deferred) so the context is released immediately
+		// after FetchBranch returns, rather than lingering through CloseIssue.
+		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_, _, fetchErr := git.FetchBranch(fetchCtx, projectPath, baseBranch)
+		fetchCancel()
+		if fetchErr != nil {
+			logger.Printf("loop: base branch sync failed project=%s issue=#%s branch=%s: %v",
+				projectID, issueID, baseBranch, fetchErr)
+		} else {
+			logger.Printf("loop: synced base branch project=%s issue=#%s branch=%s",
+				projectID, issueID, baseBranch)
 		}
 
 		// Always close the issue regardless of worktree removal result.

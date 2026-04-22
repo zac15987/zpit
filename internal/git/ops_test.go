@@ -1,9 +1,84 @@
 package git
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+// skipIfNoGit skips the test if git is not available in PATH.
+func skipIfNoGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not in PATH")
+	}
+}
+
+// initFetchTestRepo creates a local repo backed by a bare remote suitable for FetchBranch tests.
+// Returns (localRepoPath, bareRemotePath). The local repo has "origin" pointing to the bare
+// remote with a "dev" branch and one initial commit already pushed and in sync.
+func initFetchTestRepo(t *testing.T) (localDir, bareDir string) {
+	t.Helper()
+
+	// Create bare repo as origin.
+	bareDir = t.TempDir()
+	{
+		cmd := exec.Command("git", "init", "--bare")
+		cmd.Dir = bareDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bare repo init: %s: %v", out, err)
+		}
+	}
+
+	// Clone bare repo to create local.
+	localDir = filepath.Join(t.TempDir(), "local")
+	{
+		cmd := exec.Command("git", "clone", bareDir, localDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("clone: %s: %v", out, err)
+		}
+	}
+
+	// Configure user in local.
+	for _, args := range [][]string{
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = localDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	// Create dev branch with initial commit and push.
+	// Then create and check out a separate "main" branch so that "dev" is a local
+	// branch but not currently checked out — git refuses to update a checked-out
+	// branch via `fetch origin dev:dev`, so the test must run with HEAD elsewhere.
+	if err := os.WriteFile(filepath.Join(localDir, "README.md"), []byte("# test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "checkout", "-b", "dev"},
+		{"git", "add", "README.md"},
+		{"git", "commit", "-m", "initial"},
+		{"git", "push", "-u", "origin", "dev"},
+		// Leave HEAD on a separate branch so "dev" is not checked out.
+		{"git", "checkout", "-b", "main"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = localDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	return localDir, bareDir
+}
 
 func TestParseLocalBranches(t *testing.T) {
 	tests := []struct {
@@ -253,4 +328,157 @@ func TestParseAheadBehind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// gitRevParse runs `git rev-parse <ref>` in dir and returns the trimmed SHA.
+func gitRevParse(t *testing.T, dir, ref string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", ref)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse %s in %s: %v", ref, dir, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestFetchBranch(t *testing.T) {
+	skipIfNoGit(t)
+
+	t.Run("fast-forward: remote has new commit, local ref advances to match origin/dev", func(t *testing.T) {
+		localDir, bareDir := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		// Clone bare repo into a second working copy and push a new commit to origin/dev.
+		otherDir := filepath.Join(t.TempDir(), "other")
+		{
+			cmd := exec.Command("git", "clone", bareDir, otherDir)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("clone other: %s: %v", out, err)
+			}
+		}
+		for _, args := range [][]string{
+			{"git", "config", "user.email", "other@test.com"},
+			{"git", "config", "user.name", "Other"},
+			{"git", "checkout", "dev"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = otherDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("other git %v: %s: %v", args[1:], out, err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(otherDir, "new-feature.txt"), []byte("new work"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"git", "add", "new-feature.txt"},
+			{"git", "commit", "-m", "add new feature after merge"},
+			{"git", "push", "origin", "dev"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = otherDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("other git %v: %s: %v", args[1:], out, err)
+			}
+		}
+
+		// Local repo has not fetched yet — FetchBranch should update the local dev ref.
+		stdout, stderr, err := FetchBranch(ctx, localDir, "dev")
+		if err != nil {
+			t.Fatalf("FetchBranch returned error: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+		}
+
+		// Verify local dev ref now matches origin/dev exactly.
+		devSHA := gitRevParse(t, localDir, "dev")
+		originDevSHA := gitRevParse(t, localDir, "origin/dev")
+		if devSHA != originDevSHA {
+			t.Errorf("after fetch: dev=%s != origin/dev=%s", devSHA, originDevSHA)
+		}
+	})
+
+	t.Run("no new commits: remote and local are in sync, returns nil error", func(t *testing.T) {
+		localDir, _ := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		// Local and remote are already in sync after initFetchTestRepo.
+		_, _, err := FetchBranch(ctx, localDir, "dev")
+		if err != nil {
+			t.Fatalf("FetchBranch returned error on already-synced branch: %v", err)
+		}
+	})
+
+	t.Run("diverged: local dev has commit not in remote, returns non-nil error and leaves ref unchanged", func(t *testing.T) {
+		localDir, _ := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		// Create a local commit on dev that is not pushed to the bare remote.
+		for _, args := range [][]string{
+			{"git", "checkout", "dev"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = localDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %s: %v", args[1:], out, err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(localDir, "local-only.txt"), []byte("local work"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"git", "add", "local-only.txt"},
+			{"git", "commit", "-m", "diverge: local-only commit"},
+			// Return to main so dev is not checked out during FetchBranch.
+			{"git", "checkout", "main"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = localDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %s: %v", args[1:], out, err)
+			}
+		}
+
+		// Capture local dev SHA before the (expected-to-fail) fetch.
+		beforeSHA := gitRevParse(t, localDir, "dev")
+
+		// FetchBranch must return non-nil err: git refuses a non-fast-forward update.
+		_, _, fetchErr := FetchBranch(ctx, localDir, "dev")
+		if fetchErr == nil {
+			t.Fatal("FetchBranch expected non-nil error on diverged branch, got nil")
+		}
+
+		// Local dev ref must remain unchanged after the rejection.
+		afterSHA := gitRevParse(t, localDir, "dev")
+		if afterSHA != beforeSHA {
+			t.Errorf("local dev ref changed after rejected fetch: before=%s after=%s", beforeSHA, afterSHA)
+		}
+	})
+
+	t.Run("head-on-branch: dev is currently checked out, propagates git exit status", func(t *testing.T) {
+		localDir, _ := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		// Check out dev so HEAD points at it; git refuses to update a checked-out branch.
+		checkoutCmd := exec.Command("git", "checkout", "dev")
+		checkoutCmd.Dir = localDir
+		if out, err := checkoutCmd.CombinedOutput(); err != nil {
+			t.Fatalf("git checkout dev: %s: %v", out, err)
+		}
+
+		// FetchBranch must propagate git's non-zero exit: no panic, err != nil.
+		stdout, stderr, err := FetchBranch(ctx, localDir, "dev")
+		if err == nil {
+			t.Fatalf("FetchBranch expected non-nil error when dev is checked out, got nil (stdout=%q stderr=%q)", stdout, stderr)
+		}
+	})
+
+	t.Run("branch does not exist on remote: returns non-nil error", func(t *testing.T) {
+		localDir, _ := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		_, _, err := FetchBranch(ctx, localDir, "nonexistent-branch")
+		if err == nil {
+			t.Fatal("FetchBranch expected non-nil error for nonexistent remote branch, got nil")
+		}
+	})
 }
