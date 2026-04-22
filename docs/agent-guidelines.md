@@ -11,7 +11,7 @@ Allowed:
 - `git status` / `git diff` / `git log`
 - `git push` to your `feat/*` branch (needed to open PRs)
 
-When running as a parallel `[P]` teammate, the orchestrator spawns you through Claude Code's `isolation: "worktree"` mechanism, so you already have your own child worktree on your own branch. Just `git add -- <your-scoped-files>` + `git commit` normally; the orchestrator will cherry-pick your branch back onto the parent branch and remove your worktree after the batch. You do NOT need to `git push`, `git worktree remove`, or `git branch -D` yourself.
+When running as a parallel `[P]` teammate, the orchestrator spawns you through Claude Code's `isolation: "worktree"` mechanism, so you already have your own child worktree on your own branch. **Never `cd` out of your CWD** — it is the child worktree, and leaving it lands you in the shared parent worktree which defeats the isolation and produces silent data loss (orchestrator sees empty teammate branches, the post-batch sanity check aborts the whole batch, and any `git cherry-pick --skip` would drop your work — see docs/known-issues.md §6). On startup run `git status`; the reported branch should end in `-agent-<hex>`. Then just `git add -- <your-scoped-files>` + `git commit` normally; the orchestrator will cherry-pick your branch back onto the parent branch and remove your worktree after the batch. You do NOT need to `git push`, `git worktree remove`, or `git branch -D` yourself.
 
 Forbidden:
 - Force push (`--force`, `-f`)

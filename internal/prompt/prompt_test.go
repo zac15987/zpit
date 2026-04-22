@@ -383,6 +383,16 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		// Branch discovery via git — Claude Code's WorktreeCreate hook path
 		// does not populate worktreeBranch (see docs/known-issues.md §3).
 		"rev-parse --abbrev-ref HEAD",
+		// Teammate-cd sanity check — PARENT_HEAD snapshot + tip comparison +
+		// ABORT on empty teammate branches (see docs/known-issues.md §6).
+		"PARENT_HEAD=$(git rev-parse HEAD)",
+		"if [ \"$tip\" = \"$PARENT_HEAD\" ]",
+		"ABORT: teammate branch",
+		// Explicit ban on --skip — stops the silent drop-teammate-commit path.
+		"Do NOT run `git cherry-pick --skip`",
+		// Orchestrator-prompt warning against embedding parent worktree paths
+		// in teammate spawn prompts (the most likely trigger for the cd bug).
+		"do NOT embed worktree paths",
 	}
 	for _, c := range mustContain {
 		if !strings.Contains(result, c) {
@@ -432,6 +442,21 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 	if revParseIdx == -1 || revParseIdx >= cherryIdx {
 		t.Errorf("rev-parse branch discovery must appear before cherry-pick (revParseIdx=%d, cherryIdx=%d)", revParseIdx, cherryIdx)
 	}
+
+	// PARENT_HEAD capture must precede the sanity-check guard, which must
+	// precede cherry-pick. The guard is what catches teammates that cd-ed
+	// out of their child worktree (known-issues §6).
+	parentHeadIdx := strings.Index(result, "PARENT_HEAD=$(git rev-parse HEAD)")
+	guardIdx := strings.Index(result, "if [ \"$tip\" = \"$PARENT_HEAD\" ]")
+	if parentHeadIdx == -1 || guardIdx == -1 {
+		t.Errorf("PARENT_HEAD snapshot + guard must both be present (parentHeadIdx=%d, guardIdx=%d)", parentHeadIdx, guardIdx)
+	}
+	if parentHeadIdx >= guardIdx {
+		t.Errorf("PARENT_HEAD snapshot must precede the sanity-check guard (parentHeadIdx=%d, guardIdx=%d)", parentHeadIdx, guardIdx)
+	}
+	if guardIdx >= cherryIdx {
+		t.Errorf("sanity-check guard must precede cherry-pick (guardIdx=%d, cherryIdx=%d)", guardIdx, cherryIdx)
+	}
 }
 
 // TestBuildCodingPrompt_ParallelBatchIntegration asserts every [P] group gets its
@@ -476,6 +501,20 @@ func TestBuildCodingPrompt_ParallelBatchIntegration(t *testing.T) {
 	// spec bugs (two [P] tasks sharing a file) instead of retrying blindly.
 	if !strings.Contains(result, "git cherry-pick --abort") {
 		t.Error("batch-integration block must name `git cherry-pick --abort` for the conflict path")
+	}
+
+	// Each parallel group must capture its own PARENT_HEAD snapshot — HEAD
+	// advances between groups (via the sequential bridge task T3), so a
+	// single snapshot would be wrong for the second group (known-issues §6).
+	parentHeadCount := strings.Count(result, "PARENT_HEAD=$(git rev-parse HEAD)")
+	if parentHeadCount < 2 {
+		t.Errorf("expected >=2 PARENT_HEAD snapshot instructions (one per parallel group), got %d", parentHeadCount)
+	}
+
+	// Each parallel group must emit the sanity-check guard.
+	guardCount := strings.Count(result, "if [ \"$tip\" = \"$PARENT_HEAD\" ]")
+	if guardCount < 2 {
+		t.Errorf("expected >=2 sanity-check guards (one per parallel group), got %d", guardCount)
 	}
 }
 

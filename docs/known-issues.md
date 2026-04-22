@@ -269,3 +269,44 @@ Commit `202a0f3` gitignored `.claude/settings.json` (closing a fresh-clone bug) 
 - `internal/tui/launch.go`, `internal/tui/loop_cmds.go` — remove the four `EnsureGitattributes` call sites.
 
 `.claude/settings.json` itself remains in `zpitIgnoreRules` — that's the invariant from `202a0f3`. Users with stale `.gitattributes` / `.gitignore` entries in existing projects can clean them manually; zpit does not retroactively edit user-owned files.
+
+---
+
+## 6. Silent data loss via teammate `cd` + `cherry-pick --skip`
+
+### Symptom
+
+During a `[P]` batch integration, the orchestrator's cherry-pick fails with `error: The previous cherry-pick is now empty, possibly due to conflict resolution.` The orchestrator runs `git cherry-pick --skip` to "recover" and proceeds. On post-run inspection:
+
+- `git branch -D <teammate-branch>` reports `was <parent-pre-batch-HEAD>` for every teammate (not a teammate commit SHA) — the teammate branches never advanced.
+- All task commits are somehow on the parent branch anyway, with the correct files.
+
+### Root Cause
+
+`task-runner` subagents spawned with `isolation: "worktree"` ignored the CWD that Claude Code set for them (the child worktree at `.zpit-children/<slug>`) and manually `cd`-ed to the parent worktree's path. Most likely trigger: the orchestrator mentioned the parent worktree path in the teammate's spawn prompt as "project root" context, and the teammate naively `cd`-ed there.
+
+All git commands then operated on the shared parent worktree's index:
+
+- Commits landed directly on the parent branch (visible in the final PR — "it looks like it worked").
+- The designated child-worktree branches stayed at the pre-batch parent HEAD.
+- Cherry-picking an empty branch produced the "empty commit" error (because the parent branch already contained the content, via the teammate's direct commit).
+- `git cherry-pick --skip` silenced the signal and the orchestrator moved on.
+
+The per-teammate worktree isolation — which exists to prevent index/ref races between parallel teammates (see §2 for the three iterations of the retired Parallel Commit Protocol it replaced) — was completely defeated. In issue #99 the files happened to be present (teammates committed them to the parent directly, so the final PR was correct). **In a future run where teammates actually use their worktrees but one `cd`s out, `--skip` would silently drop that teammate's work.** This is why the architectural fix below is required, not "run it again and hope".
+
+### Fix (2026-04-22)
+
+Four layers:
+
+1. **Detection (prompt)**: `internal/prompt/coding.go` `buildTaskWorkflow` now emits a `PARENT_HEAD=$(git rev-parse HEAD)` snapshot instruction before dispatching any `[P]` batch, and the post-batch loop (previously just `git -C <path> rev-parse --abbrev-ref HEAD`) now additionally runs `git -C <path> rev-parse HEAD` and compares the tip against `$PARENT_HEAD`. Any teammate branch still at `$PARENT_HEAD` aborts the batch with a visible `ABORT: teammate branch ... still points at PARENT_HEAD ...` error. The prompt also explicitly forbids `git cherry-pick --skip` — if the sanity check passes, any later "empty commit" error means something is genuinely wrong and must be surfaced, not skipped.
+2. **Prevention (task-runner)**: `agents/task-runner.md` gains a `## Working Directory` section immediately after `## Startup`, forbidding `cd` out of the spawned CWD, with a `git status` self-check recipe (branch name must end in `-agent-<hex>`).
+3. **Prevention (agent-guidelines)**: `docs/agent-guidelines.md`'s `[P]` teammate bullet now includes the `cd` ban, the `git status` self-check, and the data-loss rationale.
+4. **Prevention (orchestrator prompt)**: `buildTeamDelegation` warns the orchestrator not to embed worktree paths, absolute paths, or `cd` instructions in the teammate's spawn `prompt` argument — the most likely trigger for the `cd` behavior.
+
+### Evidence
+
+Issue #99 smoke test (2026-04-22, PR #100 — NOT reverted, files landed correctly by accident because teammates committed them to the parent directly):
+
+- Session log: `C:/Users/Peanut/.claude/projects/D--Documents--worktrees-zpit-99--loop-sync-local-base-branch-after-pr-mer/daffd87e-fb24-4720-aab9-e6513c774b96.jsonl`
+- Both T1 and T2 teammates ran `cd "D:\Documents\.worktrees\zpit\99--..."` as their first Bash command. Commits landed on the parent branch immediately (`522d2f6` for T1, `b170506` for T2). Teammate branches remained empty at `b35f0d2`. Orchestrator's cherry-pick produced `You are currently cherry-picking commit b35f0d2` and `The previous cherry-pick is now empty` — `b35f0d2` was the pre-batch parent HEAD. Orchestrator then ran `git cherry-pick --skip`.
+- Contrast: issue #3 smoke test (2026-04-22 earlier, PR #4) where teammate branches correctly advanced past parent HEAD (`git branch -D` reported `was 24b81e4` / `was 87c6aa0`). Same prompt version, different orchestrator behavior — the `cd` trigger is non-deterministic and depends on what the orchestrator happens to write in the teammate's spawn prompt. Reinforces why the architectural fix (Layer 1 sanity check) is required, not just prompt guidance.
