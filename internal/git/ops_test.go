@@ -330,10 +330,22 @@ func TestParseAheadBehind(t *testing.T) {
 	}
 }
 
+// gitRevParse runs `git rev-parse <ref>` in dir and returns the trimmed SHA.
+func gitRevParse(t *testing.T, dir, ref string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", ref)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse %s in %s: %v", ref, dir, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func TestFetchBranch(t *testing.T) {
 	skipIfNoGit(t)
 
-	t.Run("success: remote has new commit, local ref is updated", func(t *testing.T) {
+	t.Run("fast-forward: remote has new commit, local ref advances to match origin/dev", func(t *testing.T) {
 		localDir, bareDir := initFetchTestRepo(t)
 		ctx := context.Background()
 
@@ -377,15 +389,11 @@ func TestFetchBranch(t *testing.T) {
 			t.Fatalf("FetchBranch returned error: %v (stdout=%q stderr=%q)", err, stdout, stderr)
 		}
 
-		// Verify the new commit appears in the local dev ref.
-		cmd := exec.Command("git", "log", "--oneline", "-1", "dev")
-		cmd.Dir = localDir
-		out, logErr := cmd.CombinedOutput()
-		if logErr != nil {
-			t.Fatalf("git log dev: %s: %v", out, logErr)
-		}
-		if !strings.Contains(string(out), "add new feature after merge") {
-			t.Errorf("local dev log = %q, expected to contain %q", string(out), "add new feature after merge")
+		// Verify local dev ref now matches origin/dev exactly.
+		devSHA := gitRevParse(t, localDir, "dev")
+		originDevSHA := gitRevParse(t, localDir, "origin/dev")
+		if devSHA != originDevSHA {
+			t.Errorf("after fetch: dev=%s != origin/dev=%s", devSHA, originDevSHA)
 		}
 	})
 
@@ -397,6 +405,70 @@ func TestFetchBranch(t *testing.T) {
 		_, _, err := FetchBranch(ctx, localDir, "dev")
 		if err != nil {
 			t.Fatalf("FetchBranch returned error on already-synced branch: %v", err)
+		}
+	})
+
+	t.Run("diverged: local dev has commit not in remote, returns non-nil error and leaves ref unchanged", func(t *testing.T) {
+		localDir, _ := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		// Create a local commit on dev that is not pushed to the bare remote.
+		for _, args := range [][]string{
+			{"git", "checkout", "dev"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = localDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %s: %v", args[1:], out, err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(localDir, "local-only.txt"), []byte("local work"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"git", "add", "local-only.txt"},
+			{"git", "commit", "-m", "diverge: local-only commit"},
+			// Return to main so dev is not checked out during FetchBranch.
+			{"git", "checkout", "main"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = localDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %s: %v", args[1:], out, err)
+			}
+		}
+
+		// Capture local dev SHA before the (expected-to-fail) fetch.
+		beforeSHA := gitRevParse(t, localDir, "dev")
+
+		// FetchBranch must return non-nil err: git refuses a non-fast-forward update.
+		_, _, fetchErr := FetchBranch(ctx, localDir, "dev")
+		if fetchErr == nil {
+			t.Fatal("FetchBranch expected non-nil error on diverged branch, got nil")
+		}
+
+		// Local dev ref must remain unchanged after the rejection.
+		afterSHA := gitRevParse(t, localDir, "dev")
+		if afterSHA != beforeSHA {
+			t.Errorf("local dev ref changed after rejected fetch: before=%s after=%s", beforeSHA, afterSHA)
+		}
+	})
+
+	t.Run("head-on-branch: dev is currently checked out, propagates git exit status", func(t *testing.T) {
+		localDir, _ := initFetchTestRepo(t)
+		ctx := context.Background()
+
+		// Check out dev so HEAD points at it; git refuses to update a checked-out branch.
+		checkoutCmd := exec.Command("git", "checkout", "dev")
+		checkoutCmd.Dir = localDir
+		if out, err := checkoutCmd.CombinedOutput(); err != nil {
+			t.Fatalf("git checkout dev: %s: %v", out, err)
+		}
+
+		// FetchBranch must propagate git's non-zero exit: no panic, err != nil.
+		stdout, stderr, err := FetchBranch(ctx, localDir, "dev")
+		if err == nil {
+			t.Fatalf("FetchBranch expected non-nil error when dev is checked out, got nil (stdout=%q stderr=%q)", stdout, stderr)
 		}
 	})
 
