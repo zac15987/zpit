@@ -636,9 +636,6 @@ func (m Model) renderTerminalsBody(innerWidth int) (string, []int) {
 		elapsed := formatElapsed(time.Since(at.StateChangedAt))
 
 		displayName := m.projectName(projectID)
-		if at.WorktreeBranch != "" {
-			displayName += " 🌿" + at.WorktreeBranch
-		}
 
 		selMarker := " "
 		if i == m.termCursor {
@@ -655,6 +652,13 @@ func (m Model) renderTerminalsBody(innerWidth int) (string, []int) {
 			detailStyle.Render(elapsed),
 		))
 		line++
+
+		if at.WorktreeBranch != "" {
+			b.WriteString(fmt.Sprintf("      %s\n",
+				detailStyle.Render("🌿 "+at.WorktreeBranch),
+			))
+			line++
+		}
 
 		// Context preview (question or permission message).
 		if pfx, text := agentContextPreview(at, statusIcon); text != "" {
@@ -794,9 +798,13 @@ func (m Model) renderLoopBody(innerWidth int) (string, []int) {
 				titleText = selectedStyle.Render(titleText)
 			}
 
-			b.WriteString(fmt.Sprintf("%s%s #%s %s  %s\n",
+			b.WriteString(fmt.Sprintf("%s%s #%s %s\n",
 				prefix, icon, slot.IssueID,
 				titleText,
+			))
+			line++
+
+			b.WriteString(fmt.Sprintf("      %s\n",
 				detailStyle.Render(stateText),
 			))
 			line++
