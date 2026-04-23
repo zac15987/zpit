@@ -123,6 +123,8 @@ type ProjectConfig struct {
 	ChannelListen  []string          `toml:"channel_listen"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
+	AutoMerge      bool              `toml:"auto_merge"`
+	MergeMethod    string            `toml:"merge_method"`
 }
 
 type ProjectPathConfig struct {
@@ -230,6 +232,10 @@ efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reas
 # base_branch = "dev"
 # channel_enabled = false  # enable cross-agent channel communication
 # tags = ["go"]
+# auto_merge: when true, Zpit calls the tracker's merge API after ai-review; default false.
+# auto_merge = false
+# merge_method: one of "squash" | "merge" | "rebase"; default "squash" when auto_merge=true.
+# merge_method = "squash"
 #
 # [projects.path]
 # windows = "D:/Projects/my-project"
@@ -360,8 +366,8 @@ func projectsChannelEqual(a, b []ProjectConfig) bool {
 	return true
 }
 
-// projectsMetaEqual checks if hook_mode, base_branch, and log_policy are
-// identical across matching projects.
+// projectsMetaEqual checks if hook_mode, base_branch, log_policy, auto_merge,
+// and merge_method are identical across matching projects.
 func projectsMetaEqual(a, b []ProjectConfig) bool {
 	am := projectMap(a)
 	bm := projectMap(b)
@@ -372,7 +378,9 @@ func projectsMetaEqual(a, b []ProjectConfig) bool {
 		}
 		if ap.HookMode != bp.HookMode ||
 			ap.BaseBranch != bp.BaseBranch ||
-			ap.LogPolicy != bp.LogPolicy {
+			ap.LogPolicy != bp.LogPolicy ||
+			ap.AutoMerge != bp.AutoMerge ||
+			ap.MergeMethod != bp.MergeMethod {
 			return false
 		}
 	}
@@ -512,6 +520,9 @@ func applyDefaults(cfg *Config) {
 		}
 		if cfg.Projects[i].LogPolicy == "" {
 			cfg.Projects[i].LogPolicy = "standard"
+		}
+		if cfg.Projects[i].AutoMerge && cfg.Projects[i].MergeMethod == "" {
+			cfg.Projects[i].MergeMethod = "squash"
 		}
 	}
 }

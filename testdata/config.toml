@@ -140,6 +140,8 @@ repo = "zac15987/zpit"
 shared_core = false
 log_policy = "standard"
 base_branch = "dev"
+auto_merge = true
+merge_method = "squash"
 channel_enabled = true
 # channel_listen: subscribe to other projects' SSE streams for cross-project communication.
 # "_global" receives global broadcasts; specific project IDs (e.g. "ase-inspection") receive that project's events.
