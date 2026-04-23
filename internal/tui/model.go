@@ -214,7 +214,7 @@ func NewModel(appState *AppState) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tickCmd(), m.waitForStateRefresh()}
+	cmds := []tea.Cmd{tickCmd(), m.waitForStateRefresh(), tea.SetWindowTitle("Zpit")}
 
 	// SSH remote sessions skip server-init (session scan, .gitignore, provider check).
 	// These are run once at zpit serve startup via RunServerInit.

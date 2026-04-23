@@ -98,6 +98,16 @@ func main() {
 	}
 }
 
+// saveTabTitle pushes the current terminal tab title onto xterm's title stack
+// and returns a closure that pops it back. No-op on terminals without
+// title-stack support. Safe to defer.
+func saveTabTitle() func() {
+	_, _ = os.Stdout.WriteString("\x1b[22;0t")
+	return func() {
+		_, _ = os.Stdout.WriteString("\x1b[23;0t")
+	}
+}
+
 // runLocalTUI runs the local interactive TUI, or auto-serve mode if configured.
 func runLocalTUI() {
 	cfg, logFile := loadConfigAndLog()
@@ -116,6 +126,9 @@ func runLocalTUI() {
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
+
+	restoreTitle := saveTabTitle()
+	defer restoreTitle()
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
@@ -243,6 +256,9 @@ func runAutoServe(cfg *config.Config, logFile *os.File) {
 		case <-done:
 		}
 	}()
+
+	restoreTitle := saveTabTitle()
+	defer restoreTitle()
 
 	// Run SSH client (blocks until disconnect).
 	clientErr := cmd.Run()
