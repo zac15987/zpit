@@ -168,15 +168,18 @@ SlotLaunchingReviewer   啟動 reviewer agent 中
        ↓
 SlotReviewing           reviewer 工作中（poll labels 等待 "ai-review" 或 "needs-changes"）
        ↓                           ↓
-SlotWaitingPRMerge      SlotCoding (needs-changes → 重跑，round++)
-       ↓
-SlotCleaningUp          清理 worktree + branch + 同步本地 base branch ref
-       ↓
-SlotDone                完成
+  (ai-review fork)     SlotCoding (needs-changes → 重跑，round++)
+       │
+       ├─ auto_merge=false → SlotWaitingPRMerge   （poll PR 狀態等人工 merge）
+       └─ auto_merge=true  → SlotAutoMerging      （呼叫 tracker merge API）
+                                  ↓
+                            SlotCleaningUp       清理 worktree + branch + 同步本地 base branch ref
+                                  ↓
+                            SlotDone             完成
 
 異常狀態:
-SlotNeedsHuman          超過 max_review_rounds，需人工介入
-SlotError               流程中發生錯誤
+SlotNeedsHuman          超過 max_review_rounds，或 auto-merge 永久失敗/transient 重試用盡
+SlotError               流程中發生錯誤（含 auto-merge 的 auth 錯誤）
 ```
 
 狀態轉換是 **label 驅動**（poll issue labels，非 PID 監控）：
@@ -212,6 +215,27 @@ type Slot struct {
     LaunchedAt   int64     // unix timestamp
 }
 ```
+
+---
+
+### Auto-Merge 分支
+
+當專案的 `auto_merge = true`（per-project，預設 false），reviewer 設 `ai-review` label 後不進入 `SlotWaitingPRMerge`，改進入 `SlotAutoMerging`：由 Go 端直接呼叫 tracker 的 merge API。
+
+**重試策略（transient error）：**
+- 最多 3 次嘗試，backoff 1s / 4s / 16s。
+- Transient 分類：HTTP 5xx / 408 / 429、`context.DeadlineExceeded`、`net.Error.Timeout() == true`。
+- 每次嘗試使用獨立的 30 秒 context timeout。
+
+**Short-circuit（立刻跳出不重試）：**
+- Permanent：HTTP 409（衝突）/ 405（不允許）/ 422（不可合併）或 PR 回傳 state=`closed` 未 merge → 轉入 `SlotNeedsHuman`，保留 worktree 和 branch 供人工處理。
+- Auth：HTTP 401 / 403 → 轉入 `SlotError`，這是一次性的 config 問題（token 失效或權限不足），重試沒意義。
+
+**Commit title：** `[<IssueID>] <IssueTitle>`（使用 slot.IssueTitle，不再另外呼叫 API）。
+
+**Merge method：** 由 `project.merge_method` 決定（`squash` | `merge` | `rebase`），空值預設 `squash`。
+
+**安全考量：** merge API 由 Go 程式直接呼叫，不經過 `git-guard.sh` 的 push whitelist。這是刻意設計 — Layer 5 安全閘門從「人工審查」變成「AI reviewer PASS 判斷」，使用者須評估 reviewer model 的品質是否值得信任才啟用。詳見 `09-safety.md`。
 
 ---
 

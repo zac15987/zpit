@@ -479,6 +479,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoopAgentLaunched(msg)
 	case LoopPRStatusMsg:
 		return m.handleLoopPRStatus(msg)
+	case LoopAutoMergeMsg:
+		return m.handleLoopAutoMerge(msg)
 	case LoopCleanupMsg:
 		return m.handleLoopCleanup(msg)
 	case LoopOpenPRsMsg:

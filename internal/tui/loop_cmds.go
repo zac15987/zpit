@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -899,4 +901,184 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 
 		return LoopAgentWrittenMsg{ProjectID: projectID, IssueID: issueID}
 	}
+}
+
+// loopAutoMergeCmd attempts to merge the PR via the tracker's MergePR API.
+// Performs up to 3 attempts with exponential backoff (1s / 4s / 16s) on transient
+// errors. Classifies failures into transient_exhausted / permanent / auth.
+// Acquires RLock to read loops map, then releases before returning the Cmd closure.
+func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
+	project := m.findProject(projectID)
+	if project == nil {
+		return nil
+	}
+	client, ok := m.state.clients[project.Tracker]
+	if !ok {
+		return nil
+	}
+	m.state.RLock()
+	ls := m.state.loops[projectID]
+	if ls == nil {
+		m.state.RUnlock()
+		return nil
+	}
+	slot := ls.Slots[loop.SlotKey(projectID, issueID)]
+	if slot == nil {
+		m.state.RUnlock()
+		return nil
+	}
+	branch := slot.BranchName
+	issueTitle := slot.IssueTitle
+	m.state.RUnlock()
+
+	repo := project.Repo
+	method := project.MergeMethod
+	if method == "" {
+		method = "squash"
+	}
+	commitTitle := fmt.Sprintf("[%s] %s", issueID, issueTitle)
+	logger := m.state.logger
+
+	return func() tea.Msg {
+		// AC-17 entry log. Logged inside the closure so the timestamp matches
+		// the actual call (not the tea.Cmd creation time).
+		logger.Printf("loop: auto-merge start #%s method=%s", issueID, method)
+
+		// Resolve PR ID from branch name. Lookup failures are not retried —
+		// they escalate to the classified failure kind immediately.
+		lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		pr, err := client.FindPRByBranch(lookupCtx, repo, branch)
+		lookupCancel()
+		if err != nil {
+			kind := classifyMergeErr(err)
+			// A transient lookup failure is not retried here (retry policy
+			// only applies to the MergePR call). Escalate as permanent so
+			// the slot surfaces to the user instead of silently disappearing.
+			if kind == "transient" {
+				kind = "permanent"
+			}
+			switch kind {
+			case "auth":
+				logger.Printf("loop: auto-merge auth fail #%s: %v → error", issueID, err)
+			default:
+				logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
+			}
+			return LoopAutoMergeMsg{
+				ProjectID: projectID, IssueID: issueID,
+				Err: err, FailureKind: kind,
+			}
+		}
+		if pr == nil {
+			err := fmt.Errorf("no PR found for branch %s", branch)
+			logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
+			return LoopAutoMergeMsg{
+				ProjectID: projectID, IssueID: issueID,
+				Err: err, FailureKind: "permanent",
+			}
+		}
+		prID := pr.ID
+
+		const maxAttempts = 3
+		backoffs := []time.Duration{1 * time.Second, 4 * time.Second, 16 * time.Second}
+
+		var lastErr error
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			mergeCtx, mergeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			merged, err := client.MergePR(mergeCtx, repo, prID, method, commitTitle)
+			mergeCancel()
+
+			if err == nil {
+				// Defensive: if PR state is "closed" without merge, treat as permanent failure.
+				if merged != nil && merged.State == "closed" {
+					permErr := fmt.Errorf("PR closed without merge")
+					logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human",
+						issueID, permErr)
+					return LoopAutoMergeMsg{
+						ProjectID: projectID, IssueID: issueID,
+						PR:          merged,
+						Err:         permErr,
+						FailureKind: "permanent",
+					}
+				}
+				logger.Printf("loop: auto-merge success #%s → cleaning up", issueID)
+				return LoopAutoMergeMsg{
+					ProjectID: projectID, IssueID: issueID,
+					PR: merged,
+				}
+			}
+			lastErr = err
+			kind := classifyMergeErr(err)
+
+			if kind == "permanent" {
+				logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
+				return LoopAutoMergeMsg{
+					ProjectID: projectID, IssueID: issueID,
+					Err: err, FailureKind: "permanent",
+				}
+			}
+			if kind == "auth" {
+				logger.Printf("loop: auto-merge auth fail #%s: %v → error", issueID, err)
+				return LoopAutoMergeMsg{
+					ProjectID: projectID, IssueID: issueID,
+					Err: err, FailureKind: "auth",
+				}
+			}
+			// Transient: log retry marker and backoff (unless this was the
+			// last attempt — in which case the exhausted line fires after the loop).
+			logger.Printf("loop: auto-merge retry #%s attempt=%d/%d err=%v",
+				issueID, attempt, maxAttempts, err)
+			if attempt < maxAttempts {
+				time.Sleep(backoffs[attempt-1])
+			}
+		}
+		logger.Printf("loop: auto-merge exhausted %d retries #%s: %v → needs human",
+			maxAttempts, issueID, lastErr)
+		return LoopAutoMergeMsg{
+			ProjectID: projectID, IssueID: issueID,
+			Err: lastErr, FailureKind: "transient_exhausted",
+		}
+	}
+}
+
+// classifyMergeErr examines a merge error and classifies it as transient,
+// permanent, or auth. Per AC-10, transient is defined *exactly* as:
+//   - context.DeadlineExceeded
+//   - net.Error with Timeout() == true
+//   - HTTP 5xx / 408 / 429
+//
+// Anything else (parsing errors, malformed responses, unknown 4xx) is NOT
+// retryable and falls through to "permanent" so the slot escalates to
+// NeedsHuman immediately instead of wasting three retries on a bug.
+func classifyMergeErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "transient"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "transient"
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "status 409"),
+		strings.Contains(s, "status 405"),
+		strings.Contains(s, "status 422"):
+		return "permanent"
+	case strings.Contains(s, "status 401"),
+		strings.Contains(s, "status 403"):
+		return "auth"
+	case strings.Contains(s, "status 408"),
+		strings.Contains(s, "status 429"):
+		return "transient"
+	}
+	// 5xx detection: check for "status 5" followed by two digits.
+	for i := 500; i < 600; i++ {
+		if strings.Contains(s, fmt.Sprintf("status %d", i)) {
+			return "transient"
+		}
+	}
+	// Unknown error — not in the strict transient list; treat as permanent.
+	return "permanent"
 }

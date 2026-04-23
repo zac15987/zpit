@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -531,5 +532,273 @@ func TestForgejoAuthError(t *testing.T) {
 	_, err := client.ListIssues(context.Background(), "org/repo")
 	if err == nil {
 		t.Fatal("expected error for 401")
+	}
+}
+
+// --- MergePR tests ---
+
+// githubMergeServer builds a test server that handles the PUT merge call and
+// the follow-up GET PR re-fetch, asserting the body sent with PUT matches.
+func githubMergeServer(t *testing.T, wantMethod, wantCommitTitle string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PUT" && r.URL.Path == "/repos/owner/repo/pulls/42/merge":
+			var got struct {
+				MergeMethod string `json:"merge_method"`
+				CommitTitle string `json:"commit_title"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Errorf("unmarshal PUT body: %v", err)
+			}
+			if got.MergeMethod != wantMethod {
+				t.Errorf("merge_method = %q, want %q", got.MergeMethod, wantMethod)
+			}
+			if got.CommitTitle != wantCommitTitle {
+				t.Errorf("commit_title = %q, want %q", got.CommitTitle, wantCommitTitle)
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true,"sha":"abc"}`))
+		case r.Method == "GET" && r.URL.Path == "/repos/owner/repo/pulls/42":
+			json.NewEncoder(w).Encode(githubPR{
+				Number: 42, State: "closed", Merged: true,
+				HTMLURL: "https://github.com/owner/repo/pull/42",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+}
+
+func TestGitHubMergePR_Success_Squash(t *testing.T) {
+	ts := githubMergeServer(t, "squash", "[42] Test title")
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	pr, err := client.MergePR(context.Background(), "owner/repo", "42", "squash", "[42] Test title")
+	if err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+	if pr.URL != "https://github.com/owner/repo/pull/42" {
+		t.Errorf("URL = %q", pr.URL)
+	}
+	if pr.ID != "42" {
+		t.Errorf("ID = %q, want 42", pr.ID)
+	}
+}
+
+func TestGitHubMergePR_Success_Merge(t *testing.T) {
+	ts := githubMergeServer(t, "merge", "[42] Test title")
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	pr, err := client.MergePR(context.Background(), "owner/repo", "42", "merge", "[42] Test title")
+	if err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+	if pr.URL != "https://github.com/owner/repo/pull/42" {
+		t.Errorf("URL = %q", pr.URL)
+	}
+}
+
+func TestGitHubMergePR_Success_Rebase(t *testing.T) {
+	ts := githubMergeServer(t, "rebase", "[42] Test title")
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	pr, err := client.MergePR(context.Background(), "owner/repo", "42", "rebase", "[42] Test title")
+	if err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+}
+
+func TestGitHubMergePR_Conflict(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(409)
+		w.Write([]byte(`{"message":"merge conflict"}`))
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	_, err := client.MergePR(context.Background(), "owner/repo", "42", "squash", "[42] Test")
+	if err == nil {
+		t.Fatal("expected error for 409")
+	}
+	if !strings.Contains(err.Error(), "409") {
+		t.Errorf("error = %q, want to contain 409", err.Error())
+	}
+}
+
+func TestGitHubMergePR_AuthError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"message":"Forbidden"}`))
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	_, err := client.MergePR(context.Background(), "owner/repo", "42", "squash", "[42] Test")
+	if err == nil {
+		t.Fatal("expected error for 403")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error = %q, want to contain 403", err.Error())
+	}
+}
+
+func TestGitHubMergePR_InvalidMethod(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	client := &GitHubClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "Bearer", httpClient: ts.Client()}}
+	_, err := client.MergePR(context.Background(), "owner/repo", "42", "bogus", "title")
+	if err == nil {
+		t.Fatal("expected error for invalid method")
+	}
+	if calls != 0 {
+		t.Errorf("expected 0 HTTP calls for invalid method, got %d", calls)
+	}
+}
+
+// forgejoMergeServer handles only the POST merge call (empty-body 200
+// response), asserting the body sent with POST matches. Per AC-6 the client
+// does NOT re-fetch — any GET request here is a bug and fails the test.
+func forgejoMergeServer(t *testing.T, wantDo, wantMergeTitle string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v1/repos/org/repo/pulls/7/merge":
+			var got struct {
+				Do              string `json:"Do"`
+				MergeTitleField string `json:"MergeTitleField"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Errorf("unmarshal POST body: %v", err)
+			}
+			if got.Do != wantDo {
+				t.Errorf("Do = %q, want %q", got.Do, wantDo)
+			}
+			if got.MergeTitleField != wantMergeTitle {
+				t.Errorf("MergeTitleField = %q, want %q", got.MergeTitleField, wantMergeTitle)
+			}
+			// Forgejo returns HTTP 200 with empty body on success.
+			w.WriteHeader(200)
+		default:
+			t.Errorf("unexpected request (AC-6 forbids re-fetch): %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+}
+
+func TestForgejoMergePR_Success_Squash(t *testing.T) {
+	ts := forgejoMergeServer(t, "squash", "[7] Test")
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	pr, err := client.MergePR(context.Background(), "org/repo", "7", "squash", "[7] Test")
+	if err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+	// AC-6: no re-fetch, so URL is intentionally empty from MergePR.
+	if pr.URL != "" {
+		t.Errorf("URL = %q, want empty (no re-fetch)", pr.URL)
+	}
+	if pr.ID != "7" {
+		t.Errorf("ID = %q, want 7", pr.ID)
+	}
+}
+
+func TestForgejoMergePR_Success_Rebase(t *testing.T) {
+	ts := forgejoMergeServer(t, "rebase", "[7] Test")
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	pr, err := client.MergePR(context.Background(), "org/repo", "7", "rebase", "[7] Test")
+	if err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+}
+
+func TestForgejoMergePR_Conflict(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.WriteHeader(409)
+			w.Write([]byte(`{"message":"merge conflict"}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	_, err := client.MergePR(context.Background(), "org/repo", "7", "squash", "[7] Test")
+	if err == nil {
+		t.Fatal("expected error for 409")
+	}
+	if !strings.Contains(err.Error(), "409") {
+		t.Errorf("error = %q, want to contain 409", err.Error())
+	}
+}
+
+func TestForgejoMergePR_AuthError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.WriteHeader(403)
+			w.Write([]byte(`{"message":"Forbidden"}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	_, err := client.MergePR(context.Background(), "org/repo", "7", "squash", "[7] Test")
+	if err == nil {
+		t.Fatal("expected error for 403")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error = %q, want to contain 403", err.Error())
+	}
+}
+
+func TestForgejoMergePR_InvalidMethod(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	_, err := client.MergePR(context.Background(), "org/repo", "7", "bogus", "title")
+	if err == nil {
+		t.Fatal("expected error for invalid method")
+	}
+	if calls != 0 {
+		t.Errorf("expected 0 HTTP calls for invalid method, got %d", calls)
 	}
 }

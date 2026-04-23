@@ -41,6 +41,7 @@ var launchableSlotStates = map[loop.SlotState]bool{
 	loop.SlotCoding:         true,
 	loop.SlotReviewing:      true,
 	loop.SlotWaitingPRMerge: true,
+	loop.SlotAutoMerging:    true,
 	loop.SlotNeedsHuman:     true,
 	loop.SlotError:          true,
 }

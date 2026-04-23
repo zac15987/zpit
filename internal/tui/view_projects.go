@@ -771,6 +771,7 @@ func (m Model) renderLoopBody(innerWidth int) (string, []int) {
 			}
 
 			slot := ls.Slots[key]
+			// In-progress states (Coding/Reviewing/AutoMerging/etc.) fall through to the default iconWorking.
 			icon := iconWorking
 			switch slot.State {
 			case loop.SlotError:

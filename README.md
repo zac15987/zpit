@@ -157,7 +157,7 @@ base_dir_windows = "D:/worktrees"
 base_dir_wsl = "/mnt/d/worktrees"
 max_per_project = 5
 poll_seconds = 10           # todo issue polling interval
-pr_poll_seconds = 10        # PR merge polling interval
+pr_poll_seconds = 10        # PR merge polling interval (only used when auto_merge = false)
 max_review_rounds = 3       # auto-retry rounds before needs-human
 # dir_format = "{project_id}/{issue_id}--{slug}"
 # auto_cleanup = false
@@ -200,6 +200,8 @@ base_branch = "dev"
 # shared_core = false
 channel_enabled = false     # enable cross-agent channel communication
 channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
+# auto_merge = false      # when true, Zpit calls the tracker merge API after ai-review PASS (opt-in)
+# merge_method = "squash"  # squash | merge | rebase (used when auto_merge = true)
 tags = ["go"]
 
 [projects.path]
@@ -266,7 +268,7 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 | 2 | `--allowedTools` per agent role | Medium — Claude Code enforced |
 | 3 | PreToolUse hooks | Hard — enforced even with `--bypass-all-permissions` |
 | 4 | Git worktree isolation | Physical — agents can't touch main repo |
-| 5 | Human PR review | Final gate — nothing merges without you |
+| 5 | Final merge gate (conditional) | When `auto_merge = false` (default): human PR review is the final gate. When `auto_merge = true`: the AI reviewer's `ai-review` PASS label replaces the human gate and triggers the tracker's merge API. Only enable `auto_merge` when you trust the reviewer model quality on your repo. |
 
 **PreToolUse hooks:**
 - `path-guard.sh` — confines Write/Edit to worktree directory

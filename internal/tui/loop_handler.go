@@ -272,6 +272,15 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 
 	case loop.SlotReviewing:
 		if hasLabel(msg.Labels, "ai-review") {
+			project := m.findProject(msg.ProjectID)
+			autoMerge := project != nil && project.AutoMerge
+			if autoMerge {
+				slot.State = loop.SlotAutoMerging
+				m.state.logger.Printf("loop: label 'ai-review' found #%s → auto-merging", msg.IssueID)
+				m.state.NotifyAll()
+				m.state.Unlock()
+				return m, m.loopAutoMergeCmd(msg.ProjectID, msg.IssueID)
+			}
 			slot.State = loop.SlotWaitingPRMerge
 			m.state.logger.Printf("loop: label 'ai-review' found #%s → waiting PR merge", msg.IssueID)
 			m.state.NotifyAll()
@@ -557,4 +566,62 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// handleLoopAutoMerge processes the result of loopAutoMergeCmd.
+//   - FailureKind=="" (success)                        → SlotCleaningUp + loopCleanupCmd
+//   - FailureKind=="transient_exhausted" or "permanent" → SlotNeedsHuman + NotifyWaiting
+//   - FailureKind=="auth"                               → SlotError (one-shot config problem)
+func (m Model) handleLoopAutoMerge(msg LoopAutoMergeMsg) (tea.Model, tea.Cmd) {
+	m.state.Lock()
+	_, slot := m.findLoopSlot(msg.ProjectID, msg.IssueID)
+	if slot == nil {
+		m.state.Unlock()
+		return m, nil
+	}
+
+	// Only process auto-merge result in SlotAutoMerging; ignore stale messages
+	// (e.g. loop stopped, state advanced elsewhere).
+	if slot.State != loop.SlotAutoMerging {
+		m.state.Unlock()
+		return m, nil
+	}
+
+	// Per AC-17 the canonical outcome log lines (success / permanent fail /
+	// transient-exhausted / auth fail) are emitted by loopAutoMergeCmd the
+	// moment the outcome is determined. The handler performs only the state
+	// transition, TUI status update, and notification — no duplicate logs.
+	switch msg.FailureKind {
+	case "":
+		slot.State = loop.SlotCleaningUp
+		m.state.NotifyAll()
+		m.state.Unlock()
+		return m, m.loopCleanupCmd(msg.ProjectID, msg.IssueID)
+
+	case "transient_exhausted", "permanent":
+		slot.State = loop.SlotNeedsHuman
+		slot.Error = msg.Err
+		m.state.NotifyAll()
+		m.state.Unlock()
+		m.setStatus(fmt.Sprintf("Issue #%s auto-merge %s, needs human", msg.IssueID, msg.FailureKind))
+		projectName := m.projectName(msg.ProjectID)
+		m.state.notifier.NotifyWaiting(msg.ProjectID, projectName,
+			fmt.Sprintf("Issue #%s auto-merge failed (%s)", msg.IssueID, msg.FailureKind))
+		if w := m.state.notifier.ConsumeWarning(); w != "" {
+			m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
+		}
+		return m, nil
+
+	case "auth":
+		slot.State = loop.SlotError
+		slot.Error = msg.Err
+		m.state.NotifyAll()
+		m.state.Unlock()
+		m.setStatus(fmt.Sprintf("Issue #%s auto-merge auth error: %s", msg.IssueID, msg.Err))
+		return m, nil
+	}
+
+	// Unknown FailureKind — defensive no-op (shouldn't happen).
+	m.state.Unlock()
+	return m, nil
 }

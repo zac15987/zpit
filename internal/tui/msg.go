@@ -119,6 +119,16 @@ type LoopPRStatusMsg struct {
 	Err       error
 }
 
+// LoopAutoMergeMsg carries the result of the auto-merge attempt (tracker MergePR API).
+// FailureKind classifies the outcome: "" (success), "transient_exhausted", "permanent", "auth".
+type LoopAutoMergeMsg struct {
+	ProjectID   string
+	IssueID     string
+	PR          *tracker.PRStatus
+	Err         error
+	FailureKind string
+}
+
 // LoopCleanupMsg indicates worktree cleanup completed.
 type LoopCleanupMsg struct {
 	ProjectID string

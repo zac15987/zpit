@@ -238,6 +238,69 @@ func TestAgentModelsDiff_HotReload(t *testing.T) {
 	}
 }
 
+// TestProjectAutoMergeDiff_HotReload guards the invariant that toggling
+// per-project `auto_merge` / `merge_method` is picked up by the running loop
+// without requiring a restart. Both fields flow through `projectsMetaEqual`
+// and must surface under `HotReload` (via the `project_meta` tag), never
+// under `RestartRequired`.
+func TestProjectAutoMergeDiff_HotReload(t *testing.T) {
+	base := &Config{
+		Projects: []ProjectConfig{
+			{ID: "p1", AutoMerge: false, MergeMethod: "squash"},
+		},
+	}
+	cases := []struct {
+		name    string
+		updated *Config
+	}{
+		{
+			name: "toggle_auto_merge",
+			updated: &Config{
+				Projects: []ProjectConfig{
+					{ID: "p1", AutoMerge: true, MergeMethod: "squash"},
+				},
+			},
+		},
+		{
+			name: "change_merge_method",
+			updated: &Config{
+				Projects: []ProjectConfig{
+					{ID: "p1", AutoMerge: false, MergeMethod: "rebase"},
+				},
+			},
+		},
+		{
+			name: "toggle_both",
+			updated: &Config{
+				Projects: []ProjectConfig{
+					{ID: "p1", AutoMerge: true, MergeMethod: "merge"},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Diff(base, tc.updated)
+			foundHot := false
+			for _, f := range d.HotReload {
+				if f == "project_meta" {
+					foundHot = true
+					break
+				}
+			}
+			if !foundHot {
+				t.Errorf("auto_merge/merge_method change should be hot-reloadable; got HotReload=%v", d.HotReload)
+			}
+			for _, f := range d.RestartRequired {
+				if f == "project_meta" || f == "projects (added/removed)" {
+					t.Errorf("auto_merge/merge_method change must NOT require restart; got RestartRequired=%v", d.RestartRequired)
+				}
+			}
+		})
+	}
+}
+
 func TestBaseBranchDefault(t *testing.T) {
 	cfg, err := Load(testdataPath("config.toml"))
 	if err != nil {
