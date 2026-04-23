@@ -219,7 +219,11 @@ State transitions are **label-driven** (poll issue labels, not PID monitoring). 
 - Coding agent sets `review` → reviewer starts
 - Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
 
-States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → (fork on `auto_merge`) → `SlotAutoMerging` | `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+
+**`auto_merge` fork** (at the `ai-review` transition):
+- `auto_merge = false` (default) → `SlotWaitingPRMerge` → polls PR status every `pr_poll_seconds` until human merges on GitHub/Forgejo.
+- `auto_merge = true` → `SlotAutoMerging` → Zpit calls the tracker's merge API (one-shot with 3 retries on transient errors, backoff 1s/4s/16s). On permanent failure or transient-exhausted, slot escalates to `SlotNeedsHuman`; on auth error, to `SlotError`. On success, proceeds to `SlotCleaningUp`.
 
 ### Task Execution Model (Subagent + Agent Teams)
 
@@ -251,7 +255,11 @@ When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrat
    - `git-guard.sh` — push whitelist (only `feat/*`), blocks merge/rebase/branch-delete
    - `notify-permission.sh` — not safety; writes signal file for TUI permission detection
 4. **Git worktree isolation** (physical)
-5. **Human PR review** (final gate)
+5. **Final merge gate** — conditional:
+   - When `auto_merge = false` (default), Human PR review is the final gate; nothing merges without you.
+   - When `auto_merge = true`, the AI Reviewer PASS label (`ai-review`) replaces the human gate and triggers the tracker's merge API (via Go code, not via a git-guard-covered push).
+
+   Only enable `auto_merge` when you trust the reviewer model's quality on your repo — it removes the last line of defense before code lands on `dev`.
 
 Hook strictness per-project via `hook_mode`: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
 
