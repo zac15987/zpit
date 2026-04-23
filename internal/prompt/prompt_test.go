@@ -144,7 +144,7 @@ func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 		"AC-1:",
 		"[modify] src/EtherCatService.cs",
 		"Constraints",
-		"git diff dev...HEAD",                            // uses base branch
+		"git diff origin/dev...HEAD",                     // uses base branch
 		"target branch",                                  // branch verification step
 		"code-construction-principles.md",                // quality check
 		"All Service methods must have entry/exit logs",  // log policy
@@ -175,7 +175,7 @@ func TestBuildReviewerPrompt_RevisionReview(t *testing.T) {
 	mustContain := []string{
 		"REVISION REVIEW",                                // revision indicator
 		"MUST FIX",                                       // focus on previous must fix items
-		"git log --oneline dev...HEAD",                   // identify revision commits
+		"git log --oneline origin/dev...HEAD",            // identify revision commits
 		"Original Requirements",                          // still has AC sections for reference
 		"AC-1:",                                          // AC items present
 		"PR comments",                                    // reads PR comments for previous review
@@ -190,7 +190,7 @@ func TestBuildReviewerPrompt_RevisionReview(t *testing.T) {
 
 	// Revision review should NOT use git diff base...HEAD as the primary diff step
 	// (it uses git log + git show on revision commits instead)
-	if strings.Contains(result, "Use git diff dev...HEAD to view all changes") {
+	if strings.Contains(result, "Use git diff origin/dev...HEAD to view all changes") {
 		t.Error("revision reviewer prompt should not use full diff as primary review step")
 	}
 }
@@ -601,7 +601,7 @@ func TestBuildReviewerPrompt_BaseBranch(t *testing.T) {
 		BaseBranch: "main",
 	})
 
-	if !strings.Contains(result, "git diff main...HEAD") {
+	if !strings.Contains(result, "git diff origin/main...HEAD") {
 		t.Error("reviewer prompt should use custom base branch")
 	}
 }
