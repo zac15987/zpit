@@ -938,24 +938,39 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 	}
 	commitTitle := fmt.Sprintf("[%s] %s", issueID, issueTitle)
 	logger := m.state.logger
-	logger.Printf("loop: auto-merge start project=%s issue=#%s branch=%s method=%s",
-		projectID, issueID, branch, method)
 
 	return func() tea.Msg {
-		// Resolve PR ID from branch name.
+		// AC-17 entry log. Logged inside the closure so the timestamp matches
+		// the actual call (not the tea.Cmd creation time).
+		logger.Printf("loop: auto-merge start #%s method=%s", issueID, method)
+
+		// Resolve PR ID from branch name. Lookup failures are not retried —
+		// they escalate to the classified failure kind immediately.
 		lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		pr, err := client.FindPRByBranch(lookupCtx, repo, branch)
 		lookupCancel()
 		if err != nil {
-			logger.Printf("loop: auto-merge lookup failed issue=#%s err=%v", issueID, err)
+			kind := classifyMergeErr(err)
+			// A transient lookup failure is not retried here (retry policy
+			// only applies to the MergePR call). Escalate as permanent so
+			// the slot surfaces to the user instead of silently disappearing.
+			if kind == "transient" {
+				kind = "permanent"
+			}
+			switch kind {
+			case "auth":
+				logger.Printf("loop: auto-merge auth fail #%s: %v → error", issueID, err)
+			default:
+				logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
+			}
 			return LoopAutoMergeMsg{
 				ProjectID: projectID, IssueID: issueID,
-				Err: err, FailureKind: classifyMergeErr(err),
+				Err: err, FailureKind: kind,
 			}
 		}
 		if pr == nil {
 			err := fmt.Errorf("no PR found for branch %s", branch)
-			logger.Printf("loop: auto-merge lookup failed issue=#%s err=%v", issueID, err)
+			logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
 			return LoopAutoMergeMsg{
 				ProjectID: projectID, IssueID: issueID,
 				Err: err, FailureKind: "permanent",
@@ -975,47 +990,49 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 			if err == nil {
 				// Defensive: if PR state is "closed" without merge, treat as permanent failure.
 				if merged != nil && merged.State == "closed" {
-					logger.Printf("loop: auto-merge permanent (PR closed without merge) issue=#%s attempt=%d",
-						issueID, attempt)
+					permErr := fmt.Errorf("PR closed without merge")
+					logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human",
+						issueID, permErr)
 					return LoopAutoMergeMsg{
 						ProjectID: projectID, IssueID: issueID,
 						PR:          merged,
-						Err:         fmt.Errorf("PR closed without merge"),
+						Err:         permErr,
 						FailureKind: "permanent",
 					}
 				}
-				logger.Printf("loop: auto-merge success issue=#%s prID=%s attempt=%d",
-					issueID, prID, attempt)
+				logger.Printf("loop: auto-merge success #%s → cleaning up", issueID)
 				return LoopAutoMergeMsg{
 					ProjectID: projectID, IssueID: issueID,
 					PR: merged,
 				}
 			}
 			lastErr = err
-
 			kind := classifyMergeErr(err)
-			logger.Printf("loop: auto-merge attempt %d/%d failed issue=#%s kind=%s err=%v",
-				attempt, maxAttempts, issueID, kind, err)
 
 			if kind == "permanent" {
+				logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
 				return LoopAutoMergeMsg{
 					ProjectID: projectID, IssueID: issueID,
 					Err: err, FailureKind: "permanent",
 				}
 			}
 			if kind == "auth" {
+				logger.Printf("loop: auto-merge auth fail #%s: %v → error", issueID, err)
 				return LoopAutoMergeMsg{
 					ProjectID: projectID, IssueID: issueID,
 					Err: err, FailureKind: "auth",
 				}
 			}
-			// Transient: retry with backoff (unless this was the last attempt).
+			// Transient: log retry marker and backoff (unless this was the
+			// last attempt — in which case the exhausted line fires after the loop).
+			logger.Printf("loop: auto-merge retry #%s attempt=%d/%d err=%v",
+				issueID, attempt, maxAttempts, err)
 			if attempt < maxAttempts {
 				time.Sleep(backoffs[attempt-1])
 			}
 		}
-		logger.Printf("loop: auto-merge transient exhausted issue=#%s after %d attempts err=%v",
-			issueID, maxAttempts, lastErr)
+		logger.Printf("loop: auto-merge exhausted %d retries #%s: %v → needs human",
+			maxAttempts, issueID, lastErr)
 		return LoopAutoMergeMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Err: lastErr, FailureKind: "transient_exhausted",
@@ -1023,9 +1040,15 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 	}
 }
 
-// classifyMergeErr examines a merge error and classifies it as transient, permanent, or auth.
-// Unknown errors default to "transient" — network glitches are more common than unexpected
-// permanent issues, so retrying is the safer default.
+// classifyMergeErr examines a merge error and classifies it as transient,
+// permanent, or auth. Per AC-10, transient is defined *exactly* as:
+//   - context.DeadlineExceeded
+//   - net.Error with Timeout() == true
+//   - HTTP 5xx / 408 / 429
+//
+// Anything else (parsing errors, malformed responses, unknown 4xx) is NOT
+// retryable and falls through to "permanent" so the slot escalates to
+// NeedsHuman immediately instead of wasting three retries on a bug.
 func classifyMergeErr(err error) string {
 	if err == nil {
 		return ""
@@ -1056,5 +1079,6 @@ func classifyMergeErr(err error) string {
 			return "transient"
 		}
 	}
-	return "transient"
+	// Unknown error — not in the strict transient list; treat as permanent.
+	return "permanent"
 }

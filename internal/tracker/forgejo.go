@@ -190,17 +190,14 @@ func (c *ForgejoClient) MergePR(ctx context.Context, repo string, prID string, m
 		MergeTitleField string `json:"MergeTitleField,omitempty"`
 	}{Do: method, MergeTitleField: commitTitle}
 
-	// Forgejo returns HTTP 200 with empty body on success.
+	// Forgejo returns HTTP 200 with empty body on success. Per AC-6 we do
+	// NOT re-fetch to populate URL — the merged-state signal is sufficient
+	// for the loop engine, and avoiding a second API call keeps the hot
+	// path lean. Callers that need the PR URL can fetch it separately.
 	if err := c.doJSON(ctx, http.MethodPost, path, body, nil); err != nil {
 		return nil, fmt.Errorf("merge PR: %w", err)
 	}
-	// Merge succeeded; re-fetch to obtain the PR URL for PRStatus.
-	pr, err := c.GetPRStatus(ctx, repo, prID)
-	if err != nil {
-		return &PRStatus{ID: prID, State: "merged"}, nil
-	}
-	pr.State = "merged"
-	return pr, nil
+	return &PRStatus{ID: prID, State: "merged"}, nil
 }
 
 // forgejoIssueToIssue converts the API response to a canonical Issue.

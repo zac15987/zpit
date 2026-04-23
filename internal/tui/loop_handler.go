@@ -587,10 +587,13 @@ func (m Model) handleLoopAutoMerge(msg LoopAutoMergeMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Per AC-17 the canonical outcome log lines (success / permanent fail /
+	// transient-exhausted / auth fail) are emitted by loopAutoMergeCmd the
+	// moment the outcome is determined. The handler performs only the state
+	// transition, TUI status update, and notification — no duplicate logs.
 	switch msg.FailureKind {
 	case "":
 		slot.State = loop.SlotCleaningUp
-		m.state.logger.Printf("loop: auto-merge done #%s → cleaning up", msg.IssueID)
 		m.state.NotifyAll()
 		m.state.Unlock()
 		return m, m.loopCleanupCmd(msg.ProjectID, msg.IssueID)
@@ -598,8 +601,6 @@ func (m Model) handleLoopAutoMerge(msg LoopAutoMergeMsg) (tea.Model, tea.Cmd) {
 	case "transient_exhausted", "permanent":
 		slot.State = loop.SlotNeedsHuman
 		slot.Error = msg.Err
-		m.state.logger.Printf("loop: auto-merge failed #%s kind=%s err=%v → needs human",
-			msg.IssueID, msg.FailureKind, msg.Err)
 		m.state.NotifyAll()
 		m.state.Unlock()
 		m.setStatus(fmt.Sprintf("Issue #%s auto-merge %s, needs human", msg.IssueID, msg.FailureKind))
@@ -614,7 +615,6 @@ func (m Model) handleLoopAutoMerge(msg LoopAutoMergeMsg) (tea.Model, tea.Cmd) {
 	case "auth":
 		slot.State = loop.SlotError
 		slot.Error = msg.Err
-		m.state.logger.Printf("loop: auto-merge auth error #%s err=%v", msg.IssueID, msg.Err)
 		m.state.NotifyAll()
 		m.state.Unlock()
 		m.setStatus(fmt.Sprintf("Issue #%s auto-merge auth error: %s", msg.IssueID, msg.Err))

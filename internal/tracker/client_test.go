@@ -675,8 +675,9 @@ func TestGitHubMergePR_InvalidMethod(t *testing.T) {
 	}
 }
 
-// forgejoMergeServer handles the POST merge call (empty-body 200 response) and
-// the follow-up GET re-fetch, asserting the body sent with POST matches.
+// forgejoMergeServer handles only the POST merge call (empty-body 200
+// response), asserting the body sent with POST matches. Per AC-6 the client
+// does NOT re-fetch — any GET request here is a bug and fails the test.
 func forgejoMergeServer(t *testing.T, wantDo, wantMergeTitle string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -698,13 +699,8 @@ func forgejoMergeServer(t *testing.T, wantDo, wantMergeTitle string) *httptest.S
 			}
 			// Forgejo returns HTTP 200 with empty body on success.
 			w.WriteHeader(200)
-		case r.Method == "GET" && r.URL.Path == "/api/v1/repos/org/repo/pulls/7":
-			json.NewEncoder(w).Encode(forgejoPR{
-				Number: 7, State: "closed", Merged: true,
-				HTMLURL: "http://git.local/org/repo/pulls/7",
-			})
 		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			t.Errorf("unexpected request (AC-6 forbids re-fetch): %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
 		}
 	}))
@@ -722,8 +718,9 @@ func TestForgejoMergePR_Success_Squash(t *testing.T) {
 	if pr.State != "merged" {
 		t.Errorf("State = %q, want merged", pr.State)
 	}
-	if pr.URL != "http://git.local/org/repo/pulls/7" {
-		t.Errorf("URL = %q", pr.URL)
+	// AC-6: no re-fetch, so URL is intentionally empty from MergePR.
+	if pr.URL != "" {
+		t.Errorf("URL = %q, want empty (no re-fetch)", pr.URL)
 	}
 	if pr.ID != "7" {
 		t.Errorf("ID = %q, want 7", pr.ID)
