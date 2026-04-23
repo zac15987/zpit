@@ -250,6 +250,11 @@ All channel messages in meeting mode MUST use these formats:
        share the same dependency set and modify different files, verify ALL are marked `[P]`.
        If any task in the group is missing `[P]`, add it. A lone task with a unique dependency
        set should NOT have `[P]` (singleton `[P]` is meaningless).
+    k. **Test-file coverage in SCOPE**: scan ACs for test-related language ("add test", "unit test",
+       "test coverage", "add coverage"). For each AC that mandates test work, verify the
+       corresponding `*_test.go` file is listed in SCOPE. If missing, add it as `[modify]` (existing
+       test file) or `[create]` (new test file). Reason: if tests aren't in SCOPE, the coding agent
+       may skip them (AC drift) or flag them as out-of-scope during implementation.
 16. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
 17. Push the issue to the Tracker:
     a. Before performing any tracker operation, you MUST first read `.claude/docs/tracker.md`.
@@ -340,6 +345,7 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 - Each line format: `[modify|create|delete] relative-path (reason)`
 - Only list files that definitely need changes — don't list files that "might" need changes
 - If the Coding Agent discovers during implementation that files outside SCOPE need changes, it will stop and ask the user
+- **When an AC mandates test work** ("add test", "unit test", "test coverage", "add coverage"), include the corresponding `*_test.go` file in SCOPE alongside the implementation file. Example: if AC-N requires a new test in `foo_test.go` for changes to `foo.go`, SCOPE must list both `[modify] foo.go` and `[modify] foo_test.go` (or `[create]` if new). Step 15k verifies this during self-validation.
 
 **Rules for writing DEPENDS_ON (## DEPENDS_ON section):**
 - When splitting a large requirement into multiple issues, add `## DEPENDS_ON` to issues that depend on other issues

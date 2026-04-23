@@ -63,15 +63,22 @@ func BuildRevisionPrompt(p RevisionParams) string {
 6. Fix the code for each issue
 7. During fixes, ensure all changes comply with CLAUDE.md conventions and the code quality baseline
 8. After fixing, re-read each modified file to verify your changes are consistent and no unintended edits remain
-9. After completion, self-check against each ACCEPTANCE_CRITERIA item
+9. **Self-check against reviewer feedback and ACCEPTANCE_CRITERIA** (mandatory pre-commit gate) — walk through each item one at a time, do NOT batch this into a single "looks good" pass:
+   a. For each reviewer MUST FIX (🔴) item: quote the reviewer's wording verbatim, then point to the concrete file:line or test name that addresses it
+   b. Re-read each originally-FAILED AC that the MUST FIX items map to — verify the fix now satisfies the AC wording, not just the reviewer's literal request
+   c. Treat words like **exactly**, **without**, **only**, **must not**, **never** in both the AC and the reviewer's feedback as strict constraints — no interpretation, no "close enough"
+   d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
+   e. Regression check — scan the ACs you did NOT touch in this revision; for each, confirm you haven't broken it (especially if the fix spans files that other ACs also reference)
+   f. If any reviewer item cannot be traced to a concrete fix, or if regressions are detected, STOP — do not commit, do not push. Post a PR comment describing the gap and ask for guidance.
 10. Use git add + git commit to commit changes
 11. Commit message format: [%s] fix: {brief description of fix}
-12. Write a Revision Summary to both the PR comment AND the issue comment, covering:
+12. **Push the commit to the remote PR branch**: run ` + "`git push`" + ` in the worktree. The PR branch's upstream was set when the initial coding session opened the PR via ` + "`gh pr create`" + `, so plain ` + "`git push`" + ` is enough. If push is rejected because the upstream is unset (rare — only if the PR branch was recreated), use ` + "`git push -u origin <current-branch>`" + `. **Skipping this step is a silent failure mode**: your commits stay local, the reviewer fetches the remote PR and sees the old code, and the loop advances on stale state.
+13. Write a Revision Summary to both the PR comment AND the issue comment, covering:
    - Which reviewer issues were addressed (reference by item number or quote)
    - How each was fixed (brief: file changed, what changed)
    - Any reviewer issues intentionally NOT addressed, with reason
-13. Before starting fixes, update issue label: remove "needs-changes", add "wip"
-14. After fixes are complete, update issue label: remove "wip", add "review"
+14. Before starting fixes, update issue label: remove "needs-changes", add "wip"
+15. After fixes are complete, update issue label: remove "wip", add "review"
 
 Note: This PR's target branch is `+"`%s`"+`. If you find the PR targets the wrong branch,
 stop immediately and notify the user; do not continue working.

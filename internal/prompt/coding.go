@@ -81,7 +81,13 @@ func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
    c. If implementation depends on external libraries or APIs, use WebSearch to verify current API signatures and version compatibility — do not code against training-data assumptions
 5. Implement according to the approach described in APPROACH
 6. During implementation, ensure all new code follows the logging policy in CLAUDE.md and the code quality baseline
-7. After completion, self-check against each ACCEPTANCE_CRITERIA item
+7. **Self-check against each ACCEPTANCE_CRITERIA item** (mandatory pre-commit gate) — walk through them one at a time, do NOT batch this into a single "looks good" pass:
+   a. Quote the AC text verbatim (do not paraphrase in your head)
+   b. Point to the concrete file:line or test name that satisfies it
+   c. Treat words like **exactly**, **without**, **only**, **must not**, **never** as strict constraints — no interpretation, no "close enough"
+   d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
+   e. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
+   f. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
 8. Before committing, re-read each modified file to verify your changes are consistent and no unintended edits remain
 9. Use git add + git commit to commit changes
 10. Commit message format: [%s] {short description}
@@ -262,7 +268,13 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
    a. Provide the subagent with: issue ID, task ID, task description, file scope, the full APPROACH section, and the commit format [%s] T{N}: {short description}
    b. After the subagent completes, verify the commit exists and the changes are consistent
    c. If a subagent reports failure, retry the delegation once. If still failing, stop and post issue comment explaining what failed — do NOT open PR
-7. After ALL tasks complete (whether via subagent or Agent Team), self-check against each ACCEPTANCE_CRITERIA item
+7. After ALL tasks complete (whether via subagent or Agent Team), **self-check against each ACCEPTANCE_CRITERIA item** (mandatory pre-commit gate) — walk through them one at a time, do NOT batch this into a single "looks good" pass:
+   a. Quote the AC text verbatim (do not paraphrase in your head)
+   b. Point to the concrete file:line or test name that satisfies it
+   c. Treat words like **exactly**, **without**, **only**, **must not**, **never** as strict constraints — no interpretation, no "close enough"
+   d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
+   e. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
+   f. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
 8. Use git add + git commit for any final adjustments
 9. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
    Targeting any other branch is strictly forbidden. If unsure, stop and confirm before opening the PR.
