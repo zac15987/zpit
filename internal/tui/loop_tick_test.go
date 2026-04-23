@@ -119,6 +119,7 @@ func TestHandleLoopPRPollTick_WrongState_ReturnsNil(t *testing.T) {
 		loop.SlotCreatingWorktree,
 		loop.SlotCoding,
 		loop.SlotReviewing,
+		loop.SlotAutoMerging,
 		loop.SlotCleaningUp,
 		loop.SlotDone,
 		loop.SlotError,
@@ -202,6 +203,7 @@ func TestHandleLoopLabelPollTick_WrongState_ReturnsNil(t *testing.T) {
 		loop.SlotWritingAgent,
 		loop.SlotLaunchingCoder,
 		loop.SlotLaunchingReviewer,
+		loop.SlotAutoMerging,
 		loop.SlotWaitingPRMerge,
 		loop.SlotCleaningUp,
 		loop.SlotDone,
@@ -215,5 +217,34 @@ func TestHandleLoopLabelPollTick_WrongState_ReturnsNil(t *testing.T) {
 		if cmd != nil {
 			t.Errorf("state=%v: expected nil cmd (stale tick), got non-nil", st)
 		}
+	}
+}
+
+// TestHandleLoopPRPollTick_AutoMerging_ReturnsNil confirms that a slot in
+// SlotAutoMerging does NOT cause handleLoopPRPollTick to keep ticking — the
+// auto-merge flow uses one-shot loopAutoMergeCmd (with internal retries),
+// not the PR-poll tick chain. If a future refactor accidentally groups
+// SlotAutoMerging with SlotWaitingPRMerge, the PR-poll chain would fire
+// concurrently with the auto-merge API call, which this test guards against.
+func TestHandleLoopPRPollTick_AutoMerging_ReturnsNil(t *testing.T) {
+	m := makeTickTestModel(t)
+	seedLoop(m, true, &loop.Slot{IssueID: tickTestIssueID, State: loop.SlotAutoMerging})
+
+	_, cmd := m.handleLoopPRPollTick(loopPRPollTickMsg{ProjectID: tickTestProjectID, IssueID: tickTestIssueID})
+	if cmd != nil {
+		t.Fatal("expected nil cmd for SlotAutoMerging; got non-nil — PR-poll chain would race with auto-merge API")
+	}
+}
+
+// TestHandleLoopLabelPollTick_AutoMerging_ReturnsNil confirms that once the
+// slot transitions to SlotAutoMerging (via the ai-review fork), the label
+// poll chain stops — there's nothing for labels to drive from this state.
+func TestHandleLoopLabelPollTick_AutoMerging_ReturnsNil(t *testing.T) {
+	m := makeTickTestModel(t)
+	seedLoop(m, true, &loop.Slot{IssueID: tickTestIssueID, State: loop.SlotAutoMerging})
+
+	_, cmd := m.handleLoopLabelPollTick(loopLabelPollTickMsg{ProjectID: tickTestProjectID, IssueID: tickTestIssueID})
+	if cmd != nil {
+		t.Fatal("expected nil cmd for SlotAutoMerging; got non-nil — label poll would fire after transition")
 	}
 }
