@@ -26,9 +26,13 @@
 │    → 但 file system 層面 agent 仍可用絕對路徑逃逸            │
 │    → 所以需要 Layer 3 的路徑守衛配合                         │
 │                                                             │
-│  Layer 5: PR 人工審查（最終防線）                             │
-│    → 所有改動必須你 approve 才進 develop                     │
-│    → 再多 agent 失誤，只要不 merge 就不會造成永久傷害        │
+│  Layer 5: 最終 merge 閘門（條件式）                          │
+│    → auto_merge=false（預設）：人工 PR review，所有改動     │
+│      必須你 approve 才進 dev                                 │
+│    → auto_merge=true：AI reviewer 的 ai-review PASS 取代    │
+│      人工閘門，Zpit 直接呼叫 tracker merge API              │
+│    → 啟用 auto_merge 前需評估 reviewer model 對此專案的       │
+│      品質是否值得信任                                          │
 │                                                             │
 │  類比：工控安全                                              │
 │  Layer 1 = 操作 SOP → Layer 3 = 軟體安全限位                │
@@ -232,7 +236,7 @@ echo $?   # 應該是 2
 - Agent 永遠在 worktree + feature branch 上工作，絕不直接操作主 repo
 - 每個 agent 的 Claude Code 工作目錄是 worktree 路徑，不是主 repo
 - Git 危險操作由 git-guard.sh 硬性攔截
-- PR 必須你手動 approve 才能 merge
+- PR merge 策略由 per-project `auto_merge` 決定（預設 false 需人工 approve；true 時由 AI reviewer PASS 驅動 tracker merge API，不走 agent 的 push/push hook 路徑）
 - PR merge 後自動清理 worktree + branch
 
 ## 9.8 Loop 安全
@@ -240,3 +244,19 @@ echo $?   # 應該是 2
 - Agent 在可見終端中運行，使用者可隨時切過去介入（天然安全閥）
 - `max_per_project` 限制每個專案同時 worktree 數量
 - agent 等待回應超過 `re_remind_minutes`（預設 2 分鐘）→ TUI 再次發送提醒通知
+
+---
+
+## 9.9 Auto-Merge 的安全 trade-off
+
+當 `auto_merge = true` 時，Layer 5 的最後一道人工關卡被 AI reviewer 的 PASS 判斷取代。這是**刻意的信任轉移**，不是漏洞 — 只有你自己決定這條 trade-off 值得時才應該開啟。
+
+**技術事實：**
+- merge API 由 Go 程式呼叫，不是 agent 的 `git push`，所以 **不經過 `git-guard.sh`**。這是正確的 — git-guard 防的是 agent 意外 push 到 main/master/develop/dev，而 auto-merge 是 Zpit 程式主動行為，不屬於 agent 行為。
+- merge 失敗時（permanent/transient exhausted）slot 進入 `SlotNeedsHuman`，worktree 和 branch 都保留供你處理。Auth 錯誤進入 `SlotError`。
+- 重試只針對 transient 錯誤（5xx / 408 / 429 / 網路 timeout），permanent 錯誤（409 / 405 / 422）立刻跳出不重試。
+
+**建議：**
+- 公用 fork / 公司專案：`auto_merge = false`（預設）。
+- 個人實驗專案、私人 repo：可考慮 `auto_merge = true`，但先觀察 reviewer 品質（例如連續 10 個 issue 的 review 都合理再開啟）。
+- **絕對不要**在不信任的專案上啟用，或者在 reviewer model 經常誤判的情境下啟用。
