@@ -231,7 +231,7 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 			b.WriteString("   Always pass `--force` from the start — child worktrees contain the copied `.claude/` directory and will not remove without it.\n\n")
 			b.WriteString("   Bash call 2 — delete teammate branches:\n")
 			b.WriteString("   ```\n")
-			b.WriteString("   for branch in <worktreeBranch-T{N1}> <worktreeBranch-T{N2}> ...; do git branch -D \"$branch\"; done\n")
+			b.WriteString("   git branch -D <worktreeBranch-T{N1}> <worktreeBranch-T{N2}> ...\n")
 			b.WriteString("   ```\n")
 			b.WriteString("   If Bash call 2 is blocked by a hook or fails for any other reason, retry it as a standalone Bash call before moving on — do NOT skip branch deletion just because worktree removal already succeeded. Leaked teammate branches pollute the local branch list.\n")
 			b.WriteString("   Only after this cleanup should you proceed to the next step. The parent worktree's HEAD has advanced by N commits (one per teammate), so subsequent sequential tasks and final-adjustment commits run against the correct tree.\n")
