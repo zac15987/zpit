@@ -182,6 +182,38 @@ func (c *GitHubClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, 
 	return result, nil
 }
 
+func (c *GitHubClient) MergePR(ctx context.Context, repo string, prID string, method string, commitTitle string) (*PRStatus, error) {
+	// Validate method without making any HTTP call.
+	switch method {
+	case "squash", "merge", "rebase":
+	default:
+		return nil, fmt.Errorf("invalid merge method: %q (want squash|merge|rebase)", method)
+	}
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%s/merge", owner, name, prID)
+	body := struct {
+		MergeMethod string `json:"merge_method"`
+		CommitTitle string `json:"commit_title,omitempty"`
+	}{MergeMethod: method, CommitTitle: commitTitle}
+
+	var resp struct {
+		Merged  bool   `json:"merged"`
+		Message string `json:"message"`
+		SHA     string `json:"sha"`
+	}
+	if err := c.doJSON(ctx, http.MethodPut, path, body, &resp); err != nil {
+		return nil, fmt.Errorf("merge PR: %w", err)
+	}
+	// Merge succeeded; re-fetch to obtain the PR URL for PRStatus.
+	pr, err := c.GetPRStatus(ctx, repo, prID)
+	if err != nil {
+		// Merge succeeded but couldn't fetch URL; return merged status without URL.
+		return &PRStatus{ID: prID, State: "merged"}, nil
+	}
+	pr.State = "merged"
+	return pr, nil
+}
+
 func (c *GitHubClient) ListRepoLabels(ctx context.Context, repo string) ([]string, error) {
 	owner, name := splitRepo(repo)
 	path := fmt.Sprintf("/repos/%s/%s/labels?per_page=%d", owner, name, githubPageLimit)

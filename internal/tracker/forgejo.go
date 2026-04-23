@@ -177,6 +177,32 @@ func (c *ForgejoClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo,
 	return result, nil
 }
 
+func (c *ForgejoClient) MergePR(ctx context.Context, repo string, prID string, method string, commitTitle string) (*PRStatus, error) {
+	switch method {
+	case "squash", "merge", "rebase":
+	default:
+		return nil, fmt.Errorf("invalid merge method: %q (want squash|merge|rebase)", method)
+	}
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%s/merge", owner, name, prID)
+	body := struct {
+		Do              string `json:"Do"`
+		MergeTitleField string `json:"MergeTitleField,omitempty"`
+	}{Do: method, MergeTitleField: commitTitle}
+
+	// Forgejo returns HTTP 200 with empty body on success.
+	if err := c.doJSON(ctx, http.MethodPost, path, body, nil); err != nil {
+		return nil, fmt.Errorf("merge PR: %w", err)
+	}
+	// Merge succeeded; re-fetch to obtain the PR URL for PRStatus.
+	pr, err := c.GetPRStatus(ctx, repo, prID)
+	if err != nil {
+		return &PRStatus{ID: prID, State: "merged"}, nil
+	}
+	pr.State = "merged"
+	return pr, nil
+}
+
 // forgejoIssueToIssue converts the API response to a canonical Issue.
 func forgejoIssueToIssue(item forgejoIssue) Issue {
 	labels := make([]string, len(item.Labels))
