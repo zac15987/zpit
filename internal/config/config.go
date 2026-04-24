@@ -192,9 +192,9 @@ max_per_project = 5
 # Pin to a full ID if you need cross-provider consistency.
 [agent_models]
 clarifier = "opus[1m]"      # requirement clarification — deepest reasoning (1M context)
-coding = "opus[1m]"         # feature implementation (1M context)
+coding = "opus[1m]"         # feature implementation orchestrator (1M context)
 reviewer = "opus[1m]"       # PR review (1M context)
-task_runner = "opus[1m]"    # advisory only — task-runner subagents inherit the coding session's model
+task_runner = "sonnet"      # per-task subagent — scope narrowed by orchestrator, mechanical work (Sonnet is cost-effective)
 efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
 
 # --- SSH Server (zpit serve) ---

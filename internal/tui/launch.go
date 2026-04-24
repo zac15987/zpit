@@ -791,6 +791,65 @@ func injectLangInstruction(md []byte) []byte {
 	return []byte(result)
 }
 
+// injectFrontmatterModel inserts or overwrites `model: <value>` in the YAML
+// frontmatter block. Used to wire cfg.AgentModels.TaskRunner into
+// task-runner.md at deploy time so subagents can use a different model from
+// the orchestrator (Claude Code's Agent tool reads the frontmatter's model
+// field as the subagent default).
+//
+// Behavior:
+//   - Empty model → return md unchanged (let Claude Code inherit from parent).
+//   - Existing `model:` line → overwrite the value.
+//   - No `model:` line → insert before the closing `---`.
+//   - Malformed/missing frontmatter → return md unchanged.
+func injectFrontmatterModel(md []byte, model string) []byte {
+	if model == "" {
+		return md
+	}
+	s := string(md)
+	hasCRLF := strings.Contains(s, "\r\n")
+	normalized := strings.ReplaceAll(s, "\r\n", "\n")
+
+	const marker = "---\n"
+	first := strings.Index(normalized, marker)
+	if first < 0 {
+		return md
+	}
+	blockStart := first + len(marker)
+	secondRel := strings.Index(normalized[blockStart:], marker)
+	if secondRel < 0 {
+		return md
+	}
+	blockEnd := blockStart + secondRel // index of closing `---\n`
+
+	block := normalized[blockStart:blockEnd]
+	modelLine := "model: " + model + "\n"
+
+	// Overwrite existing model line if present.
+	lines := strings.Split(block, "\n")
+	replaced := false
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "model:") {
+			lines[i] = "model: " + model
+			replaced = true
+			break
+		}
+	}
+	var newBlock string
+	if replaced {
+		newBlock = strings.Join(lines, "\n")
+	} else {
+		newBlock = block + modelLine
+	}
+
+	result := normalized[:blockStart] + newBlock + normalized[blockEnd:]
+	if hasCRLF {
+		result = strings.ReplaceAll(result, "\n", "\r\n")
+	}
+	return []byte(result)
+}
+
 // --- Focus panel: loop slot selection ---
 
 func (m Model) handleFocusSwitch() (tea.Model, tea.Cmd) {

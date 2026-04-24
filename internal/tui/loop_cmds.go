@@ -332,6 +332,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	taskRunnerMD := m.state.taskRunnerMD
+	taskRunnerModel := m.state.cfg.AgentModels.TaskRunner
 	hookScripts := m.state.hookScripts
 	hookMode := project.HookMode
 	channelEnabled := project.ChannelEnabled
@@ -378,12 +379,15 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		}
 
 		// Deploy task-runner.md when Issue Spec contains TASKS for subagent delegation.
+		// Inject `model:` into frontmatter so the subagent runs on its own model
+		// (independent of the orchestrator — see cfg.AgentModels.TaskRunner).
 		if len(spec.Tasks) > 0 && len(taskRunnerMD) > 0 {
 			trPath := filepath.Join(agentDir, "task-runner.md")
-			if err := os.WriteFile(trPath, injectLangInstruction(taskRunnerMD), 0o644); err != nil {
+			processed := injectFrontmatterModel(injectLangInstruction(taskRunnerMD), taskRunnerModel)
+			if err := os.WriteFile(trPath, processed, 0o644); err != nil {
 				logger.Printf("loop: failed to deploy task-runner.md for issue #%s: %v", issueID, err)
 			} else {
-				logger.Printf("loop: deployed task-runner.md to %s for issue #%s", agentDir, issueID)
+				logger.Printf("loop: deployed task-runner.md (model=%q) to %s for issue #%s", taskRunnerModel, agentDir, issueID)
 			}
 		}
 
