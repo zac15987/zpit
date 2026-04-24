@@ -255,6 +255,37 @@ All channel messages in meeting mode MUST use these formats:
        corresponding `*_test.go` file is listed in SCOPE. If missing, add it as `[modify]` (existing
        test file) or `[create]` (new test file). Reason: if tests aren't in SCOPE, the coding agent
        may skip them (AC drift) or flag them as out-of-scope during implementation.
+    l. **AC/APPROACH/CONSTRAINTS contradiction scan** (always run): read APPROACH + all ACs +
+       CONSTRAINTS as a single system. For each pair, ask "can both be simultaneously satisfied by a
+       concrete implementation?" Common contradiction patterns:
+       - "verbatim copy X" + "achieve a property X never had" — requires an explicit carve-out
+         listing which verbatim assumptions are relaxed
+       - "bit-identical to source" + "add behavior not in source" — fundamental contradiction;
+         must restructure into "copy these parts verbatim" + "add these specific new behaviors"
+       - "N instances" / "parallel execution" + any AC referencing static / singleton / shared-file
+         state — the shared state defeats the multi-instance goal
+       If contradictions exist, resolve with the user and restructure ACs before proceeding. Do
+       NOT merely flag — require user input on the resolution.
+    m. **Verbatim-copy derivatives enumeration** (trigger: APPROACH or SCOPE uses "copy verbatim",
+       "bit-identical", or "same as source"): identify the properties of the source that break
+       in the new context. For a single-instance source being adapted into a multi-instance
+       context, that means listing every place the source assumes one instance (static fields,
+       shared file paths, global handles, singletons, process-wide caches). For each, add either
+       an explicit AC clause describing how the new environment relaxes that assumption, or a
+       CONSTRAINTS line noting that the assumption is preserved and the issue does not support
+       the new environment at that point.
+    n. **Deviation contract build-fit clause** (trigger: an AC contains "exactly N deviations",
+       "only these changes", or "these M modifications"): append the standard build-fit
+       exceptions boilerplate to that AC (see "Deviation contract standard clauses" below). This
+       clause permits pure build / tooling-layer changes that do not affect runtime behavior and
+       must NOT be counted against the declared deviation count.
+    o. **Multi-instance test requirement** (trigger: any AC contains "two services", "parallel",
+       "concurrent", "simultaneously", "N cards", "multi-instance", or "coexist"): for each
+       such AC, verify that at least one AC mandates an integration-level test asserting the
+       isolation invariant on the bridge / entry surface (not just unit tests at the core-logic
+       layer). If missing, add one. Example: a multi-card claim at AC-N must be paired with an
+       AC-M requiring a test that constructs two instances, calls the public API on each, and
+       asserts distinct observable state.
 16. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
 17. Push the issue to the Tracker:
     a. Before performing any tracker operation, you MUST first read `.claude/docs/tracker.md`.
@@ -332,6 +363,36 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
 ## REFERENCES
 [Source type] URL or path — brief description (optional, but required if you looked up any sources)
 ```
+
+**Mechanical AC principles** — every AC must support a binary PASS/FAIL self-check by the Coding Agent without requiring judgment calls. Four judgement rails:
+
+1. **Observable invariants over structural descriptions** — name the post-condition a running program would satisfy, not the shape of the code.
+2. **Quantify** — replace "fast" / "reasonable" / "efficient" with measurable thresholds.
+3. **Enumerate or name** — replace "follows conventions" with the exact category strings, log formats, or method identifiers.
+4. **Bind to file:line or identifier** — when the AC targets a specific code surface, name the file + method/class/field.
+
+Good vs Bad:
+
+BAD:
+  AC-2: Construct two `DeltaEtherCATService` instances with different TOML config files and they should handle multiple cards correctly.
+
+GOOD:
+  AC-2: Given two `DeltaEtherCATService` instances constructed with config paths A and B (each specifying a distinct `CardId`), after both `InitializeAsync()` complete, `svc0.CardId == A.CardId` AND `svc1.CardId == B.CardId`, regardless of construction or initialization order. The service MUST NOT rely on filesystem state shared between instances for config resolution (no "copy to well-known path, read later" pattern).
+
+BAD:
+  AC-5: Refcount transitions must be logged.
+
+GOOD:
+  AC-5: Every transition into or out of `_refCount == 0` emits a log line via `ILogService.Log(LogLevel.Info, "lifetime", message)` where `message` is exactly one of:
+    - `RefCount 0->1, calling _ECAT_Master_Open`
+    - `RefCount 1->0, calling _ECAT_Master_Close`
+  The rendered line (via `FileLogger`) must be exactly `[yyyy-MM-dd HH:mm:ss.fff] [Info] [lifetime] <message>` — category token lowercase.
+
+**Deviation contract standard clauses** — when an AC specifies "exactly N deviations from [source]" / "only these changes" / "these M modifications", append this standing boilerplate to the same AC:
+
+> **Build-fit exceptions not counted against this deviation limit**: (a) package version API renames required to compile against the pinned version of a declared dependency (e.g. `TomlSerializer.Deserialize<T>` → `Toml.ToModel<T>` when the pinned version exposes the equivalent under a different namespace); (b) SDK auto-include adjustments (e.g. `<Compile Remove="X/**" />`) required to isolate this project from parent / sibling sources; (c) build target / configuration switches that do not affect runtime behavior. The Coding Agent must enumerate any such exceptions in the PR body under a "Build-fit exceptions" heading so they are visible to review.
+
+Workflow step 15n will auto-append this clause when the pattern is detected — do not also write it manually to avoid duplication.
 
 **Rules for writing ACCEPTANCE_CRITERIA:**
 - Each item starts with `AC-N:`, where N increments from 1
@@ -433,3 +494,6 @@ T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
   > [create] docs/project-spec.md (consolidated new spec)
   > [modify] CLAUDE.md (replace stale doc references)
   The coding agent will execute them after the issue is pushed and accepted. This rule applies regardless of the language you are replying in.
+- **Contradiction surface**: treat APPROACH + ACs + CONSTRAINTS as a single system. Before showing the issue to the user, verify no two clauses are mutually unsatisfiable (see workflow 15l). A past real case — an AC demanding "bit-identical to source" silently conflicted with a multi-instance goal because the source was single-instance — is the failure mode this rule prevents.
+- **Verbatim-copy responsibility**: when the APPROACH says "copy X verbatim", enumerate the implicit assumptions of X that are violated by the new environment (single-instance state, shared paths, global handles). Do not leave these for the Coding Agent to discover at implementation time (see workflow 15m).
+- **Multi-instance invariants**: when the issue goal involves N>1 co-existing instances, the observable isolation property (distinct state, non-shared resources) must be encoded in an AC as a post-condition a test can prove, not as a structural instruction (see Mechanical AC principles).
