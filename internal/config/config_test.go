@@ -73,9 +73,6 @@ func TestLoad(t *testing.T) {
 	if first.HookMode != "strict" {
 		t.Errorf("Projects[0].HookMode = %q", first.HookMode)
 	}
-	if !first.SharedCore {
-		t.Error("Projects[0].SharedCore should be true")
-	}
 	if len(first.Tags) != 3 {
 		t.Errorf("Projects[0].Tags = %v", first.Tags)
 	}

@@ -10,7 +10,6 @@
 - 技術決策不確定（多種實作路徑、不清楚該用哪個 pattern）
 - Issue 的 acceptance criteria 描述模糊，無法判斷該怎麼做
 - 改動範圍超出 issue 預期（發現需要連帶修改其他模組）
-- 涉及 shared-core 的改動
 - 硬體相關邏輯不確定（timeout 值、retry 次數、安全狀態定義）
 
 **all permissions ≠ 自己做所有決定**

@@ -197,7 +197,6 @@ tracker = "my-forgejo"
 # git = "my-forgejo"              # git provider for PR operations
 repo = "org/repo"
 base_branch = "dev"
-# shared_core = false
 channel_enabled = false     # enable cross-agent channel communication
 channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
 # auto_merge = false      # when true, Zpit calls the tracker merge API after ai-review PASS (opt-in)

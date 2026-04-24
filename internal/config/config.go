@@ -116,7 +116,6 @@ type ProjectConfig struct {
 	TrackerProject string            `toml:"tracker_project"`
 	Git            string            `toml:"git"`
 	Repo           string            `toml:"repo"`
-	SharedCore     bool              `toml:"shared_core"`
 	LogPolicy      string            `toml:"log_policy"` // "strict" | "standard" | "minimal"
 	BaseBranch     string            `toml:"base_branch"`
 	ChannelEnabled bool              `toml:"channel_enabled"`

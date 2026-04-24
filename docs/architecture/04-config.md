@@ -107,7 +107,6 @@ tracker = "my-forgejo"          # 指向 providers.tracker 的 key
 tracker_project = "ase-inspection"
 git = "forgejo-local"
 repo = "leyu/ase-inspection"
-shared_core = true
 base_branch = "dev"
 channel_enabled = false         # 啟用跨 agent channel 通訊
 channel_listen = []             # 額外訂閱的 project key，如 ["_global", "other-proj"]
