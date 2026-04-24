@@ -56,6 +56,14 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 		"WebFetch",                                             // research: fetch reference URLs
 		"WebSearch",                                            // research: verify external APIs
 		"re-read each modified file",                           // stale context: verify before commit
+		"<acceptance_criteria>",                                // Direction B: XML tag open
+		"</acceptance_criteria>",                               // Direction B: XML tag close
+		"<scope>",                                              // Direction B: XML tag open
+		"</scope>",                                             // Direction B: XML tag close
+		"<constraints>",                                        // Direction B: XML tag open
+		"</constraints>",                                       // Direction B: XML tag close
+		"PASS walk-through",                                    // Direction B: AC self-check worked example
+		"FAIL walk-through",                                    // Direction B: AC self-check worked example
 	}
 
 	for _, c := range checks {
@@ -151,6 +159,12 @@ func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 		"issue comments",                                 // read comments step
 		"PR comments",                                    // read comments step
 		"Re-read ACCEPTANCE_CRITERIA",                    // stale context: re-verify before verdicts
+		"<acceptance_criteria>",                          // Direction B: XML tag open
+		"</acceptance_criteria>",                         // Direction B: XML tag close
+		"<scope>",                                        // Direction B: XML tag open
+		"</scope>",                                       // Direction B: XML tag close
+		"<constraints>",                                  // Direction B: XML tag open
+		"</constraints>",                                 // Direction B: XML tag close
 	}
 
 	for _, c := range checks {
@@ -250,6 +264,14 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 		"degrade code quality",                                    // sycophancy: flag conflicts
 		"When to Stop and Ask the User",
 		"Commit message format: [ASE-47] fix:",
+		"<acceptance_criteria>",                                   // Direction B: XML tag open
+		"</acceptance_criteria>",                                  // Direction B: XML tag close
+		"<scope>",                                                 // Direction B: XML tag open
+		"</scope>",                                                // Direction B: XML tag close
+		"<constraints>",                                           // Direction B: XML tag open
+		"</constraints>",                                          // Direction B: XML tag close
+		"PASS walk-through",                                       // Direction B: AC self-check worked example (revision mode)
+		"FAIL walk-through",                                       // Direction B: AC self-check worked example (revision mode)
 	}
 
 	for _, c := range checks {

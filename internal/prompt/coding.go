@@ -33,15 +33,21 @@ func BuildCodingPrompt(p CodingParams) string {
 	b.WriteString(p.Spec.Approach)
 
 	b.WriteString("\n\n## Acceptance Criteria (every item must be met; self-check each one after completion)\n\n")
+	b.WriteString("<acceptance_criteria>\n")
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
+	b.WriteString("\n</acceptance_criteria>")
 
 	b.WriteString("\n\n## Allowed File Scope\n\n")
+	b.WriteString("<scope>\n")
 	b.WriteString(formatScope(p.Spec.Scope))
+	b.WriteString("</scope>\n")
 	b.WriteString("\nDo not touch files outside this scope. If you find that you must modify files outside the scope to complete the task,\n")
 	b.WriteString("stop immediately, explain the reason, and wait for the user's decision.")
 
 	b.WriteString("\n\n## Constraints (must not violate)\n\n")
+	b.WriteString("<constraints>\n")
 	b.WriteString(p.Spec.Constraints)
+	b.WriteString("\n</constraints>")
 
 	if p.Spec.References != "" {
 		b.WriteString("\n\n## References\n\n")
@@ -88,7 +94,7 @@ func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
    d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
    e. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
    f. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
-8. Before committing, re-read each modified file to verify your changes are consistent and no unintended edits remain
+%s8. Before committing, re-read each modified file to verify your changes are consistent and no unintended edits remain
 9. Use git add + git commit to commit changes
 10. Commit message format: [%s] {short description}
 11. Before starting implementation, update issue label: remove "todo", add "wip"
@@ -112,7 +118,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, p.IssueID, p.BaseBranch, p.BaseBranch)
+`, acSelfCheckExample("initial"), p.IssueID, p.BaseBranch, p.BaseBranch)
 
 	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
 		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))
@@ -276,7 +282,7 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
    d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
    e. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
    f. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
-8. Use git add + git commit for any final adjustments
+%s8. Use git add + git commit for any final adjustments
 9. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
    Targeting any other branch is strictly forbidden. If unsure, stop and confirm before opening the PR.
 10. After opening the PR, update issue label: remove "wip", add "review"
@@ -297,7 +303,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, p.IssueID, p.BaseBranch, p.BaseBranch)
+`, acSelfCheckExample("initial"), p.IssueID, p.BaseBranch, p.BaseBranch)
 
 	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
 		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))

@@ -50,13 +50,19 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 	b.WriteString(p.Spec.Approach)
 
 	b.WriteString("\n\n## Acceptance Criteria (check each item, mark each as PASS / FAIL)\n\n")
+	b.WriteString("<acceptance_criteria>\n")
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
+	b.WriteString("\n</acceptance_criteria>")
 
 	b.WriteString("\n\n## Allowed File Scope\n\n")
+	b.WriteString("<scope>\n")
 	b.WriteString(formatScope(p.Spec.Scope))
+	b.WriteString("</scope>\n")
 
 	b.WriteString("\n## Constraints\n\n")
+	b.WriteString("<constraints>\n")
 	b.WriteString(p.Spec.Constraints)
+	b.WriteString("\n</constraints>")
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 

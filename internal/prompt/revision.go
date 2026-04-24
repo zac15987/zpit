@@ -33,15 +33,21 @@ func BuildRevisionPrompt(p RevisionParams) string {
 	b.WriteString(p.Spec.Approach)
 
 	b.WriteString("\n\n## Acceptance Criteria\n\n")
+	b.WriteString("<acceptance_criteria>\n")
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
+	b.WriteString("\n</acceptance_criteria>")
 
 	b.WriteString("\n\n## Allowed File Scope\n\n")
+	b.WriteString("<scope>\n")
 	b.WriteString(formatScope(p.Spec.Scope))
+	b.WriteString("</scope>\n")
 	b.WriteString("\nDo not touch files outside this scope. If you find that you must modify files outside the scope to complete the task,\n")
 	b.WriteString("stop immediately, explain the reason, and wait for the user's decision.")
 
 	b.WriteString("\n\n## Constraints (must not violate)\n\n")
+	b.WriteString("<constraints>\n")
 	b.WriteString(p.Spec.Constraints)
+	b.WriteString("\n</constraints>")
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
@@ -70,7 +76,7 @@ func BuildRevisionPrompt(p RevisionParams) string {
    d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
    e. Regression check — scan the ACs you did NOT touch in this revision; for each, confirm you haven't broken it (especially if the fix spans files that other ACs also reference)
    f. If any reviewer item cannot be traced to a concrete fix, or if regressions are detected, STOP — do not commit, do not push. Post a PR comment describing the gap and ask for guidance.
-10. Use git add + git commit to commit changes
+%s10. Use git add + git commit to commit changes
 11. Commit message format: [%s] fix: {brief description of fix}
 12. **Push the commit to the remote PR branch**: run ` + "`git push`" + ` in the worktree. The PR branch's upstream was set when the initial coding session opened the PR via ` + "`gh pr create`" + `, so plain ` + "`git push`" + ` is enough. If push is rejected because the upstream is unset (rare — only if the PR branch was recreated), use ` + "`git push -u origin <current-branch>`" + `. **Skipping this step is a silent failure mode**: your commits stay local, the reviewer fetches the remote PR and sees the old code, and the loop advances on stale state.
 13. Write a Revision Summary to both the PR comment AND the issue comment, covering:
@@ -99,7 +105,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, p.IssueID, p.BaseBranch)
+`, acSelfCheckExample("revision"), p.IssueID, p.BaseBranch)
 
 	return b.String()
 }

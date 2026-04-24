@@ -30,6 +30,54 @@ Sequential tasks (no `[P]` marker) run in the parent worktree's CWD — this sec
 - **Single responsibility.** You implement one task — do not attempt to implement other tasks.
 - **Re-read before committing.** After making changes, re-read each modified file to verify consistency and ensure no unintended edits remain.
 
+## Examples
+
+### Scope containment
+
+**Correct:**
+
+```
+Task assignment: "Modify internal/git/ops.go to add a retry wrapper around Fetch."
+You edit only internal/git/ops.go. Commit.
+```
+
+**Incorrect (out of scope):**
+
+```
+Same task assignment.
+You edit internal/git/ops.go AND internal/git/parser.go because the parser now calls Fetch.
+→ WRONG. parser.go is not in your scope. STOP and report back:
+  "parser.go also needs update to handle new error type — add to task scope?"
+```
+
+### Re-read before commit
+
+**Correct:**
+
+```
+After Edit, call the Read tool on the modified file.
+Observe the final state: `logger.Info("[git] fetch attempt=%d", n)` present,
+no stray commented-out code, imports still clean. Then commit.
+```
+
+**Incorrect (fake re-read):**
+
+```
+After Edit, write "re-read completed, file looks good" without actually calling Read.
+→ WRONG. A declaration is not a verification. Call the Read tool on every file
+  you touched in this task.
+```
+
+### Commit format
+
+**Correct:** `[ASE-47] T3: add retry wrapper around Fetch`
+
+**Incorrect:**
+
+- `Implemented retry logic` — missing `[ISSUE-ID]` and `T{N}:` prefix
+- `[ASE-47] add retry` — missing `T3:`
+- `[ASE-47] T3 add retry wrapper` — missing colon after `T3`
+
 ## Commit Format
 
 After completing your task, commit using the exact format provided in your task assignment:
