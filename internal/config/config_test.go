@@ -107,8 +107,8 @@ func TestLoad(t *testing.T) {
 	if cfg.AgentModels.Reviewer != "opus[1m]" {
 		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "opus[1m]")
 	}
-	if cfg.AgentModels.TaskRunner != "opus[1m]" {
-		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "opus[1m]")
+	if cfg.AgentModels.TaskRunner != "sonnet" {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "sonnet")
 	}
 	if cfg.AgentModels.Efficiency != "opus[1m]" {
 		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, "opus[1m]")

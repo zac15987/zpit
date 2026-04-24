@@ -38,14 +38,17 @@ max_per_project = 5
 poll_seconds = 10
 pr_poll_seconds = 10
 
-# Per-role model selection — passed to Claude Code via --model at launch.
+# Per-role model selection.
+# - clarifier/coding/reviewer/efficiency: passed to Claude Code via --model at launch.
+# - task_runner: injected into task-runner.md frontmatter at deploy time
+#   (task-runner subagents can run on a different model from the coding orchestrator).
 # Aliases (opus/sonnet/haiku) resolve per provider; [1m] enables the 1M-context tier.
 # Pin to a full ID (e.g. claude-opus-4-7[1m]) if you need cross-provider consistency.
 [agent_models]
 clarifier = "opus[1m]"
 coding = "opus[1m]"
 reviewer = "opus[1m]"
-task_runner = "opus[1m]"
+task_runner = "sonnet"
 efficiency = "opus[1m]"
 
 [providers.tracker.forgejo-leyu]
