@@ -22,9 +22,9 @@ FILE_PATH=$(echo "$INPUT" | jq -r '
 # Allowed working directory — the root of the *active* git worktree.
 # Claude Code pins CLAUDE_PROJECT_DIR to the orchestrator's project root
 # (not the worktree path — see claude-code-source-code src/utils/hooks.ts:813),
-# so when a task-runner teammate runs with isolation:'worktree', its child
+# so when a task-runner subagent runs with isolation:'worktree', its child
 # worktree would otherwise be judged by the parent project's boundary —
-# too permissive (teammate could write to any sibling of the child dir).
+# too permissive (subagent could write to any sibling of the child dir).
 # git rev-parse --show-toplevel self-adapts: parent worktree returns the
 # parent, child worktree returns the child. Falls back to CLAUDE_PROJECT_DIR
 # when the CWD is not inside a git repo.

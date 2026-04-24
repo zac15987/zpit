@@ -6,7 +6,7 @@ set -euo pipefail
 # creation (which would fork from origin/<defaultBranch>) so zpit can
 # fork from the orchestrator's current HEAD instead — otherwise
 # sequential task work (e.g. T1 committed, then [P] batch depending on
-# T1) would be invisible to [P] teammates.
+# T1) would be invisible to [P] parallel subagents.
 #
 # Input (stdin, JSON):  { name: <slug>, cwd: <orchestrator CWD>, ... }
 # Output (stdout):      absolute path to created worktree
@@ -59,8 +59,8 @@ trap cleanup_on_error ERR
 
 # .claude/ (agents/, docs/, hooks/) and .mcp.json are gitignored in the
 # parent, so `git worktree add` does not bring them over. Copy them so
-# teammate hooks fire, task-runner can Read agent-guidelines, and MCP
-# channel tools are available if the teammate opts in.
+# parallel-subagent hooks fire, task-runner can Read agent-guidelines, and
+# MCP channel tools are available if the subagent opts in.
 if [ -d "$CWD/.claude" ]; then
   cp -r "$CWD/.claude" "$WT_PATH/.claude"
 fi

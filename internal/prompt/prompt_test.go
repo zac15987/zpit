@@ -279,7 +279,8 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 
 	result := BuildCodingPrompt(p)
 
-	// AC-1: pure sequential tasks — prompt must contain subagent delegation, no Agent Team
+	// AC-1: pure sequential tasks — prompt must contain subagent delegation,
+	// no parallel-subagent-batch delegation block.
 	mustContain := []string{
 		"Task Decomposition",
 		"Commit after each task",
@@ -304,11 +305,11 @@ func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 		}
 	}
 
-	// AC-1: pure sequential tasks must NOT contain Agent Team / worktree-isolation
-	// instructions (sequential tasks commit directly in the parent worktree) nor
-	// any of the retired Parallel Commit Protocol strings.
+	// AC-1: pure sequential tasks must NOT contain parallel-subagent-batch /
+	// worktree-isolation instructions (sequential tasks commit directly in the
+	// parent worktree) nor any of the retired Parallel Commit Protocol strings.
 	mustNotContain := []string{
-		"Agent Team Delegation",
+		"Parallel Subagent Delegation",
 		"Parallel group",
 		"Worktree Isolation",
 		"isolation: \"worktree\"",
@@ -350,14 +351,15 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 
 	result := BuildCodingPrompt(p)
 
-	// Must contain subagent + Agent Team delegation plus the new worktree-isolation
-	// hand-off (isolation:"worktree" Agent-tool param + cherry-pick batch integration).
-	// The Parallel Commit Protocol is retired — none of its strings should appear.
+	// Must contain subagent + parallel-subagent-batch delegation plus the
+	// worktree-isolation hand-off (isolation:"worktree" Agent-tool param +
+	// cherry-pick batch integration). The Parallel Commit Protocol is retired
+	// — none of its strings should appear.
 	mustContain := []string{
 		"Task Decomposition",
 		"Execution Strategy",
 		"Subagent Delegation",
-		"Agent Team Delegation",
+		"Parallel Subagent Delegation",
 		"task-runner",
 		"subagent_type",
 		"Task Execution Order",
@@ -367,7 +369,7 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"T4",
 		"Parallel group",
 		"sequential",
-		"teammate",
+		"parallel subagent",
 		"self-check against each ACCEPTANCE_CRITERIA",
 		// New worktree-isolation flow
 		"Worktree Isolation",
@@ -377,21 +379,21 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 		"git worktree remove --force",
 		"git branch -D",
 		"git cherry-pick --abort",
-		// Per-teammate cleanup split into two separate Bash calls so a hook
+		// Per-subagent cleanup split into two separate Bash calls so a hook
 		// block on one cannot nuke the other (see docs/known-issues.md §4).
 		"TWO SEPARATE Bash tool calls",
 		// Branch discovery via git — Claude Code's WorktreeCreate hook path
 		// does not populate worktreeBranch (see docs/known-issues.md §3).
 		"rev-parse --abbrev-ref HEAD",
-		// Teammate-cd sanity check — PARENT_HEAD snapshot + tip comparison +
-		// ABORT on empty teammate branches (see docs/known-issues.md §6).
+		// Subagent-cd sanity check — PARENT_HEAD snapshot + tip comparison +
+		// ABORT on empty subagent branches (see docs/known-issues.md §6).
 		"PARENT_HEAD=$(git rev-parse HEAD)",
 		"if [ \"$tip\" = \"$PARENT_HEAD\" ]",
-		"ABORT: teammate branch",
-		// Explicit ban on --skip — stops the silent drop-teammate-commit path.
+		"ABORT: parallel subagent branch",
+		// Explicit ban on --skip — stops the silent drop-subagent-commit path.
 		"Do NOT run `git cherry-pick --skip`",
 		// Orchestrator-prompt warning against embedding parent worktree paths
-		// in teammate spawn prompts (the most likely trigger for the cd bug).
+		// in subagent spawn prompts (the most likely trigger for the cd bug).
 		"do NOT embed worktree paths",
 	}
 	for _, c := range mustContain {
@@ -422,8 +424,8 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 	}
 
 	// Cherry-pick integration must be emitted AFTER the Parallel group line,
-	// because it's the post-batch step the orchestrator runs once all teammates
-	// have returned (and it has discovered each teammate's branch via
+	// because it's the post-batch step the orchestrator runs once all subagents
+	// have returned (and it has discovered each subagent's branch via
 	// `git -C <worktreePath> rev-parse --abbrev-ref HEAD` — Claude Code's
 	// WorktreeCreate-hook path does not populate worktreeBranch on the Agent
 	// tool result, see docs/known-issues.md §3).
@@ -444,8 +446,8 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 	}
 
 	// PARENT_HEAD capture must precede the sanity-check guard, which must
-	// precede cherry-pick. The guard is what catches teammates that cd-ed
-	// out of their child worktree (known-issues §6).
+	// precede cherry-pick. The guard is what catches parallel subagents that
+	// cd-ed out of their child worktree (known-issues §6).
 	parentHeadIdx := strings.Index(result, "PARENT_HEAD=$(git rev-parse HEAD)")
 	guardIdx := strings.Index(result, "if [ \"$tip\" = \"$PARENT_HEAD\" ]")
 	if parentHeadIdx == -1 || guardIdx == -1 {
@@ -461,7 +463,7 @@ func TestBuildCodingPrompt_WithParallelTasks(t *testing.T) {
 
 // TestBuildCodingPrompt_ParallelBatchIntegration asserts every [P] group gets its
 // own cherry-pick + worktree-cleanup block in the Task Execution Order. Replaces
-// the retired TestBuildCodingPrompt_ParallelBatchResync: under per-teammate
+// the retired TestBuildCodingPrompt_ParallelBatchResync: under per-subagent
 // worktrees there is no main-index to resync, but the orchestrator still owes
 // one cherry-pick block per batch.
 func TestBuildCodingPrompt_ParallelBatchIntegration(t *testing.T) {
@@ -534,7 +536,7 @@ func TestBuildCodingPrompt_WithoutTasks_NoTaskWorkflow(t *testing.T) {
 		"Task Decomposition",
 		"Execution Strategy",
 		"Subagent Delegation",
-		"Agent Team Delegation",
+		"Parallel Subagent Delegation",
 		"task-runner",
 		"subagent_type",
 	}

@@ -1,5 +1,7 @@
 # Known Issues
 
+> **Terminology note (2026-04-24):** Incident entries below refer to parallel `[P]` subagents as "teammates" and to the parallel-batch delegation as "Agent Team". Those terms were updated project-wide to "parallel subagent" / "parallel subagent batch" to avoid confusion with Claude Code's Agent Team feature (`team_name + name` path in `AgentTool.tsx`) — zpit does not use that feature. The incident entries preserve the original wording to keep the time-ordered narrative consistent; any new entry below should use the new terminology.
+
 ## 1. Windows: Worktree cleanup fails when reviewer agent session is still active
 
 **Affected OS:** Windows only

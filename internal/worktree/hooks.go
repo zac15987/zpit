@@ -19,7 +19,7 @@ type HookScripts struct {
 	ExitWrapper      []byte // zpit-exit.cmd — clean exit for Windows non-agent launches (cmd)
 	ExitWrapperPS1   []byte // zpit-exit.ps1 — clean exit for Windows non-agent launches (pwsh/powershell)
 	NotifyPermission []byte // Notification hook — writes permission signal for Zpit TUI
-	WorktreeCreate   []byte // WorktreeCreate hook — forks child worktree from orchestrator HEAD for [P] teammates
+	WorktreeCreate   []byte // WorktreeCreate hook — forks child worktree from orchestrator HEAD for [P] parallel subagents
 }
 
 // Hook configuration JSON for each mode.
@@ -203,7 +203,7 @@ var zpitIgnoreRules = func() []string {
 	}
 	rules = append(rules, ".claude/settings.json")
 	rules = append(rules, ZpitDeployedFiles...)
-	// .zpit-children/ holds ephemeral per-teammate worktrees created by the
+	// .zpit-children/ holds ephemeral per-subagent worktrees created by the
 	// WorktreeCreate hook during [P] batches. Cleaned up by the orchestrator
 	// post-cherry-pick but always gitignored so in-flight or abandoned
 	// children never leak into a PR.

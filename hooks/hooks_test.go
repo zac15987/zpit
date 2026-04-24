@@ -284,7 +284,7 @@ func TestGitGuard_BlocksBranchDelete(t *testing.T) {
 	}
 }
 
-// Teammate-branch whitelist: per-teammate worktree cleanup emits
+// Parallel-subagent branch whitelist: per-subagent worktree cleanup emits
 // `git branch -D <parent>-agent-<hex>` — hook must allow it.
 func TestGitGuard_AllowsTeammateBranchDelete(t *testing.T) {
 	code, msg := runHook(t, "git-guard.sh",
@@ -304,8 +304,8 @@ func TestGitGuard_AllowsMultipleTeammateBranchDelete(t *testing.T) {
 	}
 }
 
-// If even one arg is not a teammate branch, block — prevents the whitelist
-// from being used as an escape hatch for arbitrary branch deletion.
+// If even one arg is not a parallel-subagent branch, block — prevents the
+// whitelist from being used as an escape hatch for arbitrary branch deletion.
 func TestGitGuard_BlocksMixedTeammateAndOtherBranchDelete(t *testing.T) {
 	code, _ := runHook(t, "git-guard.sh",
 		`{"tool_input":{"command":"git branch -D feat/1-foo-agent-a4035b9d dev"}}`,
@@ -667,7 +667,7 @@ func TestBashFirewall_NoType_StillAllowsRm(t *testing.T) {
 	}
 }
 
-// ── Per-teammate worktree tests ──
+// ── Per-subagent worktree tests ──
 //
 // These exercise the path-guard.sh ALLOWED_DIR tightening and the
 // worktree-create.sh hook behavior. They need a real git repo, so they

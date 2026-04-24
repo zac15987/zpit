@@ -96,25 +96,25 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 
 **使用方式：**
 - 循序 task：主 coding agent 透過 Agent tool 的 `subagent_type: "task-runner"` 逐一委派
-- 平行 task（`[P]`）：主 coding agent 建立 Agent Team，每個 teammate 使用 `task-runner` subagent type
+- 平行 task（`[P]`）：主 coding agent 派發一個**平行 subagent batch**，每個 `[P]` task 分配一個 `task-runner` subagent（走 Claude Code 的一般 subagent 路徑 + `isolation: "worktree"`，**不是** Claude Code 的 Agent Team / teammate 機制）
 
-**Per-Teammate Worktree Model（取代歷代 Parallel Commit Protocol v1/v2/v3）：**
+**Per-Subagent Worktree Model（取代歷代 Parallel Commit Protocol v1/v2/v3）：**
 
-每個 `[P]` teammate 跑在自己的 child worktree、自己的 branch 上，所以 staging index 與 `refs/heads/<branch>.lock` 的 race 從架構層面被消除（v1/v2/v3 修復的歷史脈絡見 `docs/known-issues.md` §2）。
+每個 `[P]` 平行 subagent 跑在自己的 child worktree、自己的 branch 上，所以 staging index 與 `refs/heads/<branch>.lock` 的 race 從架構層面被消除（v1/v2/v3 修復的歷史脈絡見 `docs/known-issues.md` §2）。
 
 流程：
 
-1. **Orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`**（這是 Claude Code 的 runtime parameter，不是 subagent frontmatter）— 見 `agents/task-runner.md` frontmatter 故意保持不變。
+1. **Orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`**（這是 Claude Code 的 runtime parameter，不是 subagent frontmatter）。
 2. Claude Code 觸發 zpit 的 `WorktreeCreate` hook（`hooks/worktree-create.sh`），hook 讀取 stdin JSON 的 `cwd` 與 `name`，執行 `git -C <cwd> worktree add -B <parent-branch>-<slug> <cwd>/.zpit-children/<slug> HEAD`（關鍵：fork 自 orchestrator 的 HEAD，而非 Claude Code 內建的 `origin/<defaultBranch>`，否則會錯過先前循序 task 的 commit），然後 `cp -r .claude/` + `.mcp.json` 進 child，把 worktree path 印到 stdout 交還 Claude Code。
-3. Teammate 在 child worktree 以 `git add -- <files> && git commit` 正常 commit，沒有任何 index 隔離、沒有 `mkdir` lock、沒有跨 shell 的 env 問題。
+3. 平行 subagent 在 child worktree 以 `git add -- <files> && git commit` 正常 commit，沒有任何 index 隔離、沒有 `mkdir` lock、沒有跨 shell 的 env 問題。
 4. Agent tool 回傳 `{worktreePath}` 給 orchestrator。**注意：`worktreeBranch` 永遠是 `undefined`** — Claude Code 的 `WorktreeCreate`-hook 路徑只會 propagate path，不會 propagate branch（根因追在 known-issues §3）。
-5. Orchestrator 在 cleanup 之前，先用一個 Bash call 查各 teammate 的分支名：`for path in <paths>; do git -C "$path" rev-parse --abbrev-ref HEAD; done`。這是權威來源 — 不靠字串推導，不依賴命名慣例。
+5. Orchestrator 在 cleanup 之前，先用一個 Bash call 查各 subagent 的分支名：`for path in <paths>; do git -C "$path" rev-parse --abbrev-ref HEAD; done`。這是權威來源 — 不靠字串推導，不依賴命名慣例。
 6. 拿到分支名後，orchestrator 在父 worktree 跑一次性 `git cherry-pick <branch1> <branch2> ...`（task-ID 順序）。Cherry-pick 衝突（spec bug：兩個 `[P]` task 寫同檔）會被 `git cherry-pick --abort` 當面擋下 → 停機等使用者，**不會**靜默半 merge。
 7. Cleanup 分為**兩個獨立的 Bash call**（絕不以 `&&` 串聯 — hook 擋下其中一個不能連累另一個）：
    - Call 1：`for path in <paths>; do git worktree remove --force "$path"; done` — `--force` 從一開始就帶，因為 child 裡有 `cp -r` 進去的 `.claude/` 是 untracked，無 `--force` 會 fail。
    - Call 2：`for branch in <branches>; do git branch -D "$branch"; done` — 若這個被 hook 擋下或失敗，必須單獨重試；不能跳過（會留 `*-agent-<hex>` orphan 分支污染本地 branch list，這是 known-issues §4 紀錄的實際發生過的 bug）。
 
-循序 task 不走此流程（不呼叫 `isolation: "worktree"`），直接在父 worktree commit。Teammate 的行為規範見 `agents/task-runner.md`（`Parallel Commit Protocol` 段已移除）。
+循序 task 不走此流程（不呼叫 `isolation: "worktree"`），直接在父 worktree commit。平行 subagent 的行為規範見 `agents/task-runner.md`（`Parallel Commit Protocol` 段已移除）。
 
 已知 bug 與對應 workaround 見 `docs/known-issues.md`：§3（Claude Code `WorktreeCreate` hook 不回 `worktreeBranch`）、§4（`git-guard.sh` 早期 block `git branch -D`）、§5（pre-202a0f3 部署殘跡：`.gitattributes` 與 `.claude/settings.local.json` 的 .gitignore 條目）。
 

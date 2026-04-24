@@ -91,7 +91,7 @@ You (TUI)                    Claude Code Agents
 
 - **Multi-project dashboard** — switch between projects with arrow keys, mouse scroll support
 - **Loop engine** — fully automated: poll todo issues → create worktree → coding agent → reviewer → PR merge → cleanup
-- **Task decomposition** — when an Issue Spec contains `## TASKS`, the coding agent delegates to `task-runner` subagents (sequential or parallel via Agent Teams)
+- **Task decomposition** — when an Issue Spec contains `## TASKS`, the coding agent delegates to `task-runner` subagents (sequential, or parallel batches with per-subagent `isolation: "worktree"`)
 - **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Permission / Ended), auto-detects running sessions on startup, survives `/resume` session switches
 - **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
