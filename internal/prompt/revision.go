@@ -79,10 +79,26 @@ func BuildRevisionPrompt(p RevisionParams) string {
 %s10. Use git add + git commit to commit changes
 11. Commit message format: [%s] fix: {brief description of fix}
 12. **Push the commit to the remote PR branch**: run ` + "`git push`" + ` in the worktree. The PR branch's upstream was set when the initial coding session opened the PR via ` + "`gh pr create`" + `, so plain ` + "`git push`" + ` is enough. If push is rejected because the upstream is unset (rare — only if the PR branch was recreated), use ` + "`git push -u origin <current-branch>`" + `. **Skipping this step is a silent failure mode**: your commits stay local, the reviewer fetches the remote PR and sees the old code, and the loop advances on stale state.
-13. Write a Revision Summary to both the PR comment AND the issue comment, covering:
-   - Which reviewer issues were addressed (reference by item number or quote)
-   - How each was fixed (brief: file changed, what changed)
-   - Any reviewer issues intentionally NOT addressed, with reason
+13. Write a Revision Summary to both the PR comment AND the issue comment, using this four-section structure (omit any subsection that has zero entries):
+
+   ### Must-fix items addressed
+   For each `+"`🔴 MUST FIX`"+` item from the previous review:
+   - Quote the reviewer's wording verbatim
+   - Name the fix location (file:line)
+   - One-sentence description of what changed
+
+   ### Non-blocking items addressed in this revision
+   Only list `+"`🟡`"+` items you chose to fix beyond what was required. Same format as Must-fix.
+
+   ### Deliberately deferred items
+   List each non-`+"`🔴`"+` item you chose NOT to fix. The rationale MUST be one of:
+   (a) a specific regression risk (e.g. "cosmetic refactor risks `+"`/clr`"+` boundary issues"),
+   (b) requires coordination with an external party / team,
+   (c) recommend follow-up issue: <description>.
+   "Nit" / "minor" / "low priority" alone is NOT an acceptable rationale — give the underlying reason. `+"`🔴`"+` items must NOT appear in this section. If you believe an item was miscategorized as `+"`🔴`"+`, say so in the revision summary and argue for reclassification rather than silently deferring.
+
+   ### Build-fit exceptions
+   List any package version API renames, SDK auto-include adjustments (e.g. `+"`<Compile Remove=\"X/**\" />`"+`), or build-target switches introduced during the revision. These are NOT counted against any AC that specifies "exactly N deviations" (see the issue's deviation-contract clauses). If no build-fit exceptions were introduced, omit this subsection entirely.
 14. Before starting fixes, update issue label: remove "needs-changes", add "wip"
 15. After fixes are complete, update issue label: remove "wip", add "review"
 

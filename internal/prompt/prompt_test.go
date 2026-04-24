@@ -272,6 +272,11 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 		"</constraints>",                                          // Direction B: XML tag close
 		"PASS walk-through",                                       // Direction B: AC self-check worked example (revision mode)
 		"FAIL walk-through",                                       // Direction B: AC self-check worked example (revision mode)
+		"Must-fix items addressed",                                // Direction C: structured deferral handshake
+		"Non-blocking items addressed in this revision",           // Direction C: structured deferral handshake
+		"Deliberately deferred items",                             // Direction C: structured deferral handshake
+		"Build-fit exceptions",                                    // Direction C: build-fit exceptions carve-out
+		"must NOT appear",                                         // Direction C: 🔴 deferral prohibition
 	}
 
 	for _, c := range checks {
