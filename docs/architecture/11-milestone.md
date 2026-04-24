@@ -154,11 +154,8 @@
 
 ## M5: 完整體驗（規劃中）
 
-- [ ] 機台 push 回來後自動觸發 review
-- [ ] 最近活動 feed（從 session log 解析）
 - [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
 - [ ] Cross-compile: 同一份 code 編譯 Windows + Linux binary
-- [ ] TUI log area（主畫面底部可捲動事件 log，顯示最近 N 筆）
 
 ## Refine: 體驗優化
 
