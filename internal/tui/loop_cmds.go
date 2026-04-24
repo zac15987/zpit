@@ -646,9 +646,9 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 		// Sync the main project directory's local base branch ref.
 		// Use a separate 15-second timeout so a slow fetch does not eat into CloseIssue budget.
 		// fetchCancel is called explicitly (not deferred) so the context is released immediately
-		// after FetchBranch returns, rather than lingering through CloseIssue.
+		// after SyncLocalBranch returns, rather than lingering through CloseIssue.
 		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		_, _, fetchErr := git.FetchBranch(fetchCtx, projectPath, baseBranch)
+		_, _, fetchErr := git.SyncLocalBranch(fetchCtx, projectPath, baseBranch)
 		fetchCancel()
 		if fetchErr != nil {
 			logger.Printf("loop: base branch sync failed project=%s issue=#%s branch=%s: %v",

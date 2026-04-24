@@ -50,6 +50,31 @@ func FetchBranch(ctx context.Context, cwd, branch string) (stdout, stderr string
 	return runGitSeparate(ctx, cwd, "fetch", "origin", refspec)
 }
 
+// SyncLocalBranch updates the local ref for `branch` in cwd to match origin/<branch>.
+// If `branch` is the currently checked-out HEAD, uses `git pull --ff-only origin <branch>`
+// (which updates the working tree atomically). Otherwise delegates to FetchBranch, which
+// refuses to update a checked-out branch.
+// On error, wraps git's stderr into the error message so callers using %v surface the
+// real cause (not just "exit status 128").
+func SyncLocalBranch(ctx context.Context, cwd, branch string) (stdout, stderr string, err error) {
+	current, err := currentBranchName(ctx, cwd)
+	if err != nil {
+		return "", "", err
+	}
+	if current == branch {
+		stdout, stderr, err = runGitSeparate(ctx, cwd, "pull", "--ff-only", "origin", branch)
+		if err != nil {
+			return stdout, stderr, fmt.Errorf("git pull --ff-only origin %s: %w: %s", branch, err, strings.TrimSpace(stderr))
+		}
+		return stdout, stderr, nil
+	}
+	stdout, stderr, err = FetchBranch(ctx, cwd, branch)
+	if err != nil {
+		return stdout, stderr, fmt.Errorf("git fetch origin %s:%s: %w: %s", branch, branch, err, strings.TrimSpace(stderr))
+	}
+	return stdout, stderr, nil
+}
+
 // LogGraph runs `git log --graph --oneline --all --decorate --color=always -n 50`.
 // Returns the raw (ANSI-colored) stdout. If stderr contains "does not have any commits yet"
 // or exit code indicates no commits, return ("", nil) so the caller can render a sentinel.
