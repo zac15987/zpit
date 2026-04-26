@@ -127,6 +127,19 @@ var (
 
 	endedStyle = lipgloss.NewStyle().
 			Foreground(mochaOverlay0)
+
+	// History modal buttons — mirror huh's FocusedButton/BlurredButton so
+	// inline overlay modals share the visual language of huh forms.
+	dialogButtonFocusedStyle = lipgloss.NewStyle().
+					Foreground(mochaCrust).
+					Background(colorAccent).
+					Bold(true).
+					Padding(0, 2)
+
+	dialogButtonBlurredStyle = lipgloss.NewStyle().
+					Foreground(colorText).
+					Background(mochaSurface0).
+					Padding(0, 2)
 )
 
 // styledHotkeys highlights [key] patterns in s with hotkeyLabelStyle,

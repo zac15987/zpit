@@ -165,6 +165,11 @@ type Model struct {
 	historyCollisionDecisions  map[string]sessionsync.CollisionDecision
 	historyMemoryDecision      sessionsync.CollisionDecision
 	historyImportResult        *sessionsync.UnpackResult
+	// historyButtonFocus is the index of the currently-focused button in the
+	// active History modal (active warning, export confirm, import final,
+	// collision). 0 = first/affirmative button. Reset on every modal entry.
+	// Arrow keys (←/→) cycle focus; Enter activates the focused button.
+	historyButtonFocus int
 
 	// textinput widgets for History import/export path entry
 	historyImportPathInput textinput.Model
@@ -1277,24 +1282,30 @@ func (m Model) findProject(id string) *config.ProjectConfig {
 // === History (Session Browser) handlers and helpers ===
 
 // initHistoryInputs lazily initialises the three textinput models the History
-// view uses. Called once when entering the import or export flow.
+// view uses. Called once when entering the import or export flow. All three
+// cap their visible Width at 50 cols so long paths (routine on Windows) don't
+// push the confirmOverlayStyle border off the right edge of the terminal —
+// the underlying value can still be longer; the textinput scrolls horizontally.
 func (m *Model) initHistoryInputs() {
 	if m.historyImportPathInput.Placeholder == "" {
 		ti := textinput.New()
 		ti.Placeholder = "/path/to/bundle.zip"
 		ti.CharLimit = 1024
+		ti.Width = 50
 		m.historyImportPathInput = ti
 	}
 	if m.historyExportPathInput.Placeholder == "" {
 		ti := textinput.New()
 		ti.Placeholder = "/path/to/output.zip"
 		ti.CharLimit = 1024
+		ti.Width = 50
 		m.historyExportPathInput = ti
 	}
 	if m.historyImportDestInput.Placeholder == "" {
 		ti := textinput.New()
 		ti.Placeholder = "/abs/path/to/project"
 		ti.CharLimit = 1024
+		ti.Width = 50
 		m.historyImportDestInput = ti
 	}
 }
@@ -1504,7 +1515,8 @@ func (m Model) handleHistoryModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleSessionCollisionModalKey handles keys for a per-session collision prompt.
-// Keys: [o] Overwrite, [s] Skip, [c] Cancel All, Esc = Cancel All.
+// Buttons: 0=Overwrite, 1=Skip, 2=Cancel All. ←/→ cycle focus, Enter activates.
+// Letter shortcuts [o]/[s]/[c] still work, plus Esc = Cancel All.
 func (m Model) handleSessionCollisionModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(m.historyCollisionQueue) == 0 {
 		return m, nil
@@ -1515,10 +1527,33 @@ func (m Model) handleSessionCollisionModalKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 	}
 	advance := func() (tea.Model, tea.Cmd) {
 		m.historyCollisionQueue = m.historyCollisionQueue[1:]
+		// Reset to safe default (Skip) for the next collision prompt.
+		m.historyButtonFocus = 1
 		if len(m.historyCollisionQueue) == 0 && !m.historyCollisionMemory {
 			return m.runImportPass2()
 		}
 		return m, nil
+	}
+	if msg.Type == tea.KeyLeft {
+		m.historyButtonFocus = (m.historyButtonFocus + 2) % 3
+		return m, nil
+	}
+	if msg.Type == tea.KeyRight {
+		m.historyButtonFocus = (m.historyButtonFocus + 1) % 3
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Enter) {
+		switch m.historyButtonFocus {
+		case 0:
+			m.historyCollisionDecisions[front] = sessionsync.DecisionOverwrite
+			return advance()
+		case 1:
+			m.historyCollisionDecisions[front] = sessionsync.DecisionSkip
+			return advance()
+		case 2:
+			m.historyCollisionDecisions[front] = sessionsync.DecisionCancelAll
+			return m.runImportPass2()
+		}
 	}
 	if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
 		switch msg.Runes[0] {
@@ -1541,8 +1576,29 @@ func (m Model) handleSessionCollisionModalKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 }
 
 // handleMemoryCollisionModalKey handles keys for the memory-directory collision prompt.
-// Keys: [o] Overwrite, [s] Skip, [c] Cancel All, Esc = Cancel All.
+// Buttons: 0=Overwrite, 1=Skip, 2=Cancel All. ←/→ cycle focus, Enter activates.
+// Letter shortcuts [o]/[s]/[c] still work, plus Esc = Cancel All.
 func (m Model) handleMemoryCollisionModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyLeft {
+		m.historyButtonFocus = (m.historyButtonFocus + 2) % 3
+		return m, nil
+	}
+	if msg.Type == tea.KeyRight {
+		m.historyButtonFocus = (m.historyButtonFocus + 1) % 3
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Enter) {
+		switch m.historyButtonFocus {
+		case 0:
+			m.historyMemoryDecision = sessionsync.DecisionOverwrite
+		case 1:
+			m.historyMemoryDecision = sessionsync.DecisionSkip
+		case 2:
+			m.historyMemoryDecision = sessionsync.DecisionCancelAll
+		}
+		m.historyCollisionMemory = false
+		return m.runImportPass2()
+	}
 	if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
 		switch msg.Runes[0] {
 		case 'o', 'O':
@@ -1577,15 +1633,28 @@ func (m Model) handleExportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch m.historyExportStep {
 	case 1:
-		// Active-session warning: Enter continues, Esc cancels (handled above).
+		// Active-session warning: ←/→ cycle 2 buttons; Enter activates focused;
+		// Esc cancels (handled above). Buttons: 0=continue, 1=cancel.
+		if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			m.historyButtonFocus = (m.historyButtonFocus + 1) % 2
+			return m, nil
+		}
 		if key.Matches(msg, m.keys.Enter) {
+			if m.historyButtonFocus == 1 {
+				// Cancel button focused — same as Esc.
+				m.historyExportStep = 0
+				m.historyExportFlowActive = false
+				m.historyActivePending = nil
+				return m, nil
+			}
 			m.historyExportStep = 2
+			m.historyButtonFocus = 0
 		}
 	case 2:
 		// Confirm modal: Tab toggles focus between memory checkbox and path input;
-		// Space toggles memory when checkbox is focused; Enter fires export and
-		// reads the path from the textinput when focused, otherwise from
-		// historyExportOutputPath.
+		// Space toggles memory when checkbox is focused; ←/→ cycle action buttons
+		// (when path input not focused — keep cursor movement when typing); Enter
+		// activates the focused action button. Buttons: 0=export, 1=cancel.
 		if key.Matches(msg, m.keys.FocusSwitch) {
 			if m.historyExportPathInput.Focused() {
 				m.historyExportPathInput.Blur()
@@ -1595,10 +1664,17 @@ func (m Model) handleExportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.historyExportPathInput.Focused() {
-			// Path input is focused — Enter commits the value and fires export.
+			// Path input is focused — Enter commits the value and runs the
+			// focused button's action; ←/→ are textinput cursor movement.
 			if key.Matches(msg, m.keys.Enter) {
 				if v := strings.TrimSpace(m.historyExportPathInput.Value()); v != "" {
 					m.historyExportOutputPath = v
+				}
+				if m.historyButtonFocus == 1 {
+					m.historyExportStep = 0
+					m.historyExportFlowActive = false
+					m.historyExportPathInput.Blur()
+					return m, nil
 				}
 				return m.runExport()
 			}
@@ -1606,12 +1682,21 @@ func (m Model) handleExportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyExportPathInput, cmd = m.historyExportPathInput.Update(msg)
 			return m, cmd
 		}
-		// Path input not focused — Space toggles checkbox, Enter fires export.
+		if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			m.historyButtonFocus = (m.historyButtonFocus + 1) % 2
+			return m, nil
+		}
+		// Path input not focused — Space toggles checkbox, Enter activates focused button.
 		if key.Matches(msg, m.keys.Space) {
 			m.historyExportIncludeMemory = !m.historyExportIncludeMemory
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Enter) {
+			if m.historyButtonFocus == 1 {
+				m.historyExportStep = 0
+				m.historyExportFlowActive = false
+				return m, nil
+			}
 			return m.runExport()
 		}
 	}
@@ -1765,6 +1850,7 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.historyImportDestPath = path
 				m.historyImportDestInput.Blur()
 				m.historyImportStep = 3
+				m.historyButtonFocus = 0
 				return m, nil
 			}
 			// Enter on freeform input: validate the typed value.
@@ -1776,6 +1862,7 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyImportDestPath = path
 			m.historyImportDestInput.Blur()
 			m.historyImportStep = 3
+			m.historyButtonFocus = 0
 			return m, nil
 		}
 		// Other keys go to the textinput only when it is focused.
@@ -1786,8 +1873,22 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case 3:
-		// Final preview: Enter starts collision detection + import.
+		// Final preview: ←/→ cycle 2 buttons (0=import, 1=cancel); Enter activates
+		// the focused button. Cancel resets the wizard.
+		if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			m.historyButtonFocus = (m.historyButtonFocus + 1) % 2
+			return m, nil
+		}
 		if key.Matches(msg, m.keys.Enter) {
+			if m.historyButtonFocus == 1 {
+				m.historyImportStep = 0
+				m.historyImportFlowActive = false
+				m.historyImportManifest = nil
+				m.historyImportSelection = nil
+				m.historyImportResult = nil
+				m.historyCollisionDecisions = nil
+				return m, nil
+			}
 			destEncoded := watcher.EncodeCwd(m.historyImportDestPath)
 			claudeHome, err := watcher.ClaudeHome()
 			if err != nil {
@@ -1861,6 +1962,8 @@ func (m Model) beginExportFlow() (tea.Model, tea.Cmd) {
 	m.historyExportPathInput.SetValue(m.historyExportOutputPath)
 	m.historyExportPathInput.Blur() // start with checkbox focused; Tab focuses path input
 	m.historyExportFlowActive = true
+	// Default the action button to the affirmative (Continue / Export).
+	m.historyButtonFocus = 0
 	if len(pending) > 0 {
 		m.historyExportStep = 1
 	} else {
@@ -1894,6 +1997,10 @@ func (m Model) handleSessionCollisionsT10(msg sessionCollisionsMsg) (tea.Model, 
 	if len(msg.SessionCollisions) == 0 && !msg.MemoryCollision {
 		return m.runImportPass2()
 	}
+	// Default the collision button focus to "Skip" — the safest choice when a
+	// destination file already exists. User can tab to Overwrite or Cancel All
+	// before pressing Enter.
+	m.historyButtonFocus = 1
 	// Collision prompts exist; the modal loop (handleSessionCollisionModalKey /
 	// handleMemoryCollisionModalKey) will resolve them one at a time before
 	// calling runImportPass2.

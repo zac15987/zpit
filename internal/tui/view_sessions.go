@@ -227,7 +227,7 @@ func (m Model) renderHistoryFooter() string {
 func (m Model) renderHistoryModal() string {
 	// Active-session warning takes precedence (export step 1).
 	if m.historyExportStep == 1 && len(m.historyActivePending) > 0 {
-		return renderHistoryActiveWarningModal(m.historyActivePending)
+		return renderHistoryActiveWarningModal(m.historyActivePending, m.historyButtonFocus)
 	}
 	// Export confirm modal (step 2).
 	if m.historyExportStep == 2 {
@@ -264,14 +264,29 @@ func (m Model) renderHistoryModal() string {
 	return ""
 }
 
+// renderDialogButtons renders a horizontal row of buttons, with the button at
+// index `focus` styled as focused. Mirrors huh's confirm-field button rendering
+// so History overlay modals share the same visual language as deploy dialogs.
+func renderDialogButtons(focus int, labels ...string) string {
+	parts := make([]string, 0, len(labels))
+	for i, label := range labels {
+		if i == focus {
+			parts = append(parts, dialogButtonFocusedStyle.Render(label))
+		} else {
+			parts = append(parts, dialogButtonBlurredStyle.Render(label))
+		}
+	}
+	return "  " + strings.Join(parts, "  ")
+}
+
 // renderHistoryActiveWarningModal warns the user that one or more sessions in
 // the current export selection are attached to alive Claude Code processes.
-func renderHistoryActiveWarningModal(activeIDs []string) string {
+func renderHistoryActiveWarningModal(activeIDs []string, focus int) string {
 	title := selectedStyle.Render(locale.T(locale.KeyHistoryActiveWarningTitle))
 	body := fmt.Sprintf(locale.T(locale.KeyHistoryActiveWarningBody), strings.Join(activeIDs, ", "))
-	btns := fmt.Sprintf("  [%s]  [%s]",
-		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryActiveWarningContinue)),
-		hotkeyLabelStyle.Render(locale.T(locale.KeyCancel)))
+	btns := renderDialogButtons(focus,
+		locale.T(locale.KeyHistoryActiveWarningContinue),
+		locale.T(locale.KeyCancel))
 	return strings.Join([]string{title, "", body, "", btns}, "\n")
 }
 
@@ -301,9 +316,9 @@ func (m Model) renderHistoryExportConfirmModal() string {
 	// (default), the checkbox is the active control. Tab toggles focus.
 	pathLine := locale.T(locale.KeyHistoryExportPathLabel) + " " + m.historyExportPathInput.View()
 
-	btns := fmt.Sprintf("  [%s]  [%s]",
-		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryExportButton)),
-		hotkeyLabelStyle.Render(locale.T(locale.KeyCancel)))
+	btns := renderDialogButtons(m.historyButtonFocus,
+		locale.T(locale.KeyHistoryExportButton),
+		locale.T(locale.KeyCancel))
 	return strings.Join([]string{title, "", body, "", memLine, "", pathLine, "", btns}, "\n")
 }
 
@@ -393,9 +408,9 @@ func (m Model) renderHistoryImportFinalModal() string {
 	encoded := encodeCwdForPreview(m.historyImportDestPath)
 	body := fmt.Sprintf(locale.T(locale.KeyHistoryImportFinalPreview), encoded, selCount, memText)
 
-	btns := fmt.Sprintf("  [%s]  [%s]",
-		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryImportButton)),
-		hotkeyLabelStyle.Render(locale.T(locale.KeyCancel)))
+	btns := renderDialogButtons(m.historyButtonFocus,
+		locale.T(locale.KeyHistoryImportButton),
+		locale.T(locale.KeyCancel))
 	return strings.Join([]string{title, "", body, "", btns}, "\n")
 }
 
@@ -418,10 +433,10 @@ func (m Model) renderHistoryCollisionModal(sessionID string, isMemory bool) stri
 		title = selectedStyle.Render(locale.T(locale.KeyHistoryCollisionTitle))
 		body = fmt.Sprintf(locale.T(locale.KeyHistoryCollisionBody), sessionID)
 	}
-	btns := fmt.Sprintf("  [%s]  [%s]  [%s]",
-		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryCollisionOverwrite)),
-		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryCollisionSkip)),
-		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryCollisionCancelAll)))
+	btns := renderDialogButtons(m.historyButtonFocus,
+		locale.T(locale.KeyHistoryCollisionOverwrite),
+		locale.T(locale.KeyHistoryCollisionSkip),
+		locale.T(locale.KeyHistoryCollisionCancelAll))
 	return strings.Join([]string{title, "", body, "", btns}, "\n")
 }
 
