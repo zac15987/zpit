@@ -35,6 +35,7 @@ type forgejoPR struct {
 	Merged  bool         `json:"merged"`
 	HTMLURL string       `json:"html_url"`
 	Head    forgejoPRRef `json:"head"`
+	Base    forgejoPRRef `json:"base"`
 }
 
 type forgejoPRRef struct {
@@ -167,11 +168,12 @@ func (c *ForgejoClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo,
 	var result []PRInfo
 	for _, pr := range prs {
 		result = append(result, PRInfo{
-			ID:     fmt.Sprintf("%d", pr.Number),
-			Title:  pr.Title,
-			Branch: pr.Head.Ref,
-			State:  pr.State,
-			URL:    pr.HTMLURL,
+			ID:         fmt.Sprintf("%d", pr.Number),
+			Title:      pr.Title,
+			Branch:     pr.Head.Ref,
+			BaseBranch: pr.Base.Ref,
+			State:      pr.State,
+			URL:        pr.HTMLURL,
 		})
 	}
 	return result, nil

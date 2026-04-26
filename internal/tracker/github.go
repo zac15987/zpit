@@ -37,6 +37,7 @@ type githubPR struct {
 	MergedAt *string     `json:"merged_at"` // list endpoint omits "merged"; use as fallback
 	HTMLURL  string      `json:"html_url"`
 	Head     githubPRRef `json:"head"`
+	Base     githubPRRef `json:"base"`
 }
 
 type githubPRRef struct {
@@ -172,11 +173,12 @@ func (c *GitHubClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, 
 	var result []PRInfo
 	for _, pr := range prs {
 		result = append(result, PRInfo{
-			ID:     fmt.Sprintf("%d", pr.Number),
-			Title:  pr.Title,
-			Branch: pr.Head.Ref,
-			State:  pr.State,
-			URL:    pr.HTMLURL,
+			ID:         fmt.Sprintf("%d", pr.Number),
+			Title:      pr.Title,
+			Branch:     pr.Head.Ref,
+			BaseBranch: pr.Base.Ref,
+			State:      pr.State,
+			URL:        pr.HTMLURL,
 		})
 	}
 	return result, nil

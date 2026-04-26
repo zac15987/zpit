@@ -514,11 +514,16 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		baseBranch := pr.BaseBranch
+		if baseBranch == "" && project != nil {
+			baseBranch = project.BaseBranch
+		}
 		slot := &loop.Slot{
 			ProjectID:    msg.ProjectID,
 			IssueID:      issueID,
 			IssueTitle:   pr.Title,
 			BranchName:   pr.Branch,
+			BaseBranch:   baseBranch,
 			WorktreePath: wtPath,
 		}
 		ls.Slots[key] = slot
