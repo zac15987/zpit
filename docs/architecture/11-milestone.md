@@ -149,3 +149,21 @@
 - [x] `renderTerminalsBody` / `renderLoopBody` 建 `termLineStarts` / `loopLineStarts` 供可變 stride cursor-follow 使用
 - [x] `TestComputePanelRects` 8 個 case 覆蓋 wide/narrow/empty/clamp 邊界
 - [x] 後續 refactor：`panelInnerSize` + `applyPanelContent` 抽出 4 個 sync 函式的重複 prologue/epilogue；`dockPanel` struct 把 `renderOne`/`renderPanelChrome` 參數從 7/6 降到 1；magic number 全改為具名常數
+
+## M4h: Session sync (cross-machine /resume)
+
+> 已完成 — Issue #102
+
+- [x] T1: `internal/sessionsync/manifest.go` — Manifest schema (`format_version`, `source_os`, `source_cwd`, `source_encoded_cwd`, `sessions[]`, `exported_at`, `include_memory`) + `MarshalManifest` / `UnmarshalManifest` / `DetectSourceOS` + JSON round-trip 測試
+- [x] T2: `internal/sessionsync/scan.go` — `ProjectsRoot` / `ScanFolders` / `ScanSessions`（含 `HasSubagents` 偵測）+ 8 case 測試
+- [x] T3: `internal/sessionsync/pack.go` — `Pack` zip writer，自動從 session line 抽 `cwd` 寫入 manifest，subagents + 可選 memory 子樹打包；session JSONL 以 `bufio.Scanner` 64MB buffer 串流 + 9 case 測試
+- [x] T4: `internal/sessionsync/unpack.go` — `Unpack` + cwd rewrite（line-by-line JSON-aware：只改 `cwd` 欄位）+ `LoadManifest` + `DetectCollisions` + collision-resolver callback (Overwrite/Skip/CancelAll) + 11 case 測試（含 cross-OS round-trip 過 `watcher.ParseLine`）
+- [x] T5: `internal/locale/keys.go` + `en.go` + `zh_tw.go` — 42 個新 KeyHistory* locale key 與英中翻譯
+- [x] T6: `internal/tui/msg.go` — 七個新 `tea.Msg` 型別（HistoryFoldersScannedMsg、HistorySessionsScannedMsg、ExportStartedMsg、ExportCompletedMsg、ImportStartedMsg、ImportProgressMsg、ImportCompletedMsg、CollisionPromptMsg）
+- [x] T7: `internal/tui/keymap.go` — `History` 鍵綁定到 `h`
+- [x] T8: `internal/tui/sessions.go` — cmd factories（scan folders / scan sessions / detect active PIDs / export / load manifest / detect collisions / import）+ msg handlers，AC-16 log format 全 character-by-character 驗證
+- [x] T9: `internal/tui/view_sessions.go` — folder list / session list / 8 種 modal 渲染（active warning / export confirm / import preview / dest entry / final preview / running / summary / collision），全部走 `locale.T()`
+- [x] T10: `internal/tui/model.go` — `ViewHistory` View constant、`[h]` 鍵 handler、31 個 per-Model history 欄位、textinput widgets（bundle path / output path / dest path）、import wizard 步驟機（0 path → 1 preview → 2 dest → 3 final → 4 running → 5 summary）、export wizard 步驟機（0 hidden → 1 active warning → 2 confirm → 3 running）、collision queue dispatch
+- [x] T11: `internal/tui/view_projects.go` — Hotkey 面板加入 `[h] History`，與 `[m] Channel` 同組（cross-session features）
+- [x] T12: README.md + CLAUDE.md 加入 Session sync 說明、Package Structure 加入 `sessionsync/`
+- [x] T13: `docs/architecture/02-tui-design.md` 加入 2.7 History 子節 + `docs/architecture/11-milestone.md` 加入 M4h 區塊

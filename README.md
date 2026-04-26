@@ -104,6 +104,58 @@ You (TUI)                    Claude Code Agents
 - **Per-role model selection** — `[agent_models]` lets you choose a model per agent role (defaults to Opus across all roles with 1M context, tuned for single-round coding→review accuracy); override any value in config
 - **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
 
+## Session sync (cross-machine /resume)
+
+When you work across multiple machines (laptop at home, desktop at the office) and want to continue a long Claude Code conversation on the other machine, the session JSONL file is the unit of replay — but Claude Code's `~/.claude/projects/<encoded-cwd>/` directory uses an OS-specific encoded folder name and embeds the absolute project path inside every session line. A naive file copy is invisible to `claude --resume` on the other side.
+
+Zpit's **`[h] History`** view bridges this. From the main dock press `h` to open the Session Browser:
+
+- Top level: every encoded folder under `~/.claude/projects/`. Each row shows session count, total size, last-modified time, and a 🟢 marker when at least one session is currently alive on this machine.
+- Drill into a folder: every `*.jsonl` session with multi-select checkboxes. 🧩 marks sessions that have a sibling `<id>/subagents/` directory; 🟢 marks live sessions.
+
+### Export
+
+In the session list, select one or more sessions with `Space` (or `[a]` to toggle all). Press `[e]` to export. Zpit warns if any selected session is currently active (informational — you can still proceed) and writes a zip bundle containing:
+
+- One `<session-id>.jsonl` per selected session at the zip root.
+- One `<session-id>/subagents/` subtree per selected session that has subagents on disk (preserved verbatim).
+- A `manifest.json` describing the source OS and absolute project path so the importer can rewrite paths.
+- Optionally a `memory/` subtree (opt-in via the `[ ] Include memory/` checkbox at export time — off by default to avoid leaking project-private notes).
+
+Default output path: `~/.zpit/exports/<folder-name>-<YYYYMMDD-HHMMSS>.zip`.
+
+You can also press `[E]` (capital) on a folder row in the top-level view to export every session in that folder in one shot.
+
+### Import
+
+From the top-level folder list, press `[i]` (or select the `[+] Import bundle...` row + Enter) to open the import wizard. Steps:
+
+1. Bundle path entry — type the path to a `.zip` produced by the exporter above.
+2. Manifest preview — Zpit reads `manifest.json` and shows source OS, source path, session count, memory inclusion. Per-session checkboxes let you deselect individual sessions.
+3. Destination path — type the absolute path of the destination project on this machine.
+4. Final preview — Zpit shows the resolved `~/.claude/projects/<dest-encoded>/` and the action plan. Confirm to run.
+5. Run — Zpit rewrites `cwd` fields in each session JSONL line to the destination path (only the JSON `cwd` field, never literal path text in chat content), copies subagents verbatim, and optionally writes `memory/` if the bundle included it.
+
+If the destination already has a session with the same ID, you get a 3-button collision modal: **Overwrite**, **Skip this session**, or **Cancel entire import**. The same prompt applies to the `memory/` directory.
+
+After import, `claude --resume <session-id>` on this machine sees the new file.
+
+### Bundle format
+
+The zip bundle contains:
+
+```
+<bundle.zip>
+├── manifest.json                     # format_version, source_os, source_cwd,
+│                                     # source_encoded_cwd, sessions[], exported_at,
+│                                     # include_memory
+├── <session-id>.jsonl                # one per session (lines streamed)
+├── <session-id>/subagents/...        # one per session with subagents (verbatim)
+└── memory/...                        # only when include_memory=true
+```
+
+`source_cwd` is sourced from any session line's `cwd` field when available; only when no line has one does the exporter fall back to a lossy reverse-derivation of the encoded folder name.
+
 ## Requirements
 
 - [Go](https://go.dev/) 1.26+

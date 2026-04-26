@@ -22,6 +22,7 @@ type KeyMap struct {
 	Add        key.Binding
 	EditConfig key.Binding
 	Channel    key.Binding
+	History    key.Binding
 	Undeploy   key.Binding
 	Redeploy   key.Binding
 	Help       key.Binding
@@ -66,6 +67,7 @@ func DefaultKeyMap() KeyMap {
 		Add:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add project")),
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
 		Channel:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "channel")),
+		History:    key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "history")),
 		Undeploy:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undeploy")),
 		Redeploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "redeploy")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),

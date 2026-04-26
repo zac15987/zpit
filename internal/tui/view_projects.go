@@ -534,6 +534,7 @@ func (m Model) renderHotkeysBody(innerWidth, innerHeight int) string {
 		{"u", locale.T(locale.KeyUndeploy), false},
 		{"d", locale.T(locale.KeyRedeploy), false},
 		{"m", locale.T(locale.KeyChannelComm), false},
+		{"h", locale.T(locale.KeyHistoryHotkey), false},
 		{"g", locale.T(locale.KeyGitStatusHotkeyLabel), false},
 		{"G", locale.T(locale.KeyLazygit), false},
 		{"U", locale.T(locale.KeyClaudeUpdate), false},

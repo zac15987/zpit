@@ -44,6 +44,7 @@ internal/
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
 ├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
 ├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
+├── sessionsync/         # Session bundle pack/unpack + cross-OS cwd rewrite (zip + manifest)
 ├── ssh/                 # Wish SSH server: StartServerAsync(), ServerHandle, StartServer(), auth config
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
@@ -113,6 +114,20 @@ The TUI monitors Claude Code sessions via JSONL log files:
 4. State detection: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
 5. Permission detection: `notify-permission.sh` hook writes signal file to `~/.zpit/signals/`, TUI polls every 2s
 6. Liveness check every 5s; `/resume` detection re-reads `{pid}.json` for session ID changes
+
+### Session Sync ([h] History)
+
+The `[h]` History view (`internal/tui/view_sessions.go` + `sessions.go` + `internal/sessionsync/`) lets users move Claude Code conversations between machines so `claude --resume <session-id>` works on the destination.
+
+**Bundle format** (`sessionsync.Manifest`): a zip with `manifest.json` at the root + one `<session-id>.jsonl` per session + optional `<session-id>/subagents/` subtrees + optional `memory/` subtree. Manifest captures `format_version`, `source_os`, `source_cwd`, `source_encoded_cwd`, `sessions[]`, `exported_at`, `include_memory`.
+
+**Cross-OS path rewrite**: each session JSONL is re-streamed at import time. Lines that parse as JSON objects with a `"cwd"` string field equal to the bundle's `source_cwd` are re-marshalled with the new destination cwd; every other line passes through verbatim. Path-shaped strings inside `text` / `message.content` are NEVER rewritten — the rewrite only touches the JSON `cwd` field.
+
+**`[h]` view (`internal/tui/view_sessions.go`)**: full-screen view with two states — folder list (every directory under `~/.claude/projects/`) and drilled-in session list (multi-select with `Space` / `[a]`, export via `[e]`, import via `[i]` or `[+] Import bundle...`). Modal stack handles active-session warning, export confirm, import wizard (path → preview → dest → final → run → summary), and per-session collision prompts.
+
+**Active-session detection**: reads `~/.claude/sessions/*.json` and matches by SessionID + alive PID via `watcher.IsClaudeProcess`. Used to flag the 🟢 marker in the session list and warn at export time when a selected session is mid-conversation.
+
+**Memory bundling is opt-in** (default off) — memory may contain user-private notes (email, dated reminders) that are not strictly required for `/resume` continuity.
 
 ### AppState + Multi-Client Architecture
 
