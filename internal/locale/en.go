@@ -237,4 +237,13 @@ var en = map[Key]string{
 	KeyHistoryNotIncluded:           "not-included",
 	KeyHistoryWritten:               "written",
 	KeyHistorySkipped:               "skipped",
+
+	// History (Session Browser) — error/status strings
+	KeyHistoryScanFailed:         "history: scan failed: %s",
+	KeyHistoryScanSessionsFailed: "history: scan sessions failed: %s",
+	KeyHistoryLoadManifestFailed: "history: load manifest failed: %s",
+	KeyHistoryImportFailed:       "history: import failed: %s",
+	KeyHistoryDestMustBeAbs:      "Destination must be an absolute path",
+	KeyHistoryNoSelection:        "No sessions selected",
+	KeyHistoryClaudeHomeError:    "history: cannot resolve ~/.claude: %s",
 }

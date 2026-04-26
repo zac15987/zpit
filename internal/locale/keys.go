@@ -238,4 +238,13 @@ const (
 	KeyHistoryNotIncluded           Key = "history_not_included"
 	KeyHistoryWritten               Key = "history_written"
 	KeyHistorySkipped               Key = "history_skipped"
+
+	// History (Session Browser) — error/status strings
+	KeyHistoryScanFailed         Key = "history_scan_failed"
+	KeyHistoryScanSessionsFailed Key = "history_scan_sessions_failed"
+	KeyHistoryLoadManifestFailed Key = "history_load_manifest_failed"
+	KeyHistoryImportFailed       Key = "history_import_failed"
+	KeyHistoryDestMustBeAbs      Key = "history_dest_must_be_absolute"
+	KeyHistoryNoSelection        Key = "history_no_selection"
+	KeyHistoryClaudeHomeError    Key = "history_claude_home_error"
 )

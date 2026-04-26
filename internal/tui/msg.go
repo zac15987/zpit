@@ -252,10 +252,14 @@ type GitPullResultMsg struct {
 
 // HistoryFoldersScannedMsg carries the result of scanning ~/.claude/projects/.
 // Folders holds one FolderInfo per encoded project directory found on disk.
+// ActivePIDsByFolder maps each encoded folder name to true when at least one
+// session in that folder has a currently alive Claude Code PID, allowing the
+// folder list to render the 🟢 active marker without drilling in.
 // Err is non-nil when the scan itself failed (e.g. directory unreadable).
 type HistoryFoldersScannedMsg struct {
-	Folders []sessionsync.FolderInfo
-	Err     error
+	Folders            []sessionsync.FolderInfo
+	ActivePIDsByFolder map[string]bool
+	Err                error
 }
 
 // HistorySessionsScannedMsg carries the result of scanning sessions inside one

@@ -49,7 +49,9 @@ type sessionCollisionsMsg struct {
 // === Cmd factories ===
 
 // scanHistoryFoldersCmd returns a tea.Cmd that lists encoded folders under
-// ~/.claude/projects/.
+// ~/.claude/projects/ and computes which encoded folders contain at least one
+// currently alive Claude Code session. The active map drives the 🟢 marker on
+// each folder row in the History view (AC-1).
 func (m Model) scanHistoryFoldersCmd() tea.Cmd {
 	logger := m.state.logger
 	return func() tea.Msg {
@@ -63,8 +65,54 @@ func (m Model) scanHistoryFoldersCmd() tea.Cmd {
 			logger.Printf("history: scan folders error: %v", err)
 			return HistoryFoldersScannedMsg{Err: err}
 		}
-		return HistoryFoldersScannedMsg{Folders: folders}
+		activeByFolder := computeActivePIDsByFolder(logger)
+		return HistoryFoldersScannedMsg{
+			Folders:            folders,
+			ActivePIDsByFolder: activeByFolder,
+		}
 	}
+}
+
+// computeActivePIDsByFolder reads ~/.claude/sessions/*.json once and returns a
+// map from encoded folder name to true for every folder that has at least one
+// session whose backing PID is alive. The encoded folder is derived from the
+// session file's `cwd` field via watcher.EncodeCwd.
+func computeActivePIDsByFolder(logger *log.Logger) map[string]bool {
+	result := make(map[string]bool)
+	claudeHome, err := watcher.ClaudeHome()
+	if err != nil {
+		return result
+	}
+	sessDir := filepath.Join(claudeHome, "sessions")
+	entries, err := os.ReadDir(sessDir)
+	if err != nil {
+		return result
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(sessDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var info struct {
+			PID int    `json:"pid"`
+			Cwd string `json:"cwd"`
+		}
+		if err := json.Unmarshal(data, &info); err != nil {
+			continue
+		}
+		if info.Cwd == "" {
+			continue
+		}
+		if !watcher.IsClaudeProcess(info.PID) {
+			continue
+		}
+		encoded := watcher.EncodeCwd(info.Cwd)
+		result[encoded] = true
+	}
+	return result
 }
 
 // scanHistorySessionsCmd returns a tea.Cmd that lists sessions inside one
@@ -260,10 +308,13 @@ func (m Model) detectImportCollisionsCmd(destDir string, sessionIDs []string, in
 
 func (m Model) handleHistoryFoldersScanned(msg HistoryFoldersScannedMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
-		m.setStatus(fmt.Sprintf("history: scan failed: %s", msg.Err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryScanFailed), msg.Err))
 		return m, nil
 	}
 	m.historyFolders = msg.Folders
+	if msg.ActivePIDsByFolder != nil {
+		m.historyActivePIDsByFolder = msg.ActivePIDsByFolder
+	}
 	// +1 accounts for the "[+] Import bundle..." pseudo-row that the view prepends.
 	if m.historyFolderCursor >= len(m.historyFolders)+1 {
 		m.historyFolderCursor = 0
@@ -273,7 +324,7 @@ func (m Model) handleHistoryFoldersScanned(msg HistoryFoldersScannedMsg) (tea.Mo
 
 func (m Model) handleHistorySessionsScanned(msg HistorySessionsScannedMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
-		m.setStatus(fmt.Sprintf("history: scan sessions failed: %s", msg.Err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryScanSessionsFailed), msg.Err))
 		return m, nil
 	}
 	m.historySessions = msg.Sessions
@@ -305,7 +356,7 @@ func (m Model) handleExportCompleted(msg ExportCompletedMsg) (tea.Model, tea.Cmd
 
 func (m Model) handleManifestLoaded(msg manifestLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
-		m.setStatus(fmt.Sprintf("history: load manifest failed: %s", msg.Err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryLoadManifestFailed), msg.Err))
 		m.historyImportStep = 0 // back to path entry
 		return m, nil
 	}
@@ -324,7 +375,7 @@ func (m Model) handleManifestLoaded(msg manifestLoadedMsg) (tea.Model, tea.Cmd) 
 
 func (m Model) handleImportCompleted(msg ImportCompletedMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
-		m.setStatus(fmt.Sprintf("history: import failed: %s", msg.Err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryImportFailed), msg.Err))
 		m.historyImportStep = 0
 		return m, nil
 	}

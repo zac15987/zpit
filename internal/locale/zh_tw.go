@@ -237,4 +237,13 @@ var zhTW = map[Key]string{
 	KeyHistoryNotIncluded:           "未包含",
 	KeyHistoryWritten:               "已寫入",
 	KeyHistorySkipped:               "已略過",
+
+	// History (Session Browser) — error/status strings
+	KeyHistoryScanFailed:         "history：掃描失敗：%s",
+	KeyHistoryScanSessionsFailed: "history：掃描 sessions 失敗：%s",
+	KeyHistoryLoadManifestFailed: "history：載入 manifest 失敗：%s",
+	KeyHistoryImportFailed:       "history：匯入失敗：%s",
+	KeyHistoryDestMustBeAbs:      "目標必須為絕對路徑",
+	KeyHistoryNoSelection:        "未選擇任何 session",
+	KeyHistoryClaudeHomeError:    "history：無法解析 ~/.claude：%s",
 }

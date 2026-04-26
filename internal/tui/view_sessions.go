@@ -295,7 +295,11 @@ func (m Model) renderHistoryExportConfirmModal() string {
 		chk = "[x]"
 	}
 	memLine := chk + " " + locale.T(locale.KeyHistoryExportIncludeMemory)
-	pathLine := locale.T(locale.KeyHistoryExportPathLabel) + " " + m.historyExportOutputPath
+
+	// Render the output path as a textinput so the user can edit it (AC-4).
+	// The path field is the historyExportPathInput textinput; when not focused
+	// (default), the checkbox is the active control. Tab toggles focus.
+	pathLine := locale.T(locale.KeyHistoryExportPathLabel) + " " + m.historyExportPathInput.View()
 
 	btns := fmt.Sprintf("  [%s]  [%s]",
 		hotkeyLabelStyle.Render(locale.T(locale.KeyHistoryExportButton)),

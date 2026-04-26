@@ -1525,26 +1525,58 @@ func (m Model) handleExportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyExportStep = 2
 		}
 	case 2:
-		// Confirm modal: Space toggles memory checkbox, Enter runs export.
+		// Confirm modal: Tab toggles focus between memory checkbox and path input;
+		// Space toggles memory when checkbox is focused; Enter fires export and
+		// reads the path from the textinput when focused, otherwise from
+		// historyExportOutputPath.
+		if key.Matches(msg, m.keys.FocusSwitch) {
+			if m.historyExportPathInput.Focused() {
+				m.historyExportPathInput.Blur()
+			} else {
+				m.historyExportPathInput.Focus()
+			}
+			return m, nil
+		}
+		if m.historyExportPathInput.Focused() {
+			// Path input is focused — Enter commits the value and fires export.
+			if key.Matches(msg, m.keys.Enter) {
+				if v := strings.TrimSpace(m.historyExportPathInput.Value()); v != "" {
+					m.historyExportOutputPath = v
+				}
+				return m.runExport()
+			}
+			var cmd tea.Cmd
+			m.historyExportPathInput, cmd = m.historyExportPathInput.Update(msg)
+			return m, cmd
+		}
+		// Path input not focused — Space toggles checkbox, Enter fires export.
 		if key.Matches(msg, m.keys.Space) {
 			m.historyExportIncludeMemory = !m.historyExportIncludeMemory
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Enter) {
-			ids := make([]string, 0, len(m.historySelected))
-			for _, s := range m.historySessions {
-				if m.historySelected[s.SessionID] {
-					ids = append(ids, s.SessionID)
-				}
-			}
-			outPath := m.historyExportOutputPath
-			include := m.historyExportIncludeMemory
-			folder := m.historyDrilledFolder
-			m.historyExportStep = 3 // running
-			return m, m.exportSessionsCmd(folder, ids, include, outPath)
+			return m.runExport()
 		}
 	}
 	return m, nil
+}
+
+// runExport fires the export command using the currently selected sessions and
+// the resolved output path. Called from both the confirm-modal Enter handler
+// and the path-input-focused Enter handler.
+func (m Model) runExport() (tea.Model, tea.Cmd) {
+	ids := make([]string, 0, len(m.historySelected))
+	for _, s := range m.historySessions {
+		if m.historySelected[s.SessionID] {
+			ids = append(ids, s.SessionID)
+		}
+	}
+	outPath := m.historyExportOutputPath
+	include := m.historyExportIncludeMemory
+	folder := m.historyDrilledFolder
+	m.historyExportStep = 3 // running
+	m.historyExportPathInput.Blur()
+	return m, m.exportSessionsCmd(folder, ids, include, outPath)
 }
 
 // handleImportModalKey handles keys for all import-wizard modal steps (0–5).
@@ -1632,7 +1664,7 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.Enter) {
 			path := strings.TrimSpace(m.historyImportDestInput.Value())
 			if path == "" || !filepath.IsAbs(path) {
-				m.setStatus("Destination must be an absolute path")
+				m.setStatus(locale.T(locale.KeyHistoryDestMustBeAbs))
 				return m, nil
 			}
 			m.historyImportDestPath = path
@@ -1649,7 +1681,7 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			destEncoded := watcher.EncodeCwd(m.historyImportDestPath)
 			claudeHome, err := watcher.ClaudeHome()
 			if err != nil {
-				m.setStatus(fmt.Sprintf("history: cannot resolve ~/.claude: %s", err))
+				m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryClaudeHomeError), err))
 				return m, nil
 			}
 			destDir := filepath.Join(claudeHome, "projects", destEncoded)
@@ -1693,7 +1725,7 @@ func (m Model) beginExportFlow() (tea.Model, tea.Cmd) {
 		}
 	}
 	if len(selectedIDs) == 0 {
-		m.setStatus("No sessions selected")
+		m.setStatus(locale.T(locale.KeyHistoryNoSelection))
 		return m, nil
 	}
 	activeSet := make(map[string]bool, len(m.historyActiveIDs))
@@ -1713,6 +1745,11 @@ func (m Model) beginExportFlow() (tea.Model, tea.Cmd) {
 			m.historyExportOutputPath = path
 		}
 	}
+	m.initHistoryInputs()
+	// Seed the export path textinput with the resolved default so the user can
+	// edit it in the confirm modal before pressing Enter (AC-4).
+	m.historyExportPathInput.SetValue(m.historyExportOutputPath)
+	m.historyExportPathInput.Blur() // start with checkbox focused; Tab focuses path input
 	m.historyExportFlowActive = true
 	if len(pending) > 0 {
 		m.historyExportStep = 1
