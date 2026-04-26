@@ -269,3 +269,111 @@ TUI 本身透過 session log 即時顯示進度摘要。
 - `internal/git/ops.go` — git exec 封裝（FetchAll / PullFF / Branches / Graph）與輸出 parser
 - `internal/tui/gitstatus.go` — message handlers + tea.Cmd（GitStatusMsg / GitOpDoneMsg）
 - `internal/tui/view_gitstatus.go` — render 函式（branch table + graph viewport）
+
+---
+
+## 2.7 History (Session Browser) — `[h]` ✅ 已實作
+
+按 `[h]` 進入跨機器 session 同步介面，列出 `~/.claude/projects/` 底下所有 encoded 資料夾、提供匯出 zip bundle 與匯入 zip bundle 的 wizard。
+
+### 資料夾清單（folder list）
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  History — ~/.claude/projects/                       [Esc] 返回    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                    ║
+║  Encoded Folders — ~/.claude/projects/                             ║
+║  ────────────────────────────────────────────────────────────      ║
+║                                                                    ║
+║     [+] Import bundle...                                           ║
+║                                                                    ║
+║   › 🟢 D--Documents-MyProjects-zpit                                ║
+║         12 sessions  4.2 MB  04/26 14:30                           ║
+║                                                                    ║
+║     -home-jeff-projects-zacfuse                                    ║
+║         3 sessions  812 KB  04/24 09:12                            ║
+║                                                                    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Enter: open  [E]: export all  [i]: import  [Esc] back  [q] quit  ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+
+### Session 清單（session list — drilled in）
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  Sessions — D--Documents-MyProjects-zpit             [Esc] 返回    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                    ║
+║   › [x] 🧩 🟢 6f81a4c3-9e0d-...                                    ║
+║         812 KB  04/26 14:30                                        ║
+║                                                                    ║
+║     [ ] 🧩    a3e7b2c1-8f1d-...                                    ║
+║         412 KB  04/26 13:08                                        ║
+║                                                                    ║
+║     [ ]       2c0d4f8e-1a3b-...                                    ║
+║         48 KB   04/25 22:14                                        ║
+║                                                                    ║
+║     1 selected                                                     ║
+║                                                                    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Space: select  [a]: toggle all  [e]: export  Enter: detail  [Esc] back ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+
+### 快捷鍵
+
+#### Folder list
+| Key | Action |
+|-----|--------|
+| `↑↓` | 上下選取資料夾或 `[+] Import bundle...` |
+| `Enter` | 進入該資料夾的 session 清單；row 0 觸發匯入 wizard |
+| `[E]` | 對焦中的資料夾匯出全部 sessions（pre-select all） |
+| `[i]` | 開啟匯入 wizard |
+| `Esc` | 返回主畫面 |
+
+#### Session list
+| Key | Action |
+|-----|--------|
+| `↑↓` | 上下選取 session |
+| `Space` | 切換當前 row 的選取（`[x]` / `[ ]`） |
+| `[a]` | toggle-all-on（任一未選）或 toggle-all-off |
+| `[e]` | 開啟匯出 confirm modal |
+| `Enter` | 嘗試開啟詳細檢視（v1 顯示 "coming in follow-up issue"） |
+| `Esc` | 返回 folder list |
+
+### 匯出流程（Export）
+
+1. 從 session list `[e]` 觸發 → 若任一選取的 session 仍 alive，先彈出 active-session warning（資訊性，不會 hard-block）。
+2. Export confirm modal：顯示總數、總大小、`[ ] Include memory/` 勾選框（預設 OFF）、輸出路徑（pre-fill `~/.zpit/exports/<folder>-<ts>.zip`）。
+3. 確認後 `Pack` 將 sessions、subagents 子樹、可選 memory 子樹、manifest 全部塞入 zip。
+4. 完成後 status bar 顯示 `Exported N session(s) to <path>`。
+
+### 匯入流程（Import）
+
+1. 從 folder list `[i]` 觸發 → bundle 路徑 textinput。
+2. Bundle 路徑 Enter → `LoadManifest` 讀 zip 內 `manifest.json` → 顯示 manifest preview（source OS、source path、session 數、memory 與否）。
+3. Manifest preview：每個 session 都有 checkbox（預設全勾），`Space` 切換、`[a]` toggle-all、Enter 進下一步。
+4. Destination path textinput → 必須是絕對路徑，Zpit 用 `watcher.EncodeCwd` 推導目標 encoded 資料夾。
+5. Final preview：「Will write to `~/.claude/projects/<dest-encoded>/`, N sessions, memory: yes|no」，Enter 確認。
+6. Pre-flight collision detection：每個會 collision 的 session 都跳出 3-button modal（**Overwrite** / **Skip this session** / **Cancel entire import**）；memory 目錄 collision 也走同樣流程。
+7. `Unpack` 串流每行 JSONL：JSON object 中 `"cwd"` 欄位等於 bundle `source_cwd` 才會被改寫成 destination cwd；其他內容（包含 chat content 中出現的 path-shaped string）絕不更動。Subagents 子樹 verbatim 複製。
+8. 完成後跳出 summary：`written N skipped M cancelled K, memory: written|skipped|not-included`。
+
+### 設計決策
+
+- **為何 zip 而非 tar.gz**：Windows 雙擊即可解壓；tar.gz 需 7-Zip 或 CLI。
+- **為何 path rewrite 在 import 時**：destination cwd 在匯出時未知；單一 bundle 可重複匯入到不同機器。
+- **為何 JSON-aware rewrite**：line-by-line `json.Unmarshal` → 修改 `cwd` 欄位 → re-marshal，確保只有 `cwd` 欄位被改寫，避免改到 chat 內容裡的 path 字串。
+- **為何 subagents 預設包含、memory 預設不包含**：subagents 是 session-bound、loop-engine session replay 必需；memory 是 project-scoped、可能含 user-private 內容（email、dated notes），需明確 opt-in。
+- **為何 active-session warning 是資訊性**：使用者隨時可決定強制匯出，TUI 不應 hard-block 工作流程。
+
+相關檔案：
+- `internal/sessionsync/manifest.go` — Manifest schema + JSON marshal/unmarshal + `DetectSourceOS`
+- `internal/sessionsync/scan.go` — `ScanFolders` / `ScanSessions` / `ProjectsRoot`
+- `internal/sessionsync/pack.go` — `Pack` zip writer + cwd auto-detection from session lines
+- `internal/sessionsync/unpack.go` — `Unpack` + cwd rewrite + collision-checked write + `LoadManifest` + `DetectCollisions`
+- `internal/tui/sessions.go` — cmd factories + msg handlers (entry/exit logs, active-session detection)
+- `internal/tui/view_sessions.go` — folder list / session list / modal rendering
+- `internal/tui/model.go` — `ViewHistory` constant、`[h]` 鍵 handler、wizard 步驟狀態機（步驟 0–5 import、步驟 0–3 export）
