@@ -6,6 +6,7 @@ import (
 	"github.com/zac15987/zpit/internal/broker"
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/git"
+	"github.com/zac15987/zpit/internal/sessionsync"
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
@@ -245,4 +246,97 @@ type GitPullResultMsg struct {
 	Stdout    string
 	Stderr    string
 	Err       error
+}
+
+// --- History (Session Browser) messages ---
+
+// HistoryFoldersScannedMsg carries the result of scanning ~/.claude/projects/.
+// Folders holds one FolderInfo per encoded project directory found on disk.
+// Err is non-nil when the scan itself failed (e.g. directory unreadable).
+type HistoryFoldersScannedMsg struct {
+	Folders []sessionsync.FolderInfo
+	Err     error
+}
+
+// HistorySessionsScannedMsg carries the result of scanning sessions inside one
+// encoded folder. ActiveSessionIDs lists session IDs whose PID is currently alive
+// (sourced from watcher.FindActiveSessions).
+type HistorySessionsScannedMsg struct {
+	// FolderName is the encoded project directory name (e.g. "-home-user-myproject").
+	FolderName string
+	// Sessions holds the metadata for each session file found in the folder.
+	Sessions []sessionsync.SessionInfo
+	// ActiveSessionIDs is the subset of session IDs whose backing process is alive.
+	ActiveSessionIDs []string
+	// Err is non-nil when the scan failed.
+	Err error
+}
+
+// ExportStartedMsg signals that a zip export has begun. The TUI uses this to
+// show an in-progress indicator before ExportCompletedMsg arrives.
+type ExportStartedMsg struct {
+	// OutputPath is the destination .zip file path.
+	OutputPath string
+	// Sessions lists the session IDs included in this export.
+	Sessions []string
+}
+
+// ExportCompletedMsg carries the result of a completed zip export.
+// Err is non-nil when the export failed or was only partially written.
+type ExportCompletedMsg struct {
+	// OutputPath is the destination .zip file path.
+	OutputPath string
+	// Sessions lists the session IDs that were included in the export attempt.
+	Sessions []string
+	// BytesWritten is the total number of bytes written to the zip archive.
+	BytesWritten int64
+	// Err is non-nil when the export failed.
+	Err error
+}
+
+// ImportStartedMsg signals that an import operation has begun. The TUI uses
+// this to show an in-progress indicator before ImportCompletedMsg arrives.
+type ImportStartedMsg struct {
+	// BundlePath is the path to the source .zip bundle being imported.
+	BundlePath string
+	// DestEncoded is the encoded project directory name that will receive the sessions.
+	DestEncoded string
+}
+
+// ImportProgressMsg carries one written/skipped/cancelled-step status update from
+// an import operation. Progress messages let the TUI re-render incrementally
+// without waiting for the entire import to finish.
+type ImportProgressMsg struct {
+	// SessionID identifies which session this progress update relates to.
+	SessionID string
+	// Outcome is one of "written", "skipped", or "cancelled".
+	Outcome string
+}
+
+// ImportCompletedMsg carries the final tally for an import operation.
+// Err is non-nil when the operation failed before or during processing.
+type ImportCompletedMsg struct {
+	// DestEncoded is the encoded project directory name that received the sessions.
+	DestEncoded string
+	// Written is the count of sessions successfully written.
+	Written int
+	// Skipped is the count of sessions that were skipped (e.g. already present).
+	Skipped int
+	// Cancelled is the count of sessions aborted at user request.
+	Cancelled int
+	// MemoryStatus reports what happened to the memory/ directory:
+	// "written", "skipped", or "not-included".
+	MemoryStatus string
+	// Err is non-nil when the import failed.
+	Err error
+}
+
+// CollisionPromptMsg signals that the import detected a collision and is awaiting
+// user choice. The TUI handler shows a 3-button modal (Overwrite / Skip / Cancel All).
+// When IsMemory is true the collision is on the memory/ directory rather than a session.
+type CollisionPromptMsg struct {
+	// SessionID identifies the colliding session, or is empty when IsMemory is true.
+	SessionID string
+	// IsMemory is true when the collision is on memory/ instead of a session file.
+	IsMemory bool
 }
