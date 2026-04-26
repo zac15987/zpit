@@ -247,7 +247,7 @@ func (m Model) renderHistoryModal() string {
 	}
 	// Import running (step 4): importBundleCmd is in-flight.
 	if m.historyImportStep == 4 {
-		return "  Importing..."
+		return "  " + locale.T(locale.KeyHistoryImporting)
 	}
 	// Import summary (step 5): tallies from UnpackResult.
 	if m.historyImportStep == 5 && m.historyImportResult != nil {
@@ -336,9 +336,42 @@ func (m Model) renderHistoryImportPreviewModal() string {
 
 // renderHistoryImportDestModal prompts the user to enter the absolute path of
 // the destination project so the importer can derive the encoded folder name.
+// Renders a freeform textinput plus a list of suggested project paths drawn
+// from m.state.projects (resolved per-OS via platform.ResolvePath). The user
+// can either pick a suggestion with ↑/↓ + Enter, or type any absolute path.
 func (m Model) renderHistoryImportDestModal() string {
 	title := selectedStyle.Render(locale.T(locale.KeyHistoryImportDestLabel))
-	return strings.Join([]string{title, "", "  " + m.historyImportDestPath}, "\n")
+	prompt := detailStyle.Render("  " + locale.T(locale.KeyHistoryImportDestPrompt))
+	inputCursor := "   "
+	if m.historyImportDestSuggestionCursor == -1 {
+		inputCursor = cursorMarker
+	}
+	inputLine := inputCursor + m.historyImportDestInput.View()
+
+	var suggestionsBlock string
+	if len(m.historyImportDestSuggestions) > 0 {
+		var b strings.Builder
+		b.WriteString("  " + detailStyle.Render(locale.T(locale.KeyHistoryImportDestSuggest)))
+		b.WriteString("\n")
+		for i, path := range m.historyImportDestSuggestions {
+			cursor := "   "
+			label := path
+			if m.historyImportDestSuggestionCursor == i {
+				cursor = cursorMarker
+				label = selectedStyle.Render(label)
+			} else {
+				label = normalStyle.Render(label)
+			}
+			b.WriteString(cursor + label + "\n")
+		}
+		suggestionsBlock = b.String()
+	}
+
+	parts := []string{title, "", prompt, "", inputLine}
+	if suggestionsBlock != "" {
+		parts = append(parts, "", suggestionsBlock)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // renderHistoryImportFinalModal shows the resolved destination encoded path,

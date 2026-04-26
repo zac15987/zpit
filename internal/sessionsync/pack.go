@@ -13,6 +13,13 @@ import (
 	"time"
 )
 
+// maxScannerBufferBytes caps the per-line buffer for bufio.Scanner when
+// streaming session JSONL files. 64 MiB is large enough for any plausible
+// single Claude Code message (tool calls, embedded code, base64 payloads)
+// while preventing pathological allocations on a corrupt file. Shared between
+// pack.go and unpack.go so both sides agree on the upper bound.
+const maxScannerBufferBytes = 64 * 1024 * 1024
+
 // PackOptions describes one export operation.
 type PackOptions struct {
 	// SourceFolder is the absolute path to ~/.claude/projects/<encoded-cwd>/.
@@ -245,8 +252,8 @@ func packSession(zw *zip.Writer, sessionID, jsonlPath string) (cwd string, err e
 
 	// Reset src to beginning (it was just opened, so it is at offset 0 already).
 	scanner := bufio.NewScanner(src)
-	buf := make([]byte, 64*1024*1024) // 64 MB buffer
-	scanner.Buffer(buf, 64*1024*1024)
+	buf := make([]byte, maxScannerBufferBytes)
+	scanner.Buffer(buf, maxScannerBufferBytes)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()

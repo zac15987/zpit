@@ -247,4 +247,7 @@ const (
 	KeyHistoryDestMustBeAbs      Key = "history_dest_must_be_absolute"
 	KeyHistoryNoSelection        Key = "history_no_selection"
 	KeyHistoryClaudeHomeError    Key = "history_claude_home_error"
+	KeyHistoryImporting          Key = "history_importing"
+	KeyHistoryImportDestSuggest  Key = "history_import_dest_suggest"
+	KeyHistoryImportDestPrompt   Key = "history_import_dest_prompt"
 )

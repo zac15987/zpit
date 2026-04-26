@@ -153,6 +153,12 @@ type Model struct {
 	historyImportDestPath      string
 	historyImportSessionCursor int
 	historyImportStep          int              // 0=path entry, 1=preview, 2=dest entry, 3=final preview, 4=running, 5=summary
+	// Destination autocomplete suggestions for import wizard step 2.
+	// Populated from m.state.projects via platform.ResolvePath when entering
+	// step 2. The cursor selects between the freeform textinput (-1) and one
+	// of the suggestion entries (0..len-1). Free-form input is always accepted.
+	historyImportDestSuggestions      []string
+	historyImportDestSuggestionCursor int
 	historyImportFlowActive    bool             // user is in the middle of an import wizard
 	historyCollisionQueue      []string         // pending session-collision IDs
 	historyCollisionMemory     bool             // memory dir collision pending
@@ -663,7 +669,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global keys
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		if m.currentView != ViewProjects {
+		// AC-1: in ViewHistory's folder-list and session-list (no modal up,
+		// no wizard active), [q] quits zpit — matching the footer hint
+		// "[q] quit" and the AC's "pressing q quits zpit" wording. When a
+		// History modal/wizard is active (textinput focused, etc.) [q] still
+		// routes back to the dock so the user can recover without losing the
+		// process. Other non-Projects views keep the universal "q goes back
+		// to dock" convention.
+		quitsHere := m.currentView == ViewProjects ||
+			(m.currentView == ViewHistory && !m.historyHasActiveModal())
+		if !quitsHere {
 			m.currentView = ViewProjects
 			return m, nil
 		}
@@ -1284,6 +1299,48 @@ func (m *Model) initHistoryInputs() {
 	}
 }
 
+// historyHasActiveModal returns true when the History view has any modal,
+// wizard step, or textinput-driven flow currently up. Used by the global [q]
+// handler so that pressing 'q' inside a path input does not quit zpit by
+// mistake (AC-1: 'q' quits from the folder/session list, not from a modal).
+func (m Model) historyHasActiveModal() bool {
+	if m.historyImportStep != 0 || m.historyImportFlowActive {
+		return true
+	}
+	if m.historyExportStep != 0 || m.historyExportFlowActive {
+		return true
+	}
+	if len(m.historyCollisionQueue) > 0 || m.historyCollisionMemory {
+		return true
+	}
+	return false
+}
+
+// collectImportDestSuggestions snapshots configured project paths from
+// AppState and resolves each one to the OS-appropriate absolute path via
+// platform.ResolvePath. Empty paths are skipped, and duplicates are removed
+// while preserving project order. The returned slice is safe to retain on the
+// Model after the function returns (the AppState lock is released).
+func (m Model) collectImportDestSuggestions() []string {
+	m.state.RLock()
+	defer m.state.RUnlock()
+	seen := make(map[string]bool, len(m.state.projects))
+	out := make([]string, 0, len(m.state.projects))
+	for _, p := range m.state.projects {
+		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
+}
+
 // renderHistoryStep0Modal returns the bundle-path-entry modal body for import
 // step 0. view_sessions.go's renderHistoryModal returns "" for step 0; this
 // method covers the gap so the user can type the bundle path into a textinput.
@@ -1657,11 +1714,50 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyImportStep = 2
 			m.historyImportDestInput.SetValue("")
 			m.historyImportDestInput.Focus()
+			m.historyImportDestSuggestions = m.collectImportDestSuggestions()
+			m.historyImportDestSuggestionCursor = -1
 			return m, textinput.Blink
 		}
 	case 2:
-		// Destination path entry (textinput).
+		// Destination path entry: textinput + autocomplete suggestion list.
+		// Cursor -1 = textinput focused (typing); 0..N-1 = a suggestion focused.
+		// Up/Down navigates between input and suggestions. Enter on a suggestion
+		// fills the input with that path; Enter on the input commits the typed
+		// path. Free-form absolute paths are always accepted (AC-8).
+		if key.Matches(msg, m.keys.Up) {
+			if m.historyImportDestSuggestionCursor > -1 {
+				m.historyImportDestSuggestionCursor--
+				if m.historyImportDestSuggestionCursor == -1 {
+					m.historyImportDestInput.Focus()
+					return m, textinput.Blink
+				}
+				m.historyImportDestInput.Blur()
+			}
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Down) {
+			if m.historyImportDestSuggestionCursor < len(m.historyImportDestSuggestions)-1 {
+				m.historyImportDestSuggestionCursor++
+				m.historyImportDestInput.Blur()
+			}
+			return m, nil
+		}
 		if key.Matches(msg, m.keys.Enter) {
+			// Enter on a suggestion: copy it into the input and advance.
+			if m.historyImportDestSuggestionCursor >= 0 &&
+				m.historyImportDestSuggestionCursor < len(m.historyImportDestSuggestions) {
+				path := m.historyImportDestSuggestions[m.historyImportDestSuggestionCursor]
+				if !filepath.IsAbs(path) {
+					m.setStatus(locale.T(locale.KeyHistoryDestMustBeAbs))
+					return m, nil
+				}
+				m.historyImportDestInput.SetValue(path)
+				m.historyImportDestPath = path
+				m.historyImportDestInput.Blur()
+				m.historyImportStep = 3
+				return m, nil
+			}
+			// Enter on freeform input: validate the typed value.
 			path := strings.TrimSpace(m.historyImportDestInput.Value())
 			if path == "" || !filepath.IsAbs(path) {
 				m.setStatus(locale.T(locale.KeyHistoryDestMustBeAbs))
@@ -1672,9 +1768,13 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyImportStep = 3
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.historyImportDestInput, cmd = m.historyImportDestInput.Update(msg)
-		return m, cmd
+		// Other keys go to the textinput only when it is focused.
+		if m.historyImportDestSuggestionCursor == -1 {
+			var cmd tea.Cmd
+			m.historyImportDestInput, cmd = m.historyImportDestInput.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case 3:
 		// Final preview: Enter starts collision detection + import.
 		if key.Matches(msg, m.keys.Enter) {
@@ -1799,7 +1899,7 @@ func (m Model) runImportPass2() (tea.Model, tea.Cmd) {
 	destEncoded := watcher.EncodeCwd(m.historyImportDestPath)
 	claudeHome, err := watcher.ClaudeHome()
 	if err != nil {
-		m.setStatus(fmt.Sprintf("history: cannot resolve ~/.claude: %s", err))
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryClaudeHomeError), err))
 		return m, nil
 	}
 	destDir := filepath.Join(claudeHome, "projects", destEncoded)

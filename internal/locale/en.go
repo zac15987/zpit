@@ -246,4 +246,7 @@ var en = map[Key]string{
 	KeyHistoryDestMustBeAbs:      "Destination must be an absolute path",
 	KeyHistoryNoSelection:        "No sessions selected",
 	KeyHistoryClaudeHomeError:    "history: cannot resolve ~/.claude: %s",
+	KeyHistoryImporting:          "Importing...",
+	KeyHistoryImportDestSuggest:  "Suggested project paths (↑/↓ to pick, Enter to use; or type any absolute path):",
+	KeyHistoryImportDestPrompt:   "Type a destination, or pick from suggestions",
 }

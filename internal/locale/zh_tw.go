@@ -246,4 +246,7 @@ var zhTW = map[Key]string{
 	KeyHistoryDestMustBeAbs:      "目標必須為絕對路徑",
 	KeyHistoryNoSelection:        "未選擇任何 session",
 	KeyHistoryClaudeHomeError:    "history：無法解析 ~/.claude：%s",
+	KeyHistoryImporting:          "匯入中...",
+	KeyHistoryImportDestSuggest:  "建議的專案路徑（↑/↓ 選擇，Enter 使用；或輸入任意絕對路徑）：",
+	KeyHistoryImportDestPrompt:   "請輸入目標路徑，或從建議清單選擇",
 }

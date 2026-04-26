@@ -270,8 +270,8 @@ func writeRewrittenJSONL(r *zip.ReadCloser, sessionID, destPath, sourceCwd, dest
 	defer out.Close()
 
 	scanner := bufio.NewScanner(rc)
-	buf := make([]byte, 64*1024*1024) // 64 MB buffer
-	scanner.Buffer(buf, 64*1024*1024)
+	buf := make([]byte, maxScannerBufferBytes)
+	scanner.Buffer(buf, maxScannerBufferBytes)
 
 	lineNum := 0
 	for scanner.Scan() {
