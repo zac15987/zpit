@@ -286,6 +286,29 @@ All channel messages in meeting mode MUST use these formats:
        layer). If missing, add one. Example: a multi-card claim at AC-N must be paired with an
        AC-M requiring a test that constructs two instances, calls the public API on each, and
        asserts distinct observable state.
+    p. **Convention-parity scan** (trigger: AC prescribes specific behavior on a user-facing
+       surface that already has equivalent siblings in the project). Action: identify the
+       most-similar existing surface (read the relevant SCOPE files and one or two of their
+       siblings) and verify the AC's prescribed behavior is consistent with it. If the new AC
+       deviates, either (a) update the AC to match the convention, or (b) keep the deviation
+       but add an explicit AC clause: `Deliberately deviates from <surface> convention because
+       <reason>`. Past failure mode: an AC mandated specific behavior on a surface whose sibling
+       instances across the project all followed a different universal convention; the AC did
+       not note the deviation, the coding agent followed the AC literally, and the result
+       conflicted with every other instance of the same surface.
+    q. **Interactive-affordance shape** (trigger: AC mentions `autocomplete`, `picker`,
+       `suggestion list`, `dropdown`, `completion`, `fuzzy match`, `select from`, `chooser`,
+       `quick-pick`, or any UI element where the user picks from a populated set). Action: AC
+       must specify (i) render shape (inline list / popup / sidepanel / modal / overlay),
+       (ii) source of items (which data field, filtered how), (iii) initial focus (input or
+       list), (iv) navigation keys including how the user moves between input and list,
+       (v) confirm key, (vi) escape/cancel key, (vii) free-input fallback when typed input
+       does not match any item. If the project already has an equivalent surface, the AC may
+       shortcut: `Same picker shape and key bindings as <existing surface in SCOPE/code>`.
+       Past failure mode: an AC said `destination autocomplete from <data source>` with no
+       shape, navigation keys, or focus model; coding agent invented a dual-cursor scheme
+       whose key bindings collided with framework shortcut aliases and produced a regression
+       in the next review round.
 16. **Show the user the complete issue content, and wait for the user to explicitly say "push" or "go"**
 17. Push the issue to the Tracker:
     a. Before performing any tracker operation, you MUST first read `.claude/docs/tracker.md`.
@@ -497,3 +520,5 @@ Workflow step 15n will auto-append this clause when the pattern is detected — 
 - **Contradiction surface**: treat APPROACH + ACs + CONSTRAINTS as a single system. Before showing the issue to the user, verify no two clauses are mutually unsatisfiable (see workflow 15l). A past real case — an AC demanding "bit-identical to source" silently conflicted with a multi-instance goal because the source was single-instance — is the failure mode this rule prevents.
 - **Verbatim-copy responsibility**: when the APPROACH says "copy X verbatim", enumerate the implicit assumptions of X that are violated by the new environment (single-instance state, shared paths, global handles). Do not leave these for the Coding Agent to discover at implementation time (see workflow 15m).
 - **Multi-instance invariants**: when the issue goal involves N>1 co-existing instances, the observable isolation property (distinct state, non-shared resources) must be encoded in an AC as a post-condition a test can prove, not as a structural instruction (see Mechanical AC principles).
+- **Convention surface awareness**: AC text must not silently contradict adjacent project conventions for the same kind of surface (keybindings, CLI flags, log shapes, endpoint URLs, etc.). Either align with the convention or mark the deviation explicitly with a justification in the AC (see workflow 15p).
+- **Interactive affordance shape**: pickers, autocomplete, dropdown, suggestion-list, fuzzy-match, and chooser ACs must specify the full UX shape — render placement, item source, initial focus, navigation keys, confirm key, escape key, and free-input fallback — or reference an existing project surface that supplies them (see workflow 15q).

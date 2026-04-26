@@ -92,8 +92,9 @@ func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
    b. Point to the concrete file:line or test name that satisfies it
    c. Treat words like **exactly**, **without**, **only**, **must not**, **never** as strict constraints — no interpretation, no "close enough"
    d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
-   e. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
-   f. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
+   e. **Coverage-claim sweep** (trigger: AC contains a universal or negative quantifier over a candidate set — words like **all**, **every**, **each**, **no remaining**, **no hardcoded**, **must not appear**, **none**): use Grep to enumerate the *actual* candidate set across the SCOPE files (e.g. for "all user-facing strings routed through the localization function": grep every string literal in SCOPE; for "no remaining magic constants": grep every numeric literal; for "every public entry-point logged": grep every public symbol declaration). Produce an enumeration table — one row per candidate, marking each as compliant or non-compliant — and include it in the self-check output. Spot-checking is NOT sufficient: one non-compliant candidate among many compliant ones is still a FAIL
+   f. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
+   g. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
 %s8. Before committing, re-read each modified file to verify your changes are consistent and no unintended edits remain
 9. Use git add + git commit to commit changes
 10. Commit message format: [%s] {short description}
@@ -280,8 +281,9 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
    b. Point to the concrete file:line or test name that satisfies it
    c. Treat words like **exactly**, **without**, **only**, **must not**, **never** as strict constraints — no interpretation, no "close enough"
    d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
-   e. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
-   f. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
+   e. **Coverage-claim sweep** (trigger: AC contains a universal or negative quantifier over a candidate set — words like **all**, **every**, **each**, **no remaining**, **no hardcoded**, **must not appear**, **none**): use Grep to enumerate the *actual* candidate set across the SCOPE files (e.g. for "all user-facing strings routed through the localization function": grep every string literal in SCOPE; for "no remaining magic constants": grep every numeric literal; for "every public entry-point logged": grep every public symbol declaration). Produce an enumeration table — one row per candidate, marking each as compliant or non-compliant — and include it in the self-check output. Spot-checking is NOT sufficient: one non-compliant candidate among many compliant ones is still a FAIL
+   f. For "add test" / "test coverage" ACs, confirm the test file exists AND the test actually exercises the new code path (not just compiles green)
+   g. If any AC cannot be traced to a concrete artifact, STOP — do not commit, do not open PR. Post an issue comment naming the unaccounted AC and wait for clarification
 %s8. Use git add + git commit for any final adjustments
 9. When opening a PR, you **must** target the `+"`%s`"+` branch (--base %s).
    Targeting any other branch is strictly forbidden. If unsure, stop and confirm before opening the PR.

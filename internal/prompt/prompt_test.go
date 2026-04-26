@@ -64,6 +64,8 @@ func TestBuildCodingPrompt_AllSections(t *testing.T) {
 		"</constraints>",                                       // Direction B: XML tag close
 		"PASS walk-through",                                    // Direction B: AC self-check worked example
 		"FAIL walk-through",                                    // Direction B: AC self-check worked example
+		"Coverage-claim sweep",                                 // #102 lesson: enumerate candidate set for "all/every/no" ACs
+		"Worked example #2 — coverage-claim sweep",             // #102 lesson: worked example for sweep
 	}
 
 	for _, c := range checks {
@@ -277,6 +279,8 @@ func TestBuildRevisionPrompt_AllSections(t *testing.T) {
 		"Deliberately deferred items",                             // Direction C: structured deferral handshake
 		"Build-fit exceptions",                                    // Direction C: build-fit exceptions carve-out
 		"must NOT appear",                                         // Direction C: 🔴 deferral prohibition
+		"Cross-product trace for branching dispatch",              // #102 lesson: cross-product trace for branching dispatch fixes
+		"Worked example #2 — cross-product trace for branching dispatch", // #102 lesson: worked example for cross-product
 	}
 
 	for _, c := range checks {
