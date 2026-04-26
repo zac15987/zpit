@@ -1724,7 +1724,17 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Up/Down navigates between input and suggestions. Enter on a suggestion
 		// fills the input with that path; Enter on the input commits the typed
 		// path. Free-form absolute paths are always accepted (AC-8).
-		if key.Matches(msg, m.keys.Up) {
+		//
+		// IMPORTANT: gate navigation on msg.Type == tea.KeyUp/KeyDown rather than
+		// key.Matches(m.keys.Up/Down). The Up/Down bindings include 'k'/'j' aliases
+		// (see keymap.go) — using key.Matches here would intercept literal 'j'/'k'
+		// runes typed into the focused textinput, breaking paths like /home/jeff/...
+		// or C:\Users\jack\... (regression from round 1; see PR #103 review round 1).
+		// When the cursor is already on a suggestion (input blurred), allow the
+		// j/k aliases for vim-like navigation as well.
+		isUp := msg.Type == tea.KeyUp || (m.historyImportDestSuggestionCursor != -1 && key.Matches(msg, m.keys.Up))
+		isDown := msg.Type == tea.KeyDown || (m.historyImportDestSuggestionCursor != -1 && key.Matches(msg, m.keys.Down))
+		if isUp {
 			if m.historyImportDestSuggestionCursor > -1 {
 				m.historyImportDestSuggestionCursor--
 				if m.historyImportDestSuggestionCursor == -1 {
@@ -1735,7 +1745,7 @@ func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if key.Matches(msg, m.keys.Down) {
+		if isDown {
 			if m.historyImportDestSuggestionCursor < len(m.historyImportDestSuggestions)-1 {
 				m.historyImportDestSuggestionCursor++
 				m.historyImportDestInput.Blur()
