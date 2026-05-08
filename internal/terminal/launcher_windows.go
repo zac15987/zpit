@@ -27,6 +27,9 @@ func resolveProfileAndShell(profile string) (string, string, []string) {
 
 func launchWindows(project config.ProjectConfig, cfg config.TerminalConfig, path string, extraArgs []string) (*LaunchResult, error) {
 	profile, shell, warnings := resolveProfileAndShell(cfg.WindowsTerminalProfile)
+	if w := ShellResolutionWarning(shell); w != "" {
+		warnings = append(warnings, w)
+	}
 	args := BuildWindowsArgs(project.Name, path, cfg.WindowsMode, profile, shell, extraArgs)
 
 	cmd := exec.Command("wt.exe", args...)
@@ -49,6 +52,9 @@ func launchTmux(_ config.ProjectConfig, _ config.TerminalConfig, _ string, _ []s
 
 func launchWindowsInDir(tabTitle string, cfg config.TerminalConfig, path string, extraArgs []string) (*LaunchResult, error) {
 	profile, shell, warnings := resolveProfileAndShell(cfg.WindowsTerminalProfile)
+	if w := ShellResolutionWarning(shell); w != "" {
+		warnings = append(warnings, w)
+	}
 	args := BuildWindowsArgs(tabTitle, path, cfg.WindowsMode, profile, shell, extraArgs)
 
 	cmd := exec.Command("wt.exe", args...)

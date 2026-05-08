@@ -2,7 +2,9 @@ package terminal
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/platform"
@@ -176,15 +178,67 @@ func buildEnvWrapper(shell string) []string {
 
 // buildShellWrapper returns a shell-aware command prefix that invokes the named
 // script from .claude/hooks/. cmd shells use .cmd extension; pwsh/powershell use .ps1.
+//
+// PowerShell exes are resolved to their absolute paths via exec.LookPath. WT's
+// packaged-app child processes have shown intermittent failures resolving bare
+// "pwsh" against PATH (CreateProcess returns 0x80070002), so we hand WT a fully
+// qualified path. If the lookup fails (PowerShell not installed at all), we
+// silently fall back to the cmd wrapper.
 func buildShellWrapper(shell, scriptBase string) []string {
 	switch shell {
 	case "pwsh":
-		return []string{"pwsh", "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
+		if exe, ok := resolveShellExe("pwsh"); ok {
+			return []string{exe, "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
+		}
 	case "powershell":
-		return []string{"powershell", "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
-	default: // "cmd" or empty
-		return []string{"cmd", "/c", ".claude\\hooks\\" + scriptBase + ".cmd"}
+		if exe, ok := resolveShellExe("powershell"); ok {
+			return []string{exe, "-NoProfile", "-File", ".claude\\hooks\\" + scriptBase + ".ps1"}
+		}
 	}
+	return []string{"cmd", "/c", ".claude\\hooks\\" + scriptBase + ".cmd"}
+}
+
+// exePathLookup is the lookup function used by resolveShellExe.
+// Tests override this to make resolution deterministic.
+var exePathLookup = exec.LookPath
+
+// exePathCache memoizes lookup results across launches.
+var exePathCache sync.Map // map[string]resolvedExe
+
+type resolvedExe struct {
+	path string
+	ok   bool
+}
+
+// resolveShellExe returns the absolute path to the named exe, or ("", false)
+// if the lookup fails. Results are cached for the process lifetime — if the
+// user installs PowerShell after zpit starts, they need to restart to pick it
+// up. Acceptable trade-off given how rarely PATH changes mid-session.
+func resolveShellExe(name string) (string, bool) {
+	if v, loaded := exePathCache.Load(name); loaded {
+		r := v.(resolvedExe)
+		return r.path, r.ok
+	}
+	p, err := exePathLookup(name)
+	r := resolvedExe{path: p, ok: err == nil}
+	exePathCache.Store(name, r)
+	return r.path, r.ok
+}
+
+// ShellResolutionWarning returns a non-empty warning when the caller requested
+// pwsh or powershell but the executable could not be located on PATH, in which
+// case buildShellWrapper falls back to the cmd wrapper. Launch sites should
+// append the result to LaunchResult.Warnings so the TUI surfaces the silent
+// downgrade — otherwise a user with shell="pwsh" configured has no way to know
+// their config was ignored.
+func ShellResolutionWarning(shell string) string {
+	switch shell {
+	case "pwsh", "powershell":
+		if _, ok := resolveShellExe(shell); !ok {
+			return fmt.Sprintf("%s not found on PATH; falling back to cmd shell wrapper", shell)
+		}
+	}
+	return ""
 }
 
 // BuildLazygitWindowsArgs constructs wt.exe arguments for lazygit in a new tab/window.

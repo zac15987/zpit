@@ -1,10 +1,19 @@
 package terminal
 
 import (
+	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func init() {
+	// Make exe resolution deterministic so tests can assert on bare
+	// "pwsh"/"powershell" instead of whatever absolute path the host happens
+	// to resolve to. Real builds use exec.LookPath via the production default.
+	exePathLookup = func(name string) (string, error) { return name, nil }
+}
 
 // --- Existing tests updated for new BuildWindowsArgs signature (profile="", shell="") ---
 
@@ -469,5 +478,89 @@ func TestBuildClaudeUpdateTmuxArgs_NewPane(t *testing.T) {
 		`claude update; read -n1 -r -p "Press any key to close..."`}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+// --- buildShellWrapper fallback + ShellResolutionWarning tests ---
+
+// withFailingLookup swaps exePathLookup to always return an error and resets
+// the cache so the failure path actually runs. Restores both on cleanup.
+func withFailingLookup(t *testing.T) {
+	t.Helper()
+	origLookup := exePathLookup
+	exePathLookup = func(string) (string, error) { return "", errors.New("not found") }
+	exePathCache = sync.Map{}
+	t.Cleanup(func() {
+		exePathLookup = origLookup
+		exePathCache = sync.Map{}
+	})
+}
+
+func TestBuildShellWrapper_FallsBackToCmdWhenLookupFails(t *testing.T) {
+	withFailingLookup(t)
+	cases := []string{"pwsh", "powershell"}
+	wantEnv := []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}
+	wantExit := []string{"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd"}
+	for _, shell := range cases {
+		t.Run(shell+"/env", func(t *testing.T) {
+			got := buildShellWrapper(shell, "zpit-env")
+			if !reflect.DeepEqual(got, wantEnv) {
+				t.Errorf("got %v, want %v", got, wantEnv)
+			}
+		})
+		t.Run(shell+"/exit", func(t *testing.T) {
+			got := buildShellWrapper(shell, "zpit-exit")
+			if !reflect.DeepEqual(got, wantExit) {
+				t.Errorf("got %v, want %v", got, wantExit)
+			}
+		})
+	}
+}
+
+func TestShellResolutionWarning(t *testing.T) {
+	t.Run("resolved/empty", func(t *testing.T) {
+		// Identity lookup is installed by init() — pwsh/powershell resolve.
+		exePathCache = sync.Map{}
+		t.Cleanup(func() { exePathCache = sync.Map{} })
+		for _, shell := range []string{"pwsh", "powershell", "cmd", "", "unknown"} {
+			if got := ShellResolutionWarning(shell); got != "" {
+				t.Errorf("ShellResolutionWarning(%q) = %q, want empty", shell, got)
+			}
+		}
+	})
+	t.Run("unresolved/warns", func(t *testing.T) {
+		withFailingLookup(t)
+		for _, shell := range []string{"pwsh", "powershell"} {
+			got := ShellResolutionWarning(shell)
+			if !strings.Contains(got, shell) || !strings.Contains(got, "cmd") {
+				t.Errorf("ShellResolutionWarning(%q) = %q, want msg mentioning %q and fallback", shell, got, shell)
+			}
+		}
+		// Non-PowerShell shells stay quiet even when lookup would fail.
+		for _, shell := range []string{"cmd", "", "unknown"} {
+			if got := ShellResolutionWarning(shell); got != "" {
+				t.Errorf("ShellResolutionWarning(%q) = %q, want empty", shell, got)
+			}
+		}
+	})
+}
+
+func TestResolveShellExe_CachesLookup(t *testing.T) {
+	origLookup := exePathLookup
+	calls := 0
+	exePathLookup = func(name string) (string, error) {
+		calls++
+		return name, nil
+	}
+	exePathCache = sync.Map{}
+	t.Cleanup(func() {
+		exePathLookup = origLookup
+		exePathCache = sync.Map{}
+	})
+	for i := 0; i < 5; i++ {
+		resolveShellExe("pwsh")
+	}
+	if calls != 1 {
+		t.Errorf("expected exePathLookup to be called once, got %d", calls)
 	}
 }
