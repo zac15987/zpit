@@ -212,6 +212,34 @@ Agent A (Project X)            Agent B (Project Y)
 
 **Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server. Env var `ZPIT_AGENT_NAME` passes the generated agent name to MCP server. Env var `ZPIT_AGENT_TYPE` passes the agent type (e.g. `clarifier`, `coding`, `reviewer`, `efficiency`, `claude`) to MCP server for SSE registration.
 
+### Desktop Agent
+
+A standalone Claude Code session that controls the OS via `@zavora-ai/computer-use-mcp`. Unlike project-scoped agents, it is global (no `project.Path`; cwd is `$HOME`/`%USERPROFILE%`) and limited to one active instance at a time.
+
+**Policy file**: `~/.zpit/desktop-policy.toml` — auto-created on first `zpit serve-desktop-proxy` invocation. Contains `deny_keys` (blocked keyboard shortcuts) and `allow_bundles` (named shortcut groups the user pre-approves).
+
+**Proxy architecture**:
+
+```
+Claude Code (desktop agent) ─── stdio ──> zpit serve-desktop-proxy (Go)
+                                                     │
+                                                     ├── policy gate (allow/deny per call)
+                                                     └── stdio ──> npx @zavora-ai/computer-use-mcp (Node subprocess)
+                                                                              │
+                                                                              └── OS APIs (CGEvent / UIA / AX)
+```
+
+The proxy intercepts every JSON-RPC `tools/call` frame. Calls not on the tool allowlist are rejected before reaching the upstream process. For allowed tools, parameter-level policy is applied (`deny_keys`, `allow_bundles`, focus-strategy override). Hard-blocked tools include `run_script`, `filesystem`, `process_kill`, `registry`, `notification`, `scrape`, `snapshot`, all virtual-desktop tools, and `resize_window`. See `docs/architecture/desktop-agent.md` for the full allowlist justification and default `deny_keys` table.
+
+**Single-instance lock**: `AppState.activeDesktopAgent` enforces at most one desktop agent across all connected TUI clients. A second `[w]` invocation is rejected with a status toast; the lock is cleared when the agent process exits.
+
+**Launch hotkey**: `[w]` (W for Window control; `[g]` was unavailable due to GitStatus). Launched from the main view (`ViewProjects`) without requiring a project selection. On `runtime.GOOS == "linux"`, `[w]` is a no-op (status toast shown) because `computer-use-mcp` declares `os: ["darwin", "win32"]` in its `package.json`. The hotkey is also omitted from the hotkeys panel on Linux.
+
+**Deliberate convention deviations**:
+- Single-instance enforcement — every other agent type can be launched in parallel; the desktop agent cannot.
+- Global scope — no `project.Path`; no per-project hooks deployed; cwd is the user home directory.
+- No hook deployment — path-guard, bash-firewall, and git-guard are meaningless when the agent has SendInput over the whole desktop. The proxy policy is the safety layer.
+
 ### TrackerClient
 
 Dual-backend REST API abstraction (`internal/tracker/`):

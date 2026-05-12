@@ -34,7 +34,7 @@ func makeTickTestModel(t *testing.T) Model {
 			{ID: tickTestProjectID, Name: "Project 1", Tracker: "t1"},
 		},
 	}
-	state := NewAppState(cfg, nil, nil, nil, nil, nil, nil, worktree.HookScripts{}, nil)
+	state := NewAppState(cfg, nil, nil, nil, nil, nil, nil, nil, worktree.HookScripts{}, nil)
 	return NewModel(state)
 }
 

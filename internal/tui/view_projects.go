@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -527,6 +528,7 @@ func (m Model) renderHotkeysBody(innerWidth, innerHeight int) string {
 		{"l", locale.T(locale.KeyLoopAutoImpl), false},
 		{"r", locale.T(locale.KeyReviewChanges), false},
 		{"f", locale.T(locale.KeyEfficiencyAgent), false},
+		{"w", locale.T(locale.KeyDesktopAgent), false},
 		{"s", locale.T(locale.KeyStatusOverview), false},
 		{"o", locale.T(locale.KeyOpenFolder), false},
 		{"i", locale.T(locale.KeyOpenTracker), false},
@@ -544,6 +546,22 @@ func (m Model) renderHotkeysBody(innerWidth, innerHeight int) string {
 		{"Tab", locale.T(locale.KeySwitchPanel), false},
 		{"?", locale.T(locale.KeyHelp), false},
 		{"q", locale.T(locale.KeyQuit), false},
+	}
+
+	// Filter out platform-unsupported entries.
+	if runtime.GOOS == "linux" {
+		filtered := make([]struct {
+			key  string
+			desc string
+			sep  bool
+		}, 0, len(hotkeys))
+		for _, h := range hotkeys {
+			if h.key == "w" {
+				continue
+			}
+			filtered = append(filtered, h)
+		}
+		hotkeys = filtered
 	}
 
 	// Decide whether blank separator rows fit.
@@ -636,7 +654,14 @@ func (m Model) renderTerminalsBody(innerWidth int) (string, []int) {
 		statusIcon, statusText := renderAgentStatus(at)
 		elapsed := formatElapsed(time.Since(at.StateChangedAt))
 
-		displayName := m.projectName(projectID)
+		var displayName string
+		if strings.HasPrefix(projectID, "desktop:") {
+			agentName := strings.TrimPrefix(projectID, "desktop:")
+			// U+1F5A5 = 🖥 (desktop computer)
+			displayName = "\U0001F5A5 " + agentName
+		} else {
+			displayName = m.projectName(projectID)
+		}
 
 		selMarker := " "
 		if i == m.termCursor {

@@ -250,4 +250,10 @@ const (
 	KeyHistoryImporting          Key = "history_importing"
 	KeyHistoryImportDestSuggest  Key = "history_import_dest_suggest"
 	KeyHistoryImportDestPrompt   Key = "history_import_dest_prompt"
+
+	// Desktop Agent
+	KeyDesktopAgent            Key = "desktop_agent"
+	KeyDesktopAlreadyRunning   Key = "desktop_already_running"
+	KeyDesktopLinuxUnsupported Key = "desktop_linux_unsupported"
+	KeyDesktopExited           Key = "desktop_exited"
 )

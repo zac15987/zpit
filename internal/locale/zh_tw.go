@@ -249,4 +249,10 @@ var zhTW = map[Key]string{
 	KeyHistoryImporting:          "匯入中...",
 	KeyHistoryImportDestSuggest:  "建議的專案路徑（↑/↓ 選擇，Enter 使用；或輸入任意絕對路徑）：",
 	KeyHistoryImportDestPrompt:   "請輸入目標路徑，或從建議清單選擇",
+
+	// 桌面 Agent
+	KeyDesktopAgent:            "桌面 Agent",
+	KeyDesktopAlreadyRunning:   "已有桌面 Agent 在執行 (PID %d)，請先關閉。",
+	KeyDesktopLinuxUnsupported: "桌面 Agent 不支援 Linux (computer-use-mcp 不支援 Linux)。",
+	KeyDesktopExited:           "桌面 Agent %s (PID %d) 已結束",
 }

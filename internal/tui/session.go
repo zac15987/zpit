@@ -538,6 +538,26 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 	var cmds []tea.Cmd
 	changed := false
 
+	// Capture desktop agent identity BEFORE the cleanup loop. The cleanup pass
+	// below may delete the desktop terminal entry when it has been StateEnded
+	// for longer than endedDisplayDuration; once deleted, the tracking key is
+	// gone and the AC-8 exit log would render with empty agent name and PID 0
+	// (the bug AC-12(j) catches). Snapshotting here preserves the values for
+	// the post-loop clear block.
+	var desktopAgentKey, desktopAgentName string
+	var desktopAgentPID int
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		for key, at := range m.state.activeTerminals {
+			if at == da && strings.HasPrefix(key, "desktop:") {
+				desktopAgentKey = key
+				desktopAgentName = strings.TrimPrefix(key, "desktop:")
+				desktopAgentPID = at.SessionPID
+				break
+			}
+		}
+	}
+
 	for projectID, at := range m.state.activeTerminals {
 		// Clean up ended sessions after display duration.
 		if at.State == watcher.StateEnded {
@@ -593,6 +613,43 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 			}
 		} else if claudeHome != "" {
 			m.state.logger.Printf("liveness: key=%s skip resume check (sessionID=%q workDir=%q)", projectID, at.SessionID, at.WorkDir)
+		}
+	}
+
+	// Desktop agent exit detection (AC-8):
+	// If activeDesktopAgent is set and its tracking entry has been marked StateEnded
+	// (or the entry was removed by the cleanup loop above), clear activeDesktopAgent
+	// and dispatch the exit message. The agent identity (key/name/PID) was captured
+	// before the loop ran, so the log line is correct even when the entry was deleted.
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		// Re-check the live tracking state after the cleanup loop.
+		_, stillTracked := m.state.activeTerminals[desktopAgentKey]
+
+		shouldClear := false
+		switch {
+		case desktopAgentKey == "":
+			// activeDesktopAgent was set but no matching entry existed even at the start
+			// of this pass — treat as stale and clear (with whatever info we have, which
+			// is empty in this edge case).
+			shouldClear = true
+		case !stillTracked:
+			// Cleanup loop removed the entry — captured info is still valid.
+			shouldClear = true
+		case da.State == watcher.StateEnded:
+			// Entry still present but marked ended — first liveness pass after PID death.
+			shouldClear = true
+		}
+
+		if shouldClear {
+			m.state.logger.Printf("desktop agent %s (PID %d) exited", desktopAgentName, desktopAgentPID)
+			m.state.activeDesktopAgent = nil
+			changed = true
+			agentNameCopy := desktopAgentName
+			pidCopy := desktopAgentPID
+			cmds = append(cmds, func() tea.Msg {
+				return DesktopAgentExitedMsg{AgentName: agentNameCopy, PID: pidCopy}
+			})
 		}
 	}
 

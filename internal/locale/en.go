@@ -249,4 +249,10 @@ var en = map[Key]string{
 	KeyHistoryImporting:          "Importing...",
 	KeyHistoryImportDestSuggest:  "Suggested project paths (↑/↓ to pick, Enter to use; or type any absolute path):",
 	KeyHistoryImportDestPrompt:   "Type a destination, or pick from suggestions",
+
+	// Desktop Agent
+	KeyDesktopAgent:            "Desktop agent",
+	KeyDesktopAlreadyRunning:   "A desktop agent is already running (PID %d). Kill it first.",
+	KeyDesktopLinuxUnsupported: "Desktop agent is not supported on Linux (computer-use-mcp does not support Linux).",
+	KeyDesktopExited:           "Desktop agent %s (PID %d) exited",
 }

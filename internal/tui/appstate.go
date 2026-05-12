@@ -23,11 +23,12 @@ import (
 // Multiple tea.Program instances (local TUI + SSH remote) share a single *AppState pointer,
 // ensuring active terminals, loop progress, and agent states remain consistent.
 //
-// Mutable fields protected by mu: activeTerminals, loops, channelEvents, channelSubs, lastLivenessCheck, lastPermissionCheck, lastSessionScan.
+// Mutable fields protected by mu: activeTerminals, loops, channelEvents, channelSubs, lastLivenessCheck, lastPermissionCheck, lastSessionScan, activeDesktopAgent.
 // Read-only fields (safe without locks): cfg, env, projects, clients, embedded MDs, hookScripts, wtManager.
 type AppState struct {
 	// mu protects mutable shared fields: activeTerminals, loops,
-	// channelEvents, channelSubs, lastLivenessCheck, lastPermissionCheck, lastSessionScan.
+	// channelEvents, channelSubs, lastLivenessCheck, lastPermissionCheck, lastSessionScan,
+	// activeDesktopAgent.
 	mu sync.RWMutex
 
 	// subMu protects the subscribers map independently of mu,
@@ -43,6 +44,11 @@ type AppState struct {
 
 	projects        []config.ProjectConfig
 	activeTerminals map[string]*ActiveTerminal
+
+	// activeDesktopAgent is the currently-running desktop-control agent, or nil.
+	// Enforces the single-instance invariant (AC-7) — only one desktop agent
+	// may be active across all connected TUI clients. Protected by mu.
+	activeDesktopAgent *ActiveTerminal
 
 	lastLivenessCheck   time.Time
 	lastPermissionCheck time.Time
@@ -61,6 +67,7 @@ type AppState struct {
 	reviewerMD                   []byte
 	taskRunnerMD                 []byte
 	efficiencyMD                 []byte
+	desktopMD                    []byte
 	agentGuidelinesMD            []byte
 	codeConstructionPrinciplesMD []byte
 	hookScripts                  worktree.HookScripts
@@ -143,9 +150,10 @@ func (s *AppState) ChannelEvents(projectID string) []broker.Event {
 
 // NewAppState creates and initializes a new AppState. logWriter may be nil (uses io.Discard).
 // Initializes all maps and sets defaults equivalent to the former NewModel logic.
+// desktopMD is the embedded desktop.md agent template; may be nil in tests that do not exercise the desktop launch flow.
 func NewAppState(
 	cfg *config.Config,
-	clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte,
+	clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, desktopMD, agentGuidelinesMD, codeConstructionPrinciplesMD []byte,
 	hookScripts worktree.HookScripts,
 	logWriter io.Writer,
 ) *AppState {
@@ -202,6 +210,7 @@ func NewAppState(
 		reviewerMD:                   reviewerMD,
 		taskRunnerMD:                 taskRunnerMD,
 		efficiencyMD:                 efficiencyMD,
+		desktopMD:                    desktopMD,
 		agentGuidelinesMD:            agentGuidelinesMD,
 		codeConstructionPrinciplesMD: codeConstructionPrinciplesMD,
 		hookScripts:                  hookScripts,

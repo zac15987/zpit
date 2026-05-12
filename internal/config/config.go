@@ -33,6 +33,7 @@ const (
 	defaultReviewerModel   = "opus[1m]"
 	defaultTaskRunnerModel = "opus[1m]"
 	defaultEfficiencyModel = "opus[1m]"
+	defaultDesktopModel    = "opus[1m]"
 )
 
 // Config is the top-level configuration loaded from config.toml.
@@ -59,6 +60,7 @@ type AgentModelsConfig struct {
 	Reviewer   string `toml:"reviewer"`
 	TaskRunner string `toml:"task_runner"`
 	Efficiency string `toml:"efficiency"`
+	Desktop    string `toml:"desktop"`
 }
 
 // SSHConfig holds settings for the Wish SSH server (zpit serve).
@@ -195,6 +197,7 @@ coding = "opus[1m]"         # feature implementation orchestrator (1M context)
 reviewer = "opus[1m]"       # PR review (1M context)
 task_runner = "sonnet"      # per-task subagent — scope narrowed by orchestrator, mechanical work (Sonnet is cost-effective)
 efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
+desktop = "opus[1m]"        # desktop-control agent (window/keyboard/mouse) — deep reasoning (1M context)
 
 # --- SSH Server (zpit serve) ---
 # [ssh]
@@ -508,6 +511,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.AgentModels.Efficiency == "" {
 		cfg.AgentModels.Efficiency = defaultEfficiencyModel
+	}
+	if cfg.AgentModels.Desktop == "" {
+		cfg.AgentModels.Desktop = defaultDesktopModel
 	}
 
 	for i := range cfg.Projects {
