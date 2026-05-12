@@ -398,6 +398,7 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, args...)
 		return DesktopAgentLaunchedMsg{
 			AgentName: agentName,
+			HomeDir:   homeDir,
 			Result:    result,
 			Err:       launchErr,
 		}
@@ -418,7 +419,7 @@ func (m Model) handleDesktopAgentLaunched(msg DesktopAgentLaunchedMsg) (tea.Mode
 	m.state.Lock()
 	at := &ActiveTerminal{
 		LaunchResult:   msg.Result,
-		WorkDir:        "", // home dir; session discovery via periodic scan populates SessionPID
+		WorkDir:        msg.HomeDir, // periodic session scan keys off WorkDir to find the spawned claude PID
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}

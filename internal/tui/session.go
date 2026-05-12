@@ -129,6 +129,21 @@ func (m Model) handleExistingSessions(msg existingSessionsMsg) (tea.Model, tea.C
 			m.state.logger.Printf("  skip: PID=%d already tracked", entry.PID)
 			continue
 		}
+		// Desktop agent fill-in: the entry already exists in activeTerminals with
+		// SessionPID==0 (created by handleDesktopAgentLaunched). Periodic scan
+		// finds the spawned claude.exe and back-fills PID/SessionID so the
+		// liveness sweep can later detect terminal close.
+		if strings.HasPrefix(entry.ProjectID, "desktop:") {
+			if at, ok := m.state.activeTerminals[entry.ProjectID]; ok && at.SessionPID == 0 {
+				m.state.logger.Printf("  desktop fill-in: key=%s PID=%d sessionID=%s", entry.ProjectID, entry.PID, entry.SessionID)
+				at.SessionPID = entry.PID
+				at.SessionID = entry.SessionID
+				at.StateChangedAt = time.Now()
+				currentPIDs[entry.PID] = true
+				cmds = append(cmds, waitForLogCmd(entry.ProjectID, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.state.logger))
+				continue
+			}
+		}
 		if pendingWorkDirs[entry.WorkDir] {
 			m.state.logger.Printf("  skip: PID=%d workDir has pending discovery", entry.PID)
 			continue
@@ -773,6 +788,7 @@ func (m *Model) checkNewSessions() tea.Cmd {
 	}
 	seen := make(map[string]bool)
 	var projects []projectInfo
+	var desktopWorkDir, desktopKey string
 	m.state.RLock()
 	for _, p := range m.state.projects {
 		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
@@ -784,6 +800,21 @@ func (m *Model) checkNewSessions() tea.Cmd {
 		}
 		seen[path] = true
 		projects = append(projects, projectInfo{id: p.ID, path: path})
+	}
+	// Desktop agent's cwd ($HOME) is not in m.state.projects, so the per-project
+	// scan above never finds its session. Capture the desktop entry's WorkDir
+	// + tracking key while we still pre-resolve the entry that is missing a PID.
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		if da.SessionPID == 0 && da.WorkDir != "" {
+			for key, at := range m.state.activeTerminals {
+				if at == da && strings.HasPrefix(key, "desktop:") {
+					desktopKey = key
+					desktopWorkDir = da.WorkDir
+					break
+				}
+			}
+		}
 	}
 	logger := m.state.logger
 	m.state.RUnlock()
@@ -840,6 +871,27 @@ func (m *Model) checkNewSessions() tea.Cmd {
 						WorkDir:        wt.Path,
 						LogPath:        logPath,
 						WorktreeBranch: wt.Branch,
+					})
+				}
+			}
+		}
+		// Desktop agent: scan its cwd ($HOME) and emit entries with the
+		// "desktop:" tracking key so handleExistingSessions fills in the existing
+		// entry rather than creating a new one.
+		if desktopWorkDir != "" {
+			deskSessions, err := watcher.FindActiveSessions(claudeHome, desktopWorkDir)
+			if err == nil {
+				for _, s := range deskSessions {
+					if trackedPIDs[s.PID] {
+						continue
+					}
+					logPath := watcher.LogFilePath(claudeHome, desktopWorkDir, s.SessionID)
+					entries = append(entries, existingSessionEntry{
+						ProjectID: desktopKey,
+						PID:       s.PID,
+						SessionID: s.SessionID,
+						WorkDir:   desktopWorkDir,
+						LogPath:   logPath,
 					})
 				}
 			}

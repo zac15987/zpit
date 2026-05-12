@@ -351,6 +351,7 @@ type CollisionPromptMsg struct {
 // launched. The TUI uses this to record the active session in AppState.
 type DesktopAgentLaunchedMsg struct {
 	AgentName string
+	HomeDir   string // cwd for the spawned claude — session discovery scans this path
 	Result    *terminal.LaunchResult
 	Err       error
 }
