@@ -50,6 +50,7 @@ coding = "opus[1m]"
 reviewer = "opus[1m]"
 task_runner = "sonnet"
 efficiency = "opus[1m]"
+desktop = "opus[1m]"
 
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
