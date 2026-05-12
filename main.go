@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/zac15987/zpit/internal/config"
+	"github.com/zac15987/zpit/internal/desktop"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/mcp"
 	zssh "github.com/zac15987/zpit/internal/ssh"
@@ -39,6 +41,9 @@ var taskRunnerMD []byte
 
 //go:embed agents/efficiency.md
 var efficiencyMD []byte
+
+//go:embed agents/desktop.md
+var desktopAgentMD []byte
 
 //go:embed docs/agent-guidelines.md
 var agentGuidelinesMD []byte
@@ -89,11 +94,13 @@ func main() {
 		runConnect()
 	case "serve-channel":
 		runServeChannel()
+	case "serve-desktop-proxy":
+		runServeDesktopProxy()
 	case "version", "--version":
 		fmt.Println(version)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcmd)
-		fmt.Fprintln(os.Stderr, "Usage: zpit [serve|connect|serve-channel|version]")
+		fmt.Fprintln(os.Stderr, "Usage: zpit [serve|connect|serve-channel|serve-desktop-proxy|version]")
 		os.Exit(1)
 	}
 }
@@ -290,6 +297,22 @@ func runAutoServe(cfg *config.Config, logFile *os.File) {
 // Reads ZPIT_BROKER_URL, ZPIT_PROJECT_ID, ZPIT_ISSUE_ID from environment.
 func runServeChannel() {
 	if err := mcp.RunFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runServeDesktopProxy starts the desktop-control proxy MCP server.
+// Reads ~/.zpit/desktop-policy.toml (auto-created on first run) and spawns
+// the upstream computer-use-mcp Node subprocess; gates every tool call
+// through the policy before forwarding.
+//
+// Stdio is bound to os.Stdin/os.Stdout — Claude Code launches this
+// subprocess via .mcp.json and talks JSON-RPC over the pipes.
+func runServeDesktopProxy() {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	if err := desktop.RunFromEnv(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
