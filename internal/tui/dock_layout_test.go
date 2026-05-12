@@ -17,7 +17,7 @@ func makeDockTestModel(t *testing.T, withTerms, withLoops bool) Model {
 			{ID: "p1", Name: "Project 1"},
 		},
 	}
-	state := NewAppState(cfg, nil, nil, nil, nil, nil, nil, worktree.HookScripts{}, nil)
+	state := NewAppState(cfg, nil, nil, nil, nil, nil, nil, nil, worktree.HookScripts{}, nil)
 	if withTerms {
 		state.activeTerminals["p1"] = &ActiveTerminal{State: watcher.StateWorking}
 	}

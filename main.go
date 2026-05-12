@@ -127,7 +127,7 @@ func runLocalTUI() {
 		return
 	}
 
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logFile)
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, desktopAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logFile)
 	p := tea.NewProgram(
 		tui.NewModel(appState),
 		tea.WithAltScreen(),
@@ -158,7 +158,7 @@ func runServe() {
 	logger := log.New(combined, "", log.LstdFlags)
 
 	// AppState also gets the combined writer so all state transitions are logged to both.
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), combined)
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, desktopAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), combined)
 
 	if err := zssh.StartServer(appState, cfg.SSH, logger); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -204,7 +204,7 @@ func runAutoServe(cfg *config.Config, logFile *os.File) {
 
 	logger.Println("auto_serve: starting")
 
-	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logWriter)
+	appState := tui.NewAppState(cfg, clarifierAgentMD, reviewerAgentMD, taskRunnerMD, efficiencyMD, desktopAgentMD, agentGuidelinesMD, codeConstructionPrinciplesMD, buildHookScripts(), logWriter)
 
 	// Start SSH server (non-blocking — port is ready on return).
 	handle, err := zssh.StartServerAsync(appState, cfg.SSH, logger)
