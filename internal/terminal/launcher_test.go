@@ -351,6 +351,7 @@ func TestNeedsAgentEnv(t *testing.T) {
 		{"reviewer", []string{"--agent", "reviewer"}, true},
 		{"efficiency skipped", []string{"--agent", "efficiency"}, false},
 		{"efficiency with channel", []string{"--agent", "efficiency", "--channel-enabled"}, false},
+		{"desktop skipped", []string{"--agent", "desktop"}, false},
 		{"agent flag without value", []string{"--agent"}, false},
 	}
 	for _, tt := range tests {

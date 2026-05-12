@@ -116,11 +116,15 @@ func hasAgentFlag(extraArgs []string) bool {
 
 // needsAgentEnv returns true if the agent session requires ZPIT_AGENT=1.
 // The efficiency agent works directly in the project directory under user control,
-// so hook enforcement is intentionally skipped.
+// so hook enforcement is intentionally skipped. The desktop agent runs in $HOME
+// without per-project hooks (safety is enforced by the proxy policy instead), so
+// it must also skip the wrapper — otherwise wt would invoke a non-existent
+// .claude/hooks/zpit-env.{cmd,ps1} and the tab would die before Claude starts.
 func needsAgentEnv(extraArgs []string) bool {
 	for i, arg := range extraArgs {
 		if arg == "--agent" && i+1 < len(extraArgs) {
-			return extraArgs[i+1] != "efficiency"
+			role := extraArgs[i+1]
+			return role != "efficiency" && role != "desktop"
 		}
 	}
 	return false

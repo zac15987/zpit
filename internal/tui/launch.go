@@ -313,6 +313,8 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 	model := m.state.cfg.AgentModels.Desktop
 	zpitBinOverride := m.state.cfg.ZpitBin
 	desktopMD := m.state.desktopMD
+	exitWrapperCMD := m.state.hookScripts.ExitWrapper
+	exitWrapperPS1 := m.state.hookScripts.ExitWrapperPS1
 
 	logger.Printf("desktop: preparing launch agent=%s model=%s", agentName, model)
 
@@ -353,12 +355,28 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 			logger.Printf("desktop: deployed desktop.md to %s", destPath)
 		}
 
-		// Launch Claude Code in homeDir.
-		// NOTE: needsAgentEnv in terminal/launcher.go currently returns true for "desktop"
-		// (any non-efficiency --agent value). This means ZPIT_AGENT=1 will be set by the
-		// terminal wrapper. Since no hooks are deployed to $HOME, this is harmless — the
-		// hook scripts are simply not invoked. A follow-up task should extend needsAgentEnv
-		// to exclude "desktop" for correctness.
+		// Deploy zpit-exit.{cmd,ps1} to ~/.claude/hooks/ so the WT clean-exit
+		// wrapper (BuildWindowsArgs → buildCleanExitWrapper) resolves. needsAgentEnv
+		// excludes "desktop" so the ZPIT_AGENT-injection wrapper is skipped; the
+		// clean-exit wrapper is still used by all Windows launches so the WT tab
+		// closes gracefully on exit. No safety hooks (path-guard etc.) are deployed —
+		// the proxy policy is the safety layer.
+		if runtime.GOOS == "windows" && len(exitWrapperCMD) > 0 {
+			claudeHooksDir := filepath.Join(homeDir, ".claude", "hooks")
+			if err := os.MkdirAll(claudeHooksDir, 0o755); err != nil {
+				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: cannot create ~/.claude/hooks/: %s", err)}
+			}
+			if err := os.WriteFile(filepath.Join(claudeHooksDir, "zpit-exit.cmd"), exitWrapperCMD, 0o644); err != nil {
+				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: failed to deploy zpit-exit.cmd: %s", err)}
+			}
+			if len(exitWrapperPS1) > 0 {
+				if err := os.WriteFile(filepath.Join(claudeHooksDir, "zpit-exit.ps1"), exitWrapperPS1, 0o644); err != nil {
+					return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: failed to deploy zpit-exit.ps1: %s", err)}
+				}
+			}
+			logger.Printf("desktop: deployed zpit-exit wrappers to %s", claudeHooksDir)
+		}
+
 		tabTitle := "Desktop Agent"
 		args := []string{
 			"--agent", "desktop",
