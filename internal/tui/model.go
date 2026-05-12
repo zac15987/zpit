@@ -556,6 +556,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Desktop agent messages
+	case DesktopAgentLaunchedMsg:
+		return m.handleDesktopAgentLaunched(msg)
+	case DesktopAgentBlockedMsg:
+		return m.handleDesktopAgentBlocked(msg)
+	case DesktopAgentExitedMsg:
+		return m.handleDesktopAgentExited(msg)
+
 	// History (Session Browser) messages
 	case HistoryFoldersScannedMsg:
 		return m.handleHistoryFoldersScanned(msg)
@@ -904,6 +912,9 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.initConfirmForm()
 		}
 		return m, m.launchEfficiencyCmd()
+
+	case key.Matches(msg, m.keys.DesktopAgent):
+		return m, m.launchDesktopAgentCmd()
 
 	case key.Matches(msg, m.keys.Undeploy):
 		p := m.selectedProject()
