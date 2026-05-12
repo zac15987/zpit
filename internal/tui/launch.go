@@ -377,10 +377,15 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 			logger.Printf("desktop: deployed zpit-exit wrappers to %s", claudeHooksDir)
 		}
 
+		// Pass the .mcp.json explicitly — Claude Code resolves bare .mcp.json against
+		// the cwd ($HOME), but we keep ours under ~/.zpit/ to avoid colonizing $HOME.
+		mcpConfigPath := filepath.Join(homeDir, ".zpit", ".mcp.json")
+
 		tabTitle := "Desktop Agent"
 		args := []string{
 			"--agent", "desktop",
 			"--model", model,
+			"--mcp-config", mcpConfigPath,
 			"--allowedTools", "Read,Bash,Glob,Grep,mcp__desktop-proxy__*",
 		}
 		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, args...)
