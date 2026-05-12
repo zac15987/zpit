@@ -380,7 +380,7 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 (Optional section — list issue numbers of parallel coordination targets; omit if no parallel collaboration)
 
 ## TASKS
-T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none)
+T{N}: [description] [create|modify|delete] file-path (depends: T{M} | none) (covers: AC-N, AC-M)
 (Optional section — see TASKS generation rules below)
 
 ## REFERENCES
@@ -424,6 +424,21 @@ Workflow step 15n will auto-append this clause when the pattern is detected — 
 - Numbers must be explicit: don't write "add a timeout" — write "timeout of 3 seconds"
 - Log format must include a complete example — don't just write "add logging"
 - If hardware/physical verification is needed, write out the specific verification steps
+- **Universal-quantifier ACs must name an in-code identifier.** When an AC quantifies over a set ("all", "every", "each", "no remaining", "must not appear", "none"), name the **exact in-code identifier** (constant, slice, map, struct field) the AC binds to, and the **element count** if known. This makes the AC self-describing and lets downstream task-runners iterate the named identifier directly with `for _, x := range Identifier` rather than guess at "representative" cases.
+
+  BAD:
+    AC-1: Every denied tool must be rejected with the AC-2 denial string.
+
+  GOOD:
+    AC-1: Every entry of `desktop.DefaultDeniedTools` (16 entries: `run_script`, `filesystem`, `process_kill`, `registry`, `notification`, `scrape`, `multi_edit`, `multi_select`, `snapshot`, `list_spaces`, `get_active_space`, `create_agent_space`, `destroy_space`, `move_window_to_space`, `remove_window_from_space`, `resize_window`) must be rejected with the AC-2 denial string when invoked via `tools/call`. The test must iterate `range desktop.DefaultDeniedTools` and assert one row per entry — representative sampling of 1–2 entries is FAIL.
+
+  BAD:
+    AC-12: All allowed tools forward to upstream.
+
+  GOOD:
+    AC-12: Every entry of `desktop.DefaultAllowedTools` (42 entries) must, when sent as `tools/call` with arbitrary arguments, reach a stubbed upstream and have the upstream's response returned unchanged to the caller. The test must assert `len(DefaultAllowedTools) == 42` at the top, then iterate `range DefaultAllowedTools`.
+
+  Why this matters: round-1 review of issue #104 caught 3 AC fails (AC-1 default list strings drifted; AC-12(d) tested 1/16 denied; AC-12(e) tested ~6/42 allowed) where the task-runner subagent treated "every" as "representative". Naming the identifier eliminates that interpretation gap — the test has nowhere to hide.
 
 **Rules for writing SCOPE:**
 - Each line format: `[modify|create|delete] relative-path (reason)`
@@ -455,21 +470,23 @@ Workflow step 15n will auto-append this clause when the pattern is detected — 
 - When SCOPE contains 3 or more entries, generate a `## TASKS` section to decompose the implementation into ordered tasks
 - When SCOPE contains fewer than 3 entries, do NOT generate a TASKS section (the issue is small enough for single-pass implementation)
 - Each task touches at most 3 files — if a task needs more than 3 files, split it into smaller tasks
-- Format: `T{N}: [description] [create|modify|delete] file-path (depends: T{M}, T{K} | none)`
+- Format: `T{N}: [description] [create|modify|delete] file-path (depends: T{M}, T{K} | none) (covers: AC-N, AC-M)`
   - `T{N}:` — task ID, incrementing from T1
   - `[P]` — parallel marker, placed after the colon and before the description. Mark a task `[P]` when ALL of these are true: (1) at least one adjacent task shares the same dependency set (including `depends: none`), AND (2) it modifies different files from that adjacent task. When multiple consecutive tasks satisfy these conditions, mark ALL of them `[P]` — not just some. The execution engine groups consecutive `[P]` tasks into one parallel batch; a missing `[P]` breaks the batch and forces sequential execution.
   - `[create|modify|delete] file-path` — file action brackets (same keywords as SCOPE), can appear multiple times for multi-file tasks
-  - `(depends: T{M}, T{K})` — explicit dependency list at the end; use `(depends: none)` for tasks with no dependencies
+  - `(depends: T{M}, T{K})` — explicit dependency list; use `(depends: none)` for tasks with no dependencies
+  - `(covers: AC-N, AC-M)` — **required** — list every AC ID this task is responsible for implementing (one task may cover multiple ACs; one AC may be split across multiple tasks). The prompt builder inlines the verbatim text of each cited AC under the task in the orchestrator's prompt, so the orchestrator can copy it into the task-runner subagent's spawn prompt without paraphrasing. AC text drift across the orchestrator→subagent boundary was the root cause of 3 of the 4 round-1 review fails on issue #104.
 - Every file path in TASKS must also appear in a SCOPE entry — no undeclared files
+- **AC coverage rule**: every AC-N declared in ACCEPTANCE_CRITERIA must appear in at least one task's `(covers: ...)` list. An AC that no task covers indicates either (a) a missing task, (b) an AC that doesn't need explicit implementation work (rare — usually a sign of a non-actionable AC), or (c) a clarifier slip. Re-examine before finalizing.
 - Task ordering should respect logical dependencies: data structures before logic, logic before tests
 - Example:
   ```
   ## TASKS
-  T1: Add TaskEntry struct [modify] internal/tracker/issuespec.go (depends: none)
-  T2: [P] Add parsing tests [modify] internal/tracker/issuespec_test.go (depends: T1)
-  T3: [P] Update coding prompt [modify] internal/prompt/coding.go (depends: T1)
+  T1: Add TaskEntry struct [modify] internal/tracker/issuespec.go (depends: none) (covers: AC-1)
+  T2: [P] Add parsing tests [modify] internal/tracker/issuespec_test.go (depends: T1) (covers: AC-1, AC-3)
+  T3: [P] Update coding prompt [modify] internal/prompt/coding.go (depends: T1) (covers: AC-2)
   ```
-  T2 and T3 share the same dependency (T1) and touch different files, so both are `[P]`. If T3 were missing `[P]`, it would run sequentially after T2 instead of alongside it.
+  T2 and T3 share the same dependency (T1) and touch different files, so both are `[P]`. If T3 were missing `[P]`, it would run sequentially after T2 instead of alongside it. Every AC-{1,2,3} is covered by at least one task.
 
 ## Rules
 

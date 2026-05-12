@@ -166,6 +166,22 @@ func hasParallelTasks(tasks []tracker.TaskEntry) bool {
 	return false
 }
 
+// findACByID returns the full AC line matching id (e.g. "AC-1") from a list of
+// "AC-N: ..." strings. Returns the full original line including the "AC-N: "
+// prefix so it can be inlined verbatim in the prompt. Returns empty string if
+// no match — callers should treat that as a clarifier spec bug (covers cites
+// an AC that doesn't exist) and skip silently rather than fabricate text.
+func findACByID(acs []string, id string) string {
+	prefix := id + ":"
+	for _, ac := range acs {
+		trimmed := strings.TrimSpace(ac)
+		if strings.HasPrefix(trimmed, prefix) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 // buildTaskWorkflow writes the task-ordered coding workflow when TASKS is present.
 // Generates subagent delegation for sequential tasks and parallel-subagent-batch
 // delegation for [P] task groups.
@@ -186,6 +202,22 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 			b.WriteString(" (depends: " + strings.Join(task.DependsOn, ", ") + ")")
 		}
 		b.WriteByte('\n')
+		// Per-task AC injection. When a TASKS line declares `(covers: AC-N, …)`,
+		// emit the AC text verbatim under the task so the orchestrator can copy
+		// it into the subagent's spawn prompt without paraphrasing. This is the
+		// load-bearing fix for the round-1 AC-fail mode from issue #104 where
+		// AC text drifted in translation between orchestrator and task-runner.
+		if len(task.RelevantACs) > 0 {
+			b.WriteString("  Relevant ACs (copy these verbatim into the subagent spawn prompt — do not summarize):\n")
+			for _, acID := range task.RelevantACs {
+				ac := findACByID(p.Spec.AcceptanceCriteria, acID)
+				if ac == "" {
+					fmt.Fprintf(b, "    - [WARNING] %s declared in (covers:) but not found in ACCEPTANCE_CRITERIA — clarifier spec bug; stop and post issue comment\n", acID)
+					continue
+				}
+				fmt.Fprintf(b, "    - %s\n", ac)
+			}
+		}
 	}
 
 	// Execution strategy section
@@ -273,7 +305,7 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 5. Before starting implementation, update issue label: remove "todo", add "wip"
 6. Execute tasks according to the **Task Execution Order** above, delegating each task to a `+"`task-runner`"+` subagent (or a parallel subagent batch for `+"`[P]`"+` groups).
    For each delegation:
-   a. Provide the subagent with: issue ID, task ID, task description, file scope, the full APPROACH section, and the commit format [%s] T{N}: {short description}
+   a. Provide the subagent with: issue ID, task ID, task description, file scope, the full APPROACH section, **the verbatim text of every AC listed under that task's "Relevant ACs" block in the Task Decomposition above** (copy each `+"`AC-N: …`"+` line character-for-character — no paraphrase, no truncation, no "see AC-N" pointer; the subagent does not have access to the orchestrator's full Issue Spec), and the commit format [%s] T{N}: {short description}
    b. After the subagent completes, verify the commit exists and the changes are consistent
    c. If a subagent reports failure, retry the delegation once. If still failing, stop and post issue comment explaining what failed — do NOT open PR
 7. After ALL tasks complete (whether sequential or a parallel batch), **self-check against each ACCEPTANCE_CRITERIA item** (mandatory pre-commit gate) — walk through them one at a time, do NOT batch this into a single "looks good" pass:
@@ -320,7 +352,7 @@ func buildSubagentDelegation(b *strings.Builder, p CodingParams) {
 	b.WriteString("Agent tool parameters:\n")
 	b.WriteString("  subagent_type: \"task-runner\"\n")
 	b.WriteString("  description: \"[ISSUE-ID] T{N}: {short description}\"\n")
-	b.WriteString("  prompt: <full task context including issue ID, task ID, description, file paths, APPROACH, and commit format>\n")
+	b.WriteString("  prompt: <full task context including issue ID, task ID, description, file paths, APPROACH, the verbatim Relevant ACs from the Task Decomposition block above, and commit format>\n")
 	b.WriteString("```\n\n")
 	fmt.Fprintf(b, "The subagent will implement the task, commit with format `[%s] T{N}: {short description}`, and report results.\n", p.IssueID)
 	b.WriteString("After each subagent returns, verify the commit and check for errors before proceeding.\n\n")
@@ -348,7 +380,7 @@ func buildParallelSubagentDelegation(b *strings.Builder, p CodingParams) {
 	b.WriteString("  subagent_type: \"task-runner\"\n")
 	b.WriteString("  isolation: \"worktree\"\n")
 	b.WriteString("  description: \"[ISSUE-ID] T{N}: {short description}\"\n")
-	b.WriteString("  prompt: <full task context including issue ID, task ID, description, file paths, APPROACH, and commit format>\n")
+	b.WriteString("  prompt: <full task context including issue ID, task ID, description, file paths, APPROACH, the verbatim Relevant ACs from the Task Decomposition block above, and commit format>\n")
 	b.WriteString("```\n\n")
 	b.WriteString("**Important — do NOT embed worktree paths or `cd` instructions in the subagent's `prompt` argument.** Claude Code's `isolation: \"worktree\"` automatically sets the subagent's CWD to the child worktree. If you write phrases like \"work in D:\\...\\worktrees\\<issue>\" or \"cd to the project root\" in the spawn prompt, or embed any absolute path that points at the parent worktree, the subagent may `cd` there and commit in the shared parent worktree instead of its isolated child — this defeats the isolation entirely and will trigger the Task Execution Order sanity check to ABORT the batch (see docs/known-issues.md §6 for the incident that led to this warning). Keep the `prompt` strictly about the task: issue ID, task ID, description, file paths (SCOPE as repo-relative paths like `internal/git/ops.go`, never absolute), APPROACH, commit format. No cwd hints. No absolute paths. No shell commands. The subagent has its own CWD and does not need to know where it is.\n\n")
 	b.WriteString("Claude Code invokes zpit's `WorktreeCreate` hook (`.claude/hooks/worktree-create.sh`), which forks a child worktree under `.zpit-children/<slug>` from your current HEAD (not `origin/<defaultBranch>` — that's why we bypass Claude Code's built-in path), deploys the `.claude/` directory, and hands the path to the subagent. The subagent commits normally inside the child worktree on branch `<your-branch>-<slug>`.\n\n")

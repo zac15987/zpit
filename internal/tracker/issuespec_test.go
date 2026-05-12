@@ -552,6 +552,93 @@ func TestParseTaskEntry_MultipleFileActions(t *testing.T) {
 	}
 }
 
+func TestParseTaskEntry_CoversSingle(t *testing.T) {
+	line := "T3: Wire policy [modify] policy.go (depends: T1) (covers: AC-1)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if entry.ID != "T3" {
+		t.Errorf("ID = %q, want T3", entry.ID)
+	}
+	if entry.Description != "Wire policy" {
+		t.Errorf("Description = %q, want %q", entry.Description, "Wire policy")
+	}
+	if len(entry.Paths) != 1 || entry.Paths[0] != "policy.go" {
+		t.Errorf("Paths = %v, want [policy.go]", entry.Paths)
+	}
+	if len(entry.DependsOn) != 1 || entry.DependsOn[0] != "T1" {
+		t.Errorf("DependsOn = %v, want [T1]", entry.DependsOn)
+	}
+	if len(entry.RelevantACs) != 1 || entry.RelevantACs[0] != "AC-1" {
+		t.Errorf("RelevantACs = %v, want [AC-1]", entry.RelevantACs)
+	}
+}
+
+func TestParseTaskEntry_CoversMultiple(t *testing.T) {
+	line := "T4: Add defaults [modify] policy.go (depends: T1, T2) (covers: AC-1, AC-3, AC-12)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if len(entry.DependsOn) != 2 || entry.DependsOn[0] != "T1" || entry.DependsOn[1] != "T2" {
+		t.Errorf("DependsOn = %v, want [T1 T2]", entry.DependsOn)
+	}
+	if len(entry.RelevantACs) != 3 {
+		t.Fatalf("RelevantACs length = %d, want 3", len(entry.RelevantACs))
+	}
+	want := []string{"AC-1", "AC-3", "AC-12"}
+	for i, ac := range want {
+		if entry.RelevantACs[i] != ac {
+			t.Errorf("RelevantACs[%d] = %q, want %q", i, entry.RelevantACs[i], ac)
+		}
+	}
+}
+
+func TestParseTaskEntry_CoversWithoutDepends(t *testing.T) {
+	line := "T5: Initial setup [create] x.go (depends: none) (covers: AC-2)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if len(entry.DependsOn) != 0 {
+		t.Errorf("DependsOn = %v, want empty", entry.DependsOn)
+	}
+	if len(entry.RelevantACs) != 1 || entry.RelevantACs[0] != "AC-2" {
+		t.Errorf("RelevantACs = %v, want [AC-2]", entry.RelevantACs)
+	}
+}
+
+func TestParseTaskEntry_CoversBeforeDepends(t *testing.T) {
+	// Parser must accept either order.
+	line := "T6: Reordered [modify] a.go (covers: AC-1) (depends: T1)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if entry.Description != "Reordered" {
+		t.Errorf("Description = %q, want %q", entry.Description, "Reordered")
+	}
+	if len(entry.DependsOn) != 1 || entry.DependsOn[0] != "T1" {
+		t.Errorf("DependsOn = %v, want [T1]", entry.DependsOn)
+	}
+	if len(entry.RelevantACs) != 1 || entry.RelevantACs[0] != "AC-1" {
+		t.Errorf("RelevantACs = %v, want [AC-1]", entry.RelevantACs)
+	}
+}
+
+func TestParseTaskEntry_NoCovers_BackwardCompat(t *testing.T) {
+	// Lines without (covers: ...) must still parse and leave RelevantACs nil.
+	line := "T7: legacy task [modify] a.go (depends: T1)"
+	entry, ok := parseTaskEntry(line)
+	if !ok {
+		t.Fatal("parseTaskEntry returned false")
+	}
+	if entry.RelevantACs != nil {
+		t.Errorf("RelevantACs = %v, want nil for line without (covers:)", entry.RelevantACs)
+	}
+}
+
 func TestValidateIssueSpec_TasksScopeCrossValidation(t *testing.T) {
 	body := `## CONTEXT
 ctx
@@ -588,6 +675,78 @@ T2: Update unknown file [modify] unknown/file.go (depends: T1)
 	for _, w := range result.Warnings {
 		if strings.Contains(w, "T1") && strings.Contains(w, "issuespec.go") && strings.Contains(w, "not found in SCOPE") {
 			t.Errorf("unexpected warning for T1's valid SCOPE path: %q", w)
+		}
+	}
+}
+
+func TestValidateIssueSpec_TasksACCoverage_WarnsForUncovered(t *testing.T) {
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: covered
+AC-2: also covered
+AC-3: NOT covered by any task
+
+## SCOPE
+[modify] a.go (reason)
+[modify] b.go (reason)
+
+## CONSTRAINTS
+none
+
+## TASKS
+T1: do a [modify] a.go (depends: none) (covers: AC-1)
+T2: do b [modify] b.go (depends: T1) (covers: AC-2)
+`
+	result := ValidateIssueSpec(body)
+
+	// AC-3 must produce a warning; AC-1 and AC-2 must not.
+	wantWarn := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "AC-3") && strings.Contains(w, "not covered") {
+			wantWarn = true
+		}
+		if strings.Contains(w, "AC-1") && strings.Contains(w, "not covered") {
+			t.Errorf("false positive: AC-1 is covered by T1 but got warning: %q", w)
+		}
+		if strings.Contains(w, "AC-2") && strings.Contains(w, "not covered") {
+			t.Errorf("false positive: AC-2 is covered by T2 but got warning: %q", w)
+		}
+	}
+	if !wantWarn {
+		t.Errorf("expected AC-3 not-covered warning, got warnings: %v", result.Warnings)
+	}
+}
+
+func TestValidateIssueSpec_TasksACCoverage_NoWarnWhenNoTasks(t *testing.T) {
+	// Without a TASKS section, the coverage check is a no-op — older specs
+	// must remain warning-free under this rule.
+	body := `## CONTEXT
+ctx
+
+## APPROACH
+approach
+
+## ACCEPTANCE_CRITERIA
+AC-1: anything
+AC-2: anything
+
+## SCOPE
+[modify] a.go (reason)
+
+## CONSTRAINTS
+none
+`
+	result := ValidateIssueSpec(body)
+	for _, w := range result.Warnings {
+		// "(covers:" is unique to the new task-AC coverage warning; pre-existing
+		// SCOPE-AC coverage uses different phrasing.
+		if strings.Contains(w, "(covers:") {
+			t.Errorf("no-TASKS spec should not produce task-AC coverage warnings, got: %q", w)
 		}
 	}
 }

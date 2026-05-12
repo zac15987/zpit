@@ -299,6 +299,100 @@ func testSpecWithSequentialTasks() *tracker.IssueSpec {
 	return spec
 }
 
+func TestBuildCodingPrompt_PerTaskACInjection(t *testing.T) {
+	// Regression guard for the issue #104 review-fail mode: AC text must be
+	// printed verbatim under each task that declares (covers:), so the
+	// orchestrator can copy it into the subagent's spawn prompt without
+	// paraphrasing. Tasks without (covers:) must NOT pick up cross-task AC
+	// text (no global drop-in).
+	spec := testSpec()
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "Add retry logic", Paths: []string{"src/EtherCatService.cs"}, DependsOn: nil, RelevantACs: []string{"AC-1"}},
+		{ID: "T2", Description: "Add retry policy", Paths: []string{"src/RetryPolicy.cs"}, DependsOn: []string{"T1"}, RelevantACs: []string{"AC-2", "AC-3"}},
+		{ID: "T3", Description: "Wire it up", Paths: []string{"src/EtherCatService.cs"}, DependsOn: []string{"T2"}},
+	}
+
+	p := CodingParams{
+		IssueID:    "ASE-47",
+		IssueTitle: "EtherCAT reconnect backoff",
+		Spec:       spec,
+		LogPolicy:  "strict",
+		BaseBranch: "dev",
+	}
+	result := BuildCodingPrompt(p)
+
+	// Per-task AC block header must appear for tasks that have (covers:).
+	if !strings.Contains(result, "Relevant ACs (copy these verbatim") {
+		t.Fatal("per-task AC block header missing — verbatim instruction lost")
+	}
+
+	// T1 must have AC-1 text in its Task Decomposition section.
+	t1Section := sliceBetween(t, result, "- T1:", "- T2:")
+	if !strings.Contains(t1Section, "AC-1: 第一次重試間隔 1 秒") {
+		t.Errorf("T1 section missing verbatim AC-1 text; got: %q", t1Section)
+	}
+	if strings.Contains(t1Section, "AC-2") || strings.Contains(t1Section, "AC-3") {
+		t.Errorf("T1 section leaked AC-2/AC-3 — cross-task contamination: %q", t1Section)
+	}
+
+	// T2 must have BOTH AC-2 and AC-3 text.
+	t2Section := sliceBetween(t, result, "- T2:", "- T3:")
+	if !strings.Contains(t2Section, "AC-2: 最大重試間隔 30 秒") {
+		t.Errorf("T2 section missing verbatim AC-2 text; got: %q", t2Section)
+	}
+	if !strings.Contains(t2Section, "AC-3: 重試次數上限 10 次") {
+		t.Errorf("T2 section missing verbatim AC-3 text; got: %q", t2Section)
+	}
+	if strings.Contains(t2Section, "AC-1") {
+		t.Errorf("T2 section leaked AC-1 — cross-task contamination: %q", t2Section)
+	}
+
+	// T3 declared no (covers:) — must NOT get a per-task AC block.
+	t3Section := sliceBetween(t, result, "- T3:", "\n## Execution Strategy")
+	if strings.Contains(t3Section, "Relevant ACs") {
+		t.Errorf("T3 (no covers) erroneously got a Relevant ACs block: %q", t3Section)
+	}
+	if strings.Contains(t3Section, "AC-1") || strings.Contains(t3Section, "AC-2") || strings.Contains(t3Section, "AC-3") {
+		t.Errorf("T3 (no covers) leaked AC text: %q", t3Section)
+	}
+
+	// Delegation placeholders must mention verbatim Relevant ACs pass-through.
+	if !strings.Contains(result, "verbatim Relevant ACs from the Task Decomposition block above") {
+		t.Error("delegation placeholder missing the verbatim-pass-through phrase")
+	}
+}
+
+func TestBuildCodingPrompt_PerTaskACInjection_UnknownACWarns(t *testing.T) {
+	// Defensive: clarifier spec bug → AC-99 cited but doesn't exist. Prompt
+	// must surface a WARNING tag so the orchestrator stops rather than fabricate.
+	spec := testSpec()
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "x", Paths: []string{"a.go"}, RelevantACs: []string{"AC-99"}},
+	}
+	p := CodingParams{IssueID: "X-1", IssueTitle: "x", Spec: spec, LogPolicy: "strict", BaseBranch: "dev"}
+	result := BuildCodingPrompt(p)
+	if !strings.Contains(result, "[WARNING] AC-99 declared in (covers:) but not found") {
+		t.Error("missing AC-not-found warning for spec bug")
+	}
+}
+
+// sliceBetween returns the substring of s strictly between the first
+// occurrence of start and the next occurrence of end after start. Fails the
+// test if either anchor is missing — keeps the assertion intent explicit.
+func sliceBetween(t *testing.T, s, start, end string) string {
+	t.Helper()
+	i := strings.Index(s, start)
+	if i < 0 {
+		t.Fatalf("anchor %q missing from prompt", start)
+	}
+	rest := s[i:]
+	j := strings.Index(rest, end)
+	if j < 0 {
+		t.Fatalf("end anchor %q missing after %q", end, start)
+	}
+	return rest[:j]
+}
+
 func TestBuildCodingPrompt_WithTasks(t *testing.T) {
 	p := CodingParams{
 		IssueID:    "ASE-47",
