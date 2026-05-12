@@ -111,13 +111,27 @@ func NewProxy(in io.Reader, out io.Writer, policy Policy, logger *DesktopLogger,
 func (p *Proxy) Run(ctx context.Context) error {
 	p.logger.Infof("desktop-proxy: starting upstream subprocess")
 
-	npxPath, npxArgs, err := resolveNpx()
-	if err != nil {
-		p.logger.Errorf("desktop-proxy: resolveNpx failed: %v", err)
-		return fmt.Errorf("desktop-proxy: %w", err)
+	// Stopgap for zavora-ai/computer-use-mcp PR #9 — patch the globally-
+	// installed server.js so its broken stdio-entry guard accepts Windows
+	// backslash paths. No-op on macOS, no-op if already patched, no-op if
+	// the package is not globally installed (we fall back to npx in that
+	// case, which won't work on Windows but does work on macOS).
+	if patchedPath, patched, patchErr := PatchInstalledUpstream(); patchErr != nil {
+		p.logger.Warnf("desktop-proxy: stopgap patch skipped: %v", patchErr)
+	} else if patched {
+		p.logger.Infof("desktop-proxy: applied stopgap argv-shim patch at %s (remove after PR #9 ships)", patchedPath)
+	} else if patchedPath != "" {
+		p.logger.Infof("desktop-proxy: stopgap patch already present at %s", patchedPath)
 	}
 
-	p.cmd = exec.CommandContext(ctx, npxPath, npxArgs...)
+	cmdPath, cmdArgs, err := resolveUpstream()
+	if err != nil {
+		p.logger.Errorf("desktop-proxy: resolveUpstream failed: %v", err)
+		return fmt.Errorf("desktop-proxy: %w", err)
+	}
+	p.logger.Infof("desktop-proxy: upstream command=%s args=%v", cmdPath, cmdArgs)
+
+	p.cmd = exec.CommandContext(ctx, cmdPath, cmdArgs...)
 
 	upstreamIn, err := p.cmd.StdinPipe()
 	if err != nil {
@@ -433,9 +447,28 @@ func (p *Proxy) forwardToUpstream(upstreamIn io.Writer, data []byte) {
 	}
 }
 
-// resolveNpx finds the npx binary for the current platform.
-// On Windows, falls back to cmd.exe /c npx ... when LookPath cannot find npx directly.
-func resolveNpx() (string, []string, error) {
+// resolveUpstream picks the command line for the upstream MCP server.
+//
+// On Windows, prefers a direct `node <global-install>/dist/server.js`
+// invocation when the package is globally installed. This is because:
+//
+//  1. `npx` uses its own ephemeral cache, ignoring global installs, so
+//     anything we patch in global node_modules wouldn't apply.
+//  2. The upstream package has a bug (zavora-ai/computer-use-mcp PR #9)
+//     that prevents stdio startup on Windows. We patch the global install
+//     in place via patchInstalledUpstreamForRun; that patch is only useful
+//     if `node` actually runs the global copy.
+//
+// Everywhere else (macOS, and Windows without a global install), falls back
+// to `npx --yes --prefer-offline @zavora-ai/computer-use-mcp`.
+func resolveUpstream() (string, []string, error) {
+	if runtime.GOOS == "windows" {
+		if serverPath, err := findGlobalUpstreamServerJS(); err == nil {
+			if nodePath, lookErr := exec.LookPath("node"); lookErr == nil {
+				return nodePath, []string{serverPath}, nil
+			}
+		}
+	}
 	if p, err := exec.LookPath("npx"); err == nil {
 		return p, []string{"--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"}, nil
 	}
