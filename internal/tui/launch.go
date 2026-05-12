@@ -284,10 +284,17 @@ func evaluateDesktopLaunchGuards(state *AppState, isAlive func(int) bool) (strin
 
 	if da != nil {
 		pid := da.SessionPID
-		if pid > 0 && isAlive(pid) {
+		switch {
+		case pid == 0:
+			// Launch in flight — handleDesktopAgentLaunched set activeDesktopAgent
+			// but the periodic session scan hasn't populated SessionPID yet (takes
+			// up to ~5s). Treating this as stale would let a second [w] press race
+			// past the lock and spawn a duplicate session.
+			return locale.T(locale.KeyDesktopLaunching), false
+		case isAlive(pid):
 			return fmt.Sprintf(locale.T(locale.KeyDesktopAlreadyRunning), pid), false
 		}
-		// Stale entry (PID dead or zero) — allow overwrite.
+		// PID known but the process is gone — stale entry, allow overwrite.
 	}
 
 	return "", true

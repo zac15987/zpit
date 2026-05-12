@@ -254,6 +254,7 @@ const (
 	// Desktop Agent
 	KeyDesktopAgent            Key = "desktop_agent"
 	KeyDesktopAlreadyRunning   Key = "desktop_already_running"
+	KeyDesktopLaunching        Key = "desktop_launching"
 	KeyDesktopLinuxUnsupported Key = "desktop_linux_unsupported"
 	KeyDesktopExited           Key = "desktop_exited"
 )

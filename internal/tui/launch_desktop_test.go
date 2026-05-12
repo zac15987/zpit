@@ -89,17 +89,47 @@ func TestEvaluateDesktopLaunchGuards_SingleInstance(t *testing.T) {
 	}
 }
 
+// TestEvaluateDesktopLaunchGuards_LaunchInFlight verifies that a second [w]
+// press is blocked while the first launch is still waiting for the periodic
+// session scan to populate SessionPID. Regression: previously, SessionPID=0
+// was treated as a stale entry and the second press spawned a duplicate
+// session.
+func TestEvaluateDesktopLaunchGuards_LaunchInFlight(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("launch-in-flight test not applicable on Linux (linux guard fires first)")
+	}
+
+	state := newTestAppState()
+	state.activeDesktopAgent = &ActiveTerminal{
+		SessionPID: 0, // set by handleDesktopAgentLaunched; populated later by scan
+		State:      watcher.StateUnknown,
+	}
+
+	// isAlive should not be consulted on the pid==0 branch; make it fail loudly
+	// if the code ever does.
+	alwaysAlive := func(_ int) bool { return true }
+
+	blockText, ok := evaluateDesktopLaunchGuards(state, alwaysAlive)
+	if ok {
+		t.Fatal("expected launch-in-flight to block second press, but it was allowed")
+	}
+	if blockText != locale.T(locale.KeyDesktopLaunching) {
+		t.Errorf("blockText = %q, want launching message", blockText)
+	}
+}
+
 // TestEvaluateDesktopLaunchGuards_StaleEntryOverwrites verifies that a launch
-// proceeds when activeDesktopAgent has a dead PID (stale entry — AC-7 inverse).
+// proceeds when activeDesktopAgent has a known PID that is no longer alive
+// (the previous agent terminated but the liveness sweep hasn't cleared it
+// yet — AC-7 inverse).
 func TestEvaluateDesktopLaunchGuards_StaleEntryOverwrites(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		t.Skip("stale-entry test not applicable on Linux (linux guard fires first)")
 	}
 
-	// SessionPID = 0 means "not yet discovered"; isAlive returns false for 0.
 	state := newTestAppState()
 	state.activeDesktopAgent = &ActiveTerminal{
-		SessionPID: 0,
+		SessionPID: 12345, // any non-zero PID
 		State:      watcher.StateUnknown,
 	}
 
