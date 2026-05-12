@@ -242,7 +242,18 @@ func (p *Proxy) handleToolsCall(_ context.Context, frame map[string]any, upstrea
 
 	// --- Policy checks ---
 
-	// 1. Tool allowlist check (AC-2).
+	// 1. Deny precedence (AC-1 last sentence): if denied_tools lists this tool,
+	// reject regardless of whether it also appears in allowed_tools. AC-10
+	// names exactly four deny reasons, so deny-list rejections share the
+	// `tool_not_allowed` reason and the AC-2 denial message format.
+	if p.policy.IsToolDenied(toolName) {
+		reason := "tool_not_allowed"
+		p.logDecision("deny", toolName, reason)
+		p.writeDenial(id, fmt.Sprintf("denied: tool '%s' is not in the desktop agent allowlist (see ~/.zpit/desktop-policy.toml)", toolName))
+		return
+	}
+
+	// 2. Tool allowlist check (AC-2).
 	if !p.policy.IsToolAllowed(toolName) {
 		reason := "tool_not_allowed"
 		p.logDecision("deny", toolName, reason)
@@ -250,7 +261,7 @@ func (p *Proxy) handleToolsCall(_ context.Context, frame map[string]any, upstrea
 		return
 	}
 
-	// 2. run_script gating (AC-6 / run_script_disabled).
+	// 3. run_script gating (AC-6 / run_script_disabled).
 	if toolName == "run_script" && !p.policy.AllowRunScript {
 		reason := "run_script_disabled"
 		p.logDecision("deny", toolName, reason)
@@ -258,7 +269,7 @@ func (p *Proxy) handleToolsCall(_ context.Context, frame map[string]any, upstrea
 		return
 	}
 
-	// 3. DenyKeys check for key/hold_key (AC-3).
+	// 4. DenyKeys check for key/hold_key (AC-3).
 	if toolName == "key" || toolName == "hold_key" {
 		text, _ := arguments["text"].(string)
 		if matched := p.policy.MatchDenyKey(text); matched != "" {
@@ -269,7 +280,7 @@ func (p *Proxy) handleToolsCall(_ context.Context, frame map[string]any, upstrea
 		}
 	}
 
-	// 4. Bundle check (AC-4).
+	// 5. Bundle check (AC-4).
 	if targetApp, ok := arguments["target_app"].(string); ok && targetApp != "" {
 		if !p.policy.IsBundleAllowed(targetApp) {
 			reason := "bundle_denied"
@@ -279,7 +290,7 @@ func (p *Proxy) handleToolsCall(_ context.Context, frame map[string]any, upstrea
 		}
 	}
 
-	// 5. Keyboard focus strategy override (AC-5).
+	// 6. Keyboard focus strategy override (AC-5).
 	if keyboardWritingTools[toolName] {
 		newStrat := p.policy.KeyboardFocusStrategy
 		if oldStrat, ok := arguments["focus_strategy"].(string); ok && oldStrat != newStrat {
@@ -349,7 +360,8 @@ func (p *Proxy) forwardFromUpstream(_ context.Context, upstreamOut io.ReadCloser
 }
 
 // filterToolsList filters the tools array from an upstream tools/list response
-// to only include tools in policy.AllowedTools.
+// so that only effectively-allowed tools survive: must be in AllowedTools AND
+// must not be in DeniedTools (deny precedence per AC-1).
 func (p *Proxy) filterToolsList(tools any) []any {
 	toolsSlice, ok := tools.([]any)
 	if !ok {
@@ -359,6 +371,10 @@ func (p *Proxy) filterToolsList(tools any) []any {
 	for _, t := range p.policy.AllowedTools {
 		allowed[t] = true
 	}
+	denied := make(map[string]bool, len(p.policy.DeniedTools))
+	for _, t := range p.policy.DeniedTools {
+		denied[t] = true
+	}
 	var out []any
 	for _, entry := range toolsSlice {
 		obj, ok := entry.(map[string]any)
@@ -366,7 +382,7 @@ func (p *Proxy) filterToolsList(tools any) []any {
 			continue
 		}
 		name, _ := obj["name"].(string)
-		if allowed[name] {
+		if allowed[name] && !denied[name] {
 			out = append(out, entry)
 		}
 	}

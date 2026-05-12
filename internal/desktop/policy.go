@@ -43,13 +43,26 @@ allowed_tools = [
     "get_tool_guide",
 ]
 
+# denied_tools: MCP tools blocked unconditionally. Deny precedence — when a
+# tool name appears in both allowed_tools and denied_tools, denied_tools wins
+# and the call is rejected. The 16 default entries are the escape hatches and
+# virtual-desktop tools that bypass the policy / break the single-shared
+# desktop model.
+denied_tools = [
+    "run_script", "filesystem", "process_kill", "registry",
+    "notification", "scrape", "multi_edit", "multi_select", "snapshot",
+    "list_spaces", "get_active_space", "create_agent_space",
+    "destroy_space", "move_window_to_space", "remove_window_from_space",
+    "resize_window",
+]
+
 # allow_bundles: when non-empty, any tool call whose target_app is not in
 # this list is rejected. Empty (default) = no bundle filtering.
 allow_bundles = []
 
 # deny_keys: case-insensitive substring matches against the ` + "`text`" + ` field of
 # ` + "`key`" + ` and ` + "`hold_key`" + ` calls. Anything matched is rejected.
-deny_keys = ["win+r", "ctrl+shift+esc", "ctrl+alt+del", "cmd+q", "cmd+option+esc", "cmd+ctrl+q", "alt+f4"]
+deny_keys = ["ctrl+alt+t", "ctrl+alt+delete", "alt+f4", "super+l", "cmd+q", "cmd+space", "win+r", "win+l"]
 
 # allow_run_script: gates the ` + "`run_script`" + ` tool. Default false. Even when
 # true, ` + "`run_script`" + ` must additionally appear in allowed_tools — this flag
@@ -68,6 +81,7 @@ keyboard_focus_strategy = "strict"
 // concurrently across many tool calls.
 type Policy struct {
 	AllowedTools          []string `toml:"allowed_tools"`
+	DeniedTools           []string `toml:"denied_tools"`
 	AllowBundles          []string `toml:"allow_bundles"`
 	DenyKeys              []string `toml:"deny_keys"`
 	AllowRunScript        bool     `toml:"allow_run_script"`
@@ -91,30 +105,51 @@ var DefaultAllowedTools = []string{
 	"get_tool_guide",
 }
 
+// DefaultDeniedTools is the 16-entry unconditional deny list (AC-1). These are
+// the upstream escape hatches and virtual-desktop tools that either bypass the
+// policy entirely (run_script, filesystem, process_kill, registry) or
+// fundamentally break the single-shared-desktop model the proxy assumes.
+//
+// Deny precedence: when a name appears in both DefaultAllowedTools and
+// DefaultDeniedTools, DefaultDeniedTools wins. Policy.IsToolDenied is checked
+// before Policy.IsToolAllowed in the proxy gate.
+var DefaultDeniedTools = []string{
+	"run_script", "filesystem", "process_kill", "registry",
+	"notification", "scrape", "multi_edit", "multi_select", "snapshot",
+	"list_spaces", "get_active_space", "create_agent_space",
+	"destroy_space", "move_window_to_space", "remove_window_from_space",
+	"resize_window",
+}
+
 // DefaultDenyKeys lists keyboard shortcuts that are unconditionally rejected
 // for `key` and `hold_key` calls. Substring match (case-insensitive).
 // Rationale (per docs/architecture/desktop-agent.md):
-//   - Windows Run / Task Manager / Win-key shortcuts that bypass desktop sandboxing
-//   - macOS power / log-out shortcuts
+//   - Linux/X11 terminal launcher (ctrl+alt+t) and lock (super+l)
+//   - Windows secure attention (ctrl+alt+delete), Run dialog (win+r), lock (win+l)
+//   - macOS quit app (cmd+q) and Spotlight (cmd+space)
 //   - Alt+F4 family (window kill)
 var DefaultDenyKeys = []string{
-	"win+r",          // Windows Run dialog
-	"ctrl+shift+esc", // Windows Task Manager
-	"ctrl+alt+del",   // Windows secure attention sequence
-	"cmd+q",          // macOS quit app
-	"cmd+option+esc", // macOS force quit
-	"cmd+ctrl+q",     // macOS lock screen
-	"alt+f4",         // window kill (Windows)
+	"ctrl+alt+t",      // Linux/X11 terminal launcher
+	"ctrl+alt+delete", // Windows secure attention sequence
+	"alt+f4",          // window kill (Windows)
+	"super+l",         // Linux/GNOME lock screen
+	"cmd+q",           // macOS quit app
+	"cmd+space",       // macOS Spotlight
+	"win+r",           // Windows Run dialog
+	"win+l",           // Windows lock screen
 }
 
 // DefaultPolicy returns a Policy populated with the shipping defaults.
 func DefaultPolicy() Policy {
 	tools := make([]string, len(DefaultAllowedTools))
 	copy(tools, DefaultAllowedTools)
+	denied := make([]string, len(DefaultDeniedTools))
+	copy(denied, DefaultDeniedTools)
 	keys := make([]string, len(DefaultDenyKeys))
 	copy(keys, DefaultDenyKeys)
 	return Policy{
 		AllowedTools:          tools,
+		DeniedTools:           denied,
 		AllowBundles:          []string{},
 		DenyKeys:              keys,
 		AllowRunScript:        false,
@@ -155,7 +190,9 @@ func LoadPolicy(path string, logger *log.Logger) (Policy, bool, error) {
 
 	meta, decodeErr := toml.DecodeFile(path, &p)
 	if decodeErr != nil {
-		return Policy{}, false, fmt.Errorf("desktop: decode policy: %w", decodeErr)
+		// Wrap both the path and the underlying parse error so that callers
+		// (and unit tests per AC-12(b)) can see exactly which file failed and why.
+		return Policy{}, false, fmt.Errorf("desktop: decode policy file %s: %w", path, decodeErr)
 	}
 
 	for _, key := range meta.Undecoded() {
@@ -185,8 +222,24 @@ func (p Policy) Validate() error {
 }
 
 // IsToolAllowed returns true when name appears in p.AllowedTools.
+//
+// Note: this does NOT consult DeniedTools. Callers that need the effective
+// permit/deny decision (deny precedence per AC-1) must call IsToolDenied
+// first and treat a true result as a hard reject, regardless of AllowedTools.
 func (p Policy) IsToolAllowed(name string) bool {
 	for _, t := range p.AllowedTools {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
+// IsToolDenied returns true when name appears in p.DeniedTools. Deny precedence
+// (AC-1 last sentence) — when a tool name appears in both AllowedTools and
+// DeniedTools, IsToolDenied wins.
+func (p Policy) IsToolDenied(name string) bool {
+	for _, t := range p.DeniedTools {
 		if t == name {
 			return true
 		}

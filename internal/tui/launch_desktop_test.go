@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/locale"
@@ -169,6 +172,78 @@ func TestWriteDesktopMCPConfig(t *testing.T) {
 	}
 	if _, found := env["ZPIT_LISTEN_PROJECTS"]; found {
 		t.Error("unexpected ZPIT_LISTEN_PROJECTS in desktop .mcp.json")
+	}
+}
+
+// TestCheckSessionLiveness_ClearsActiveDesktopAgentWhenEnded verifies AC-12(j):
+// when the desktop agent's tracking entry is marked StateEnded and aged past
+// endedDisplayDuration, the next liveness pass deletes the entry, clears
+// AppState.activeDesktopAgent, dispatches DesktopAgentExitedMsg, and logs the
+// documented exit line.
+func TestCheckSessionLiveness_ClearsActiveDesktopAgentWhenEnded(t *testing.T) {
+	state := newTestAppState()
+
+	// Replace logger with a buffer so we can assert on the AC-8 exit log line.
+	var logBuf bytes.Buffer
+	state.logger = log.New(&logBuf, "", 0)
+
+	const trackingKey = "desktop:desktop-abcd"
+	const agentName = "desktop-abcd"
+	const pid = 999999 // Not a real process — IsClaudeProcess would return false anyway.
+
+	// Stage the desktop entry as already-ended and aged past endedDisplayDuration
+	// so the liveness pass deletes it (which then trips the clear-activeDesktopAgent block).
+	now := time.Now()
+	entry := &ActiveTerminal{
+		SessionPID:     pid,
+		State:          watcher.StateEnded,
+		StateChangedAt: now.Add(-endedDisplayDuration - time.Second),
+	}
+	state.activeTerminals[trackingKey] = entry
+	state.activeDesktopAgent = entry
+	// Force lastLivenessCheck to zero so the call runs unconditionally.
+
+	m := &Model{state: state}
+	cmds := m.checkSessionLiveness()
+
+	// The cleared invariant: activeDesktopAgent must be nil.
+	state.RLock()
+	got := state.activeDesktopAgent
+	_, stillTracked := state.activeTerminals[trackingKey]
+	state.RUnlock()
+	if got != nil {
+		t.Errorf("expected activeDesktopAgent=nil after liveness clear, got %+v", got)
+	}
+	if stillTracked {
+		t.Errorf("expected entry %q removed from activeTerminals", trackingKey)
+	}
+
+	// The AC-8 log line: `desktop agent <agentName> (PID <pid>) exited`.
+	logStr := logBuf.String()
+	wantLog := fmt.Sprintf("desktop agent %s (PID %d) exited", agentName, pid)
+	if !strings.Contains(logStr, wantLog) {
+		t.Errorf("expected log to contain %q; got: %s", wantLog, logStr)
+	}
+
+	// A DesktopAgentExitedMsg must be among the dispatched cmds.
+	var found bool
+	for _, c := range cmds {
+		if c == nil {
+			continue
+		}
+		msg := c()
+		if exited, ok := msg.(DesktopAgentExitedMsg); ok {
+			if exited.AgentName != agentName {
+				t.Errorf("DesktopAgentExitedMsg.AgentName = %q, want %q", exited.AgentName, agentName)
+			}
+			if exited.PID != pid {
+				t.Errorf("DesktopAgentExitedMsg.PID = %d, want %d", exited.PID, pid)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected at least one DesktopAgentExitedMsg in cmds; got none")
 	}
 }
 

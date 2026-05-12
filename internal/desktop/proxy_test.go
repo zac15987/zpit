@@ -194,12 +194,13 @@ func TestProxy_DenyNotAllowedTool(t *testing.T) {
 // ---- AC-3: deny_keys --------------------------------------------------------
 
 func TestProxy_DenyKeyMatch(t *testing.T) {
-	// DefaultPolicy deny_keys includes ctrl+alt+del.
+	// AC-3 worked example: with default deny_keys, `key text="Ctrl+Alt+T"`
+	// (uppercase) must be rejected — substring match is case-insensitive.
 	h := newTestProxy(DefaultPolicy())
 	cancel, _ := h.run()
 	defer cancel()
 
-	req := toolsCallFrame(2, "key", map[string]any{"text": "Ctrl+Alt+Del"})
+	req := toolsCallFrame(2, "key", map[string]any{"text": "Ctrl+Alt+T"})
 	if err := writeFrame(h.claudeWrite, req); err != nil {
 		t.Fatalf("writeFrame: %v", err)
 	}
@@ -216,7 +217,7 @@ func TestProxy_DenyKeyMatch(t *testing.T) {
 	content := result["content"].([]any)
 	text := content[0].(map[string]any)["text"].(string)
 	// AC-3: uses the ORIGINAL text value (not lowercased) in the error message.
-	expected := "denied: key combo 'Ctrl+Alt+Del' matches deny_keys entry 'ctrl+alt+del'"
+	expected := "denied: key combo 'Ctrl+Alt+T' matches deny_keys entry 'ctrl+alt+t'"
 	if text != expected {
 		t.Errorf("AC-3 text mismatch\ngot:  %q\nwant: %q", text, expected)
 	}
@@ -709,8 +710,11 @@ func TestProxy_LargeFrameHandling(t *testing.T) {
 
 func TestProxy_RunScriptDisabledByPolicyEvenIfInAllowlist(t *testing.T) {
 	// allow_run_script=false + run_script in allowed_tools → denied (run_script_disabled).
+	// Remove run_script from DeniedTools so deny precedence does not fire first;
+	// this test specifically exercises the allow_run_script gate.
 	policy := DefaultPolicy()
 	policy.AllowedTools = append(policy.AllowedTools, "run_script")
+	policy.DeniedTools = nil
 	policy.AllowRunScript = false
 
 	h := newTestProxy(policy)
@@ -739,8 +743,12 @@ func TestProxy_RunScriptDisabledByPolicyEvenIfInAllowlist(t *testing.T) {
 
 func TestProxy_RunScriptEnabledAndInAllowlist(t *testing.T) {
 	// allow_run_script=true + run_script in allowed_tools → forwarded.
+	// Also remove run_script from DeniedTools — deny precedence would otherwise
+	// block before the run_script gate runs. This mirrors the documented
+	// 3-step opt-in: add to allowed, remove from denied, set the bool true.
 	policy := DefaultPolicy()
 	policy.AllowedTools = append(policy.AllowedTools, "run_script")
+	policy.DeniedTools = nil
 	policy.AllowRunScript = true
 
 	h := newTestProxy(policy)
@@ -769,6 +777,184 @@ func TestProxy_RunScriptEnabledAndInAllowlist(t *testing.T) {
 
 	h.claudeWrite.Close()
 	h.upToProxyWrite.Close()
+}
+
+// ---- AC-12(c): deny precedence in the proxy gate ---------------------------
+
+// TestProxy_DenyPrecedence verifies that when a tool name appears in BOTH
+// AllowedTools and DeniedTools, the proxy denies the call (AC-1 last sentence,
+// AC-12(c)). The denial uses the AC-2 message format and the AC-10
+// `tool_not_allowed` reason.
+func TestProxy_DenyPrecedence(t *testing.T) {
+	policy := Policy{
+		AllowedTools:          []string{"key"},
+		DeniedTools:           []string{"key"},
+		DenyKeys:              []string{},
+		KeyboardFocusStrategy: "strict",
+	}
+
+	h := newTestProxy(policy)
+	cancel, _ := h.run()
+	defer cancel()
+
+	req := toolsCallFrame(40, "key", map[string]any{"text": "enter"})
+	if err := writeFrame(h.claudeWrite, req); err != nil {
+		t.Fatalf("writeFrame: %v", err)
+	}
+
+	resp, err := readFrame(h.claudeRead)
+	if err != nil {
+		t.Fatalf("readFrame: %v", err)
+	}
+	result := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatal("expected isError=true under deny precedence (denied_tools wins over allowed_tools)")
+	}
+
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)["text"].(string)
+	expected := "denied: tool 'key' is not in the desktop agent allowlist (see ~/.zpit/desktop-policy.toml)"
+	if text != expected {
+		t.Errorf("denial text mismatch (deny precedence)\ngot:  %q\nwant: %q", text, expected)
+	}
+	if !strings.Contains(h.logBuf.String(), "reason=tool_not_allowed") {
+		t.Errorf("expected reason=tool_not_allowed in deny-precedence log; got: %s", h.logBuf.String())
+	}
+
+	h.claudeWrite.Close()
+}
+
+// ---- AC-12(d): every default denied tool is rejected ------------------------
+
+// TestProxy_DenyAllDefaultDeniedTools is a table-driven test that walks every
+// entry in DefaultDeniedTools and verifies the proxy rejects it with the AC-2
+// denial format and AC-10 `tool_not_allowed` reason. This covers the case
+// where a name appears in BOTH the allowed list and the denied list, exercising
+// deny precedence per AC-1.
+func TestProxy_DenyAllDefaultDeniedTools(t *testing.T) {
+	if len(DefaultDeniedTools) != 16 {
+		t.Fatalf("AC-1 requires 16 default denied tools, got %d", len(DefaultDeniedTools))
+	}
+
+	for i, toolName := range DefaultDeniedTools {
+		i, toolName := i, toolName
+		t.Run(toolName, func(t *testing.T) {
+			// Add the tool to allowed_tools as well so that ONLY deny precedence
+			// (not the absence-from-allowlist path) explains the rejection.
+			policy := DefaultPolicy()
+			policy.AllowedTools = append(policy.AllowedTools, toolName)
+
+			h := newTestProxy(policy)
+			cancel, _ := h.run()
+			defer cancel()
+
+			req := toolsCallFrame(100+i, toolName, map[string]any{})
+			if err := writeFrame(h.claudeWrite, req); err != nil {
+				t.Fatalf("writeFrame: %v", err)
+			}
+
+			resp, err := readFrame(h.claudeRead)
+			if err != nil {
+				t.Fatalf("readFrame: %v", err)
+			}
+			result, _ := resp["result"].(map[string]any)
+			if result == nil || result["isError"] != true {
+				t.Fatalf("%s: expected isError=true, got: %v", toolName, resp)
+			}
+			content := result["content"].([]any)
+			gotText := content[0].(map[string]any)["text"].(string)
+			wantText := "denied: tool '" + toolName + "' is not in the desktop agent allowlist (see ~/.zpit/desktop-policy.toml)"
+			if gotText != wantText {
+				t.Errorf("%s denial text mismatch\ngot:  %q\nwant: %q", toolName, gotText, wantText)
+			}
+			if !strings.Contains(h.logBuf.String(), "reason=tool_not_allowed") {
+				t.Errorf("%s: expected reason=tool_not_allowed in log; got: %s", toolName, h.logBuf.String())
+			}
+
+			h.claudeWrite.Close()
+		})
+	}
+}
+
+// ---- AC-12(e): every default allowed tool is forwarded ----------------------
+
+// TestProxy_ForwardAllDefaultAllowedTools is a table-driven test that walks
+// every entry in DefaultAllowedTools (42 tools), sends a tools/call frame for
+// each through the proxy, and asserts that the upstream stub receives the
+// forwarded request and the proxy returns the stub's `{ok: true}` response
+// to Claude unchanged.
+func TestProxy_ForwardAllDefaultAllowedTools(t *testing.T) {
+	if len(DefaultAllowedTools) != 42 {
+		t.Fatalf("AC-2 requires 42 default allowed tools, got %d", len(DefaultAllowedTools))
+	}
+
+	for i, toolName := range DefaultAllowedTools {
+		i, toolName := i, toolName
+		t.Run(toolName, func(t *testing.T) {
+			h := newTestProxy(DefaultPolicy())
+			cancel, _ := h.run()
+			defer cancel()
+
+			// AC-3: keyboard tools with deny_keys defaults would reject sample text
+			// like "ctrl+alt+t". Use a benign payload that bypasses the deny_keys
+			// substring (no entry is a substring of "noop_x").
+			args := map[string]any{"target_app": ""}
+			switch toolName {
+			case "type", "key", "hold_key":
+				args["text"] = "noop_x"
+			case "set_value", "fill_form":
+				args["value"] = "noop"
+			}
+
+			req := toolsCallFrame(200+i, toolName, args)
+			if err := writeFrame(h.claudeWrite, req); err != nil {
+				t.Fatalf("%s: writeFrame: %v", toolName, err)
+			}
+
+			// Stubbed upstream: read the forwarded frame, reply with {ok: true}.
+			upFwd, err := readFrame(h.proxyToUpRead)
+			if err != nil {
+				t.Fatalf("%s: readFrame upstream: %v", toolName, err)
+			}
+			if upFwd["method"] != "tools/call" {
+				t.Errorf("%s: expected tools/call forwarded, got method=%v", toolName, upFwd["method"])
+			}
+			params, _ := upFwd["params"].(map[string]any)
+			if name, _ := params["name"].(string); name != toolName {
+				t.Errorf("%s: forwarded name mismatch; got %q", toolName, name)
+			}
+
+			upResp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      upFwd["id"],
+				"result": map[string]any{
+					"content": []any{map[string]any{"type": "text", "text": "ok"}},
+					"ok":      true,
+				},
+			}
+			if err := writeFrame(h.upToProxyWrite, upResp); err != nil {
+				t.Fatalf("%s: write upstream resp: %v", toolName, err)
+			}
+
+			resp, err := readFrame(h.claudeRead)
+			if err != nil {
+				t.Fatalf("%s: readFrame claude: %v", toolName, err)
+			}
+			result, _ := resp["result"].(map[string]any)
+			if result == nil {
+				t.Fatalf("%s: missing result in response: %v", toolName, resp)
+			}
+			if got, _ := result["ok"].(bool); !got {
+				t.Errorf("%s: expected upstream response forwarded unchanged with ok=true; got: %v", toolName, result)
+			}
+			if isErr, ok := result["isError"]; ok && isErr == true {
+				t.Errorf("%s: expected non-error pass-through; got isError=true", toolName)
+			}
+
+			h.claudeWrite.Close()
+			h.upToProxyWrite.Close()
+		})
+	}
 }
 
 // ---- AC-10 logging in allow path --------------------------------------------

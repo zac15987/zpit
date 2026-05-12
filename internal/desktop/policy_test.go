@@ -2,10 +2,12 @@ package desktop
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,6 +143,91 @@ func TestLoadPolicy_FillsMissingFields(t *testing.T) {
 	// KeyboardFocusStrategy was absent — must fall back to default.
 	if policy.KeyboardFocusStrategy != def.KeyboardFocusStrategy {
 		t.Errorf("KeyboardFocusStrategy: got %q, want %q", policy.KeyboardFocusStrategy, def.KeyboardFocusStrategy)
+	}
+}
+
+// TestLoadPolicy_MalformedTOML verifies AC-12(b): a syntactically invalid TOML
+// file produces an error that wraps both the parse error and the file path.
+func TestLoadPolicy_MalformedTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	// Unterminated string + bare junk — guaranteed BurntSushi/toml parse error.
+	bad := "keyboard_focus_strategy = \"strict\nfoo bar baz [[[\n"
+	if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
+		t.Fatalf("setup: write bad file: %v", err)
+	}
+
+	_, _, err := LoadPolicy(path, discardLogger())
+	if err == nil {
+		t.Fatal("expected LoadPolicy to return an error for malformed TOML, got nil")
+	}
+
+	msg := err.Error()
+	// Must wrap the file path so the user can locate the bad file.
+	if !strings.Contains(msg, path) {
+		t.Errorf("error must wrap the file path %q; got: %v", path, err)
+	}
+	// Must wrap the underlying parse error — verify by checking %w semantics:
+	// errors.Unwrap returns the inner error from BurntSushi/toml.
+	if inner := errors.Unwrap(err); inner == nil {
+		t.Errorf("error must wrap the parse error via %%w; got: %v", err)
+	}
+}
+
+// TestLoadPolicy_DefaultIncludesDeniedTools verifies the auto-created policy
+// includes the 16 default denied tools and that decoding fills DeniedTools
+// from the template correctly.
+func TestLoadPolicy_DefaultIncludesDeniedTools(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	policy, created, err := LoadPolicy(path, discardLogger())
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	if !created {
+		t.Fatal("expected created=true")
+	}
+
+	if len(policy.DeniedTools) != 16 {
+		t.Errorf("DeniedTools length: got %d, want 16", len(policy.DeniedTools))
+	}
+	// Spot-check a few entries.
+	wantInList := []string{"run_script", "filesystem", "process_kill", "registry", "resize_window"}
+	for _, w := range wantInList {
+		found := false
+		for _, d := range policy.DeniedTools {
+			if d == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("DeniedTools missing %q", w)
+		}
+	}
+}
+
+// TestPolicy_DenyPrecedence verifies AC-12(c) at the policy level: when a
+// tool name appears in both AllowedTools and DeniedTools, IsToolDenied wins.
+// The proxy-level wiring of this rule is verified in TestProxy_DenyPrecedence
+// in proxy_test.go.
+func TestPolicy_DenyPrecedence(t *testing.T) {
+	p := Policy{
+		AllowedTools: []string{"key"},
+		DeniedTools:  []string{"key"},
+	}
+	if !p.IsToolAllowed("key") {
+		t.Error("setup sanity check failed: IsToolAllowed(key) should be true")
+	}
+	if !p.IsToolDenied("key") {
+		t.Error("IsToolDenied(key) should be true when key is in DeniedTools")
+	}
+	// The proxy gate uses (IsToolDenied || !IsToolAllowed) — deny wins.
+	denied := p.IsToolDenied("key") || !p.IsToolAllowed("key")
+	if !denied {
+		t.Error("deny precedence: tool listed in both AllowedTools and DeniedTools must be denied")
 	}
 }
 
