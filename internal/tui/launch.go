@@ -5,8 +5,9 @@ package tui
 // Lock protocol:
 //   - Cmd factory methods (launchClaudeCmd, launchClarifierCmd, launchReviewerCmd,
 //     launchEfficiencyCmd, deployAndLaunchAgent, deployAndLaunchAgentLite,
-//     openFolderCmd, openTrackerCmd): read-only access to
-//     m.state.projects[m.cursor] and read-only config fields — no lock needed.
+//     launchDesktopAgentCmd, openFolderCmd, openTrackerCmd): read-only access to
+//     m.state.projects[m.cursor] and read-only config fields — no lock needed,
+//     except launchDesktopAgentCmd which acquires RLock for the single-instance guard.
 //   - Slot operation methods (launchFocusClaudeCmd, openSlotFolderCmd, openSlotIssueCmd):
 //     acquire RLock to read loops/slots, release before I/O or returning cmd.
 //   - sortedSlotKeys: caller must hold at least RLock.
@@ -15,10 +16,12 @@ package tui
 import (
 	"context"
 	crypto_rand "crypto/rand"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -231,6 +234,185 @@ func (m Model) launchEfficiencyCmd() tea.Cmd {
 			Err:       err,
 		}
 	}
+}
+
+// writeDesktopMCPConfig writes ~/.zpit/.mcp.json for the desktop agent.
+// The file registers a single "desktop-proxy" MCP server — no broker, no listen-projects.
+// homeDir is the user's home directory; zpitBin is the absolute path to the zpit binary;
+// agentName is the generated agent name (e.g. "desktop-a3f7").
+func writeDesktopMCPConfig(homeDir, zpitBin, agentName string) error {
+	zpitDir := filepath.Join(homeDir, ".zpit")
+	if err := os.MkdirAll(zpitDir, 0o755); err != nil {
+		return fmt.Errorf("create ~/.zpit dir: %w", err)
+	}
+
+	mcpConfig := map[string]any{
+		"mcpServers": map[string]any{
+			"desktop-proxy": map[string]any{
+				"command": zpitBin,
+				"args":    []string{"serve-desktop-proxy"},
+				"env": map[string]string{
+					"ZPIT_AGENT_NAME": agentName,
+					"ZPIT_AGENT_TYPE": "desktop",
+				},
+			},
+		},
+	}
+
+	data, err := json.MarshalIndent(mcpConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal desktop .mcp.json: %w", err)
+	}
+
+	return os.WriteFile(filepath.Join(zpitDir, ".mcp.json"), data, 0o644)
+}
+
+// evaluateDesktopLaunchGuards checks preconditions for launching the desktop agent.
+// Returns (blockText, false) to block with the given user-facing message, or ("", true)
+// to allow the launch to proceed.
+// isAlive is called to check if a PID is still running (injectable for testing).
+func evaluateDesktopLaunchGuards(state *AppState, isAlive func(int) bool) (string, bool) {
+	// AC-11: Linux is not supported.
+	if runtime.GOOS == "linux" {
+		return locale.T(locale.KeyDesktopLinuxUnsupported), false
+	}
+
+	// AC-7: single-instance enforcement.
+	state.RLock()
+	da := state.activeDesktopAgent
+	state.RUnlock()
+
+	if da != nil {
+		pid := da.SessionPID
+		if pid > 0 && isAlive(pid) {
+			return fmt.Sprintf(locale.T(locale.KeyDesktopAlreadyRunning), pid), false
+		}
+		// Stale entry (PID dead or zero) — allow overwrite.
+	}
+
+	return "", true
+}
+
+// launchDesktopAgentCmd returns a tea.Cmd that launches the desktop-control agent.
+// Implements AC-6, AC-7, AC-11.
+func (m Model) launchDesktopAgentCmd() tea.Cmd {
+	logger := m.state.logger
+
+	// Evaluate launch guards synchronously (before the cmd closure) so the block
+	// message reaches the TUI immediately without waiting for async I/O.
+	blockText, ok := evaluateDesktopLaunchGuards(m.state, watcher.IsClaudeProcess)
+	if !ok {
+		logger.Printf("desktop: launch blocked: %s", blockText)
+		return func() tea.Msg {
+			return DesktopAgentBlockedMsg{Text: blockText}
+		}
+	}
+
+	agentName := generateAgentName("desktop")
+	cfg := m.state.cfg.Terminal
+	model := m.state.cfg.AgentModels.Desktop
+	zpitBinOverride := m.state.cfg.ZpitBin
+	desktopMD := m.state.desktopMD
+
+	logger.Printf("desktop: preparing launch agent=%s model=%s", agentName, model)
+
+	return func() tea.Msg {
+		// Resolve home directory (cwd for the desktop agent per AC-6).
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: cannot resolve home directory: %s", err)}
+		}
+
+		// Resolve zpit binary path.
+		zpitBin := zpitBinOverride
+		if zpitBin == "" {
+			zpitBin, err = os.Executable()
+			if err != nil {
+				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: cannot resolve zpit binary path: %s", err)}
+			}
+		}
+
+		// Write ~/.zpit/.mcp.json registering the desktop-proxy MCP server (AC-6).
+		if err := writeDesktopMCPConfig(homeDir, zpitBin, agentName); err != nil {
+			return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: failed to write .mcp.json: %s", err)}
+		}
+		logger.Printf("desktop: wrote ~/.zpit/.mcp.json agent=%s", agentName)
+
+		// Deploy agents/desktop.md to ~/.claude/agents/ so Claude Code can invoke it.
+		// Only desktop.md is written — no other agents are clobbered.
+		if len(desktopMD) > 0 {
+			claudeAgentsDir := filepath.Join(homeDir, ".claude", "agents")
+			if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
+				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: cannot create ~/.claude/agents/: %s", err)}
+			}
+			processed := injectFrontmatterModel(injectLangInstruction(desktopMD), model)
+			destPath := filepath.Join(claudeAgentsDir, "desktop.md")
+			if err := os.WriteFile(destPath, processed, 0o644); err != nil {
+				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: failed to deploy desktop.md: %s", err)}
+			}
+			logger.Printf("desktop: deployed desktop.md to %s", destPath)
+		}
+
+		// Launch Claude Code in homeDir.
+		// NOTE: needsAgentEnv in terminal/launcher.go currently returns true for "desktop"
+		// (any non-efficiency --agent value). This means ZPIT_AGENT=1 will be set by the
+		// terminal wrapper. Since no hooks are deployed to $HOME, this is harmless — the
+		// hook scripts are simply not invoked. A follow-up task should extend needsAgentEnv
+		// to exclude "desktop" for correctness.
+		tabTitle := "Desktop Agent"
+		args := []string{
+			"--agent", "desktop",
+			"--model", model,
+			"--allowedTools", "Read,Bash,Glob,Grep,mcp__desktop-proxy__*",
+		}
+		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, args...)
+		return DesktopAgentLaunchedMsg{
+			AgentName: agentName,
+			Result:    result,
+			Err:       launchErr,
+		}
+	}
+}
+
+// handleDesktopAgentLaunched stores the new active desktop agent in AppState.
+// Acquires the write lock; releases before returning.
+func (m Model) handleDesktopAgentLaunched(msg DesktopAgentLaunchedMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.state.logger.Printf("desktop: launch failed agent=%s err=%v", msg.AgentName, msg.Err)
+		m.setStatus(fmt.Sprintf("Desktop agent launch failed: %s", msg.Err))
+		return m, nil
+	}
+
+	trackingKey := "desktop:" + msg.AgentName
+
+	m.state.Lock()
+	at := &ActiveTerminal{
+		LaunchResult:   msg.Result,
+		WorkDir:        "", // home dir; session discovery via periodic scan populates SessionPID
+		State:          watcher.StateUnknown,
+		StateChangedAt: time.Now(),
+	}
+	m.state.activeTerminals[trackingKey] = at
+	m.state.activeDesktopAgent = at
+	m.state.NotifyAll()
+	m.state.Unlock()
+
+	m.state.logger.Printf("desktop: launched agent=%s (PID pending session discovery)", msg.AgentName)
+	return m, nil
+}
+
+// handleDesktopAgentBlocked surfaces the block reason via the status bar.
+func (m Model) handleDesktopAgentBlocked(msg DesktopAgentBlockedMsg) (tea.Model, tea.Cmd) {
+	m.setStatus(msg.Text)
+	return m, nil
+}
+
+// handleDesktopAgentExited is dispatched by the liveness check when the
+// active desktop agent PID dies. AppState.activeDesktopAgent has already
+// been cleared by the liveness check before this message reaches here.
+func (m Model) handleDesktopAgentExited(msg DesktopAgentExitedMsg) (tea.Model, tea.Cmd) {
+	m.setStatus(fmt.Sprintf(locale.T(locale.KeyDesktopExited), msg.AgentName, msg.PID))
+	return m, nil
 }
 
 // deployAndLaunchAgent deploys the named agent to the project and launches it.

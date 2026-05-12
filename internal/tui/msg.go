@@ -344,3 +344,28 @@ type CollisionPromptMsg struct {
 	// IsMemory is true when the collision is on memory/ instead of a session file.
 	IsMemory bool
 }
+
+// --- Desktop agent messages ---
+
+// DesktopAgentLaunchedMsg is sent after a desktop agent terminal has been
+// launched. The TUI uses this to record the active session in AppState.
+type DesktopAgentLaunchedMsg struct {
+	AgentName string
+	Result    *terminal.LaunchResult
+	Err       error
+}
+
+// DesktopAgentBlockedMsg is sent when a desktop launch attempt is blocked
+// (e.g. single-instance lock held, Linux, missing Node). Text is the
+// already-formatted user-facing message.
+type DesktopAgentBlockedMsg struct {
+	Text string
+}
+
+// DesktopAgentExitedMsg is sent by the liveness check when the active
+// desktop agent's PID is detected dead. AppState.activeDesktopAgent has
+// already been cleared when this is dispatched.
+type DesktopAgentExitedMsg struct {
+	AgentName string
+	PID       int
+}

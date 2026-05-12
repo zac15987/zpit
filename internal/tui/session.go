@@ -596,6 +596,44 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 		}
 	}
 
+	// Desktop agent exit detection (AC-8):
+	// If activeDesktopAgent is set and its tracking entry has been marked StateEnded
+	// (or the entry was removed), clear activeDesktopAgent and dispatch the exit message.
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		// Find the tracking key for this desktop entry.
+		var desktopKey string
+		var desktopPID int
+		var desktopAgentName string
+		for key, at := range m.state.activeTerminals {
+			if at == da && strings.HasPrefix(key, "desktop:") {
+				desktopKey = key
+				desktopPID = at.SessionPID
+				desktopAgentName = strings.TrimPrefix(key, "desktop:")
+				break
+			}
+		}
+
+		shouldClear := false
+		if desktopKey == "" {
+			// Entry was removed from activeTerminals (e.g. by the ended-cleanup path above).
+			shouldClear = true
+		} else if da.State == watcher.StateEnded {
+			shouldClear = true
+		}
+
+		if shouldClear {
+			m.state.logger.Printf("desktop agent %s (PID %d) exited", desktopAgentName, desktopPID)
+			m.state.activeDesktopAgent = nil
+			changed = true
+			agentNameCopy := desktopAgentName
+			pidCopy := desktopPID
+			cmds = append(cmds, func() tea.Msg {
+				return DesktopAgentExitedMsg{AgentName: agentNameCopy, PID: pidCopy}
+			})
+		}
+	}
+
 	if changed {
 		m.state.NotifyAll()
 	}
