@@ -29,6 +29,47 @@ func TestResponseInstruction_NonOverridable(t *testing.T) {
 	}
 }
 
+func TestClarifierResponseInstruction_EnglishMatchesStrict(t *testing.T) {
+	SetLanguage("en")
+	got := ClarifierResponseInstruction()
+	want := ResponseInstruction()
+	if got != want {
+		t.Errorf("English clarifier instruction should equal strict ResponseInstruction(); got=%q want=%q", got, want)
+	}
+}
+
+func TestClarifierResponseInstruction_ZhTW(t *testing.T) {
+	SetLanguage("zh-TW")
+	got := ClarifierResponseInstruction()
+	if got == "" {
+		t.Fatal("zh-TW clarifier instruction should not be empty")
+	}
+	// Dialogue side: must reference Traditional Chinese.
+	if !strings.Contains(got, "Traditional Chinese") && !strings.Contains(got, "繁體中文") {
+		t.Errorf("zh-TW clarifier instruction should permit Traditional Chinese in conversation: %q", got)
+	}
+	// Artifact side: Issue Spec must still be English.
+	if !strings.Contains(got, "Issue Spec") {
+		t.Errorf("zh-TW clarifier instruction should reference Issue Spec: %q", got)
+	}
+	if !strings.Contains(got, "English") {
+		t.Errorf("zh-TW clarifier instruction should require English for Issue Spec: %q", got)
+	}
+	// Non-negotiable framing.
+	if !strings.Contains(got, "non-negotiable") {
+		t.Errorf("zh-TW clarifier instruction should declare the rule as non-negotiable: %q", got)
+	}
+}
+
+func TestClarifierResponseInstruction_UnknownLocaleFallback(t *testing.T) {
+	SetLanguage("fr")
+	// Unknown locales fall back to strict English (same as ResponseInstruction).
+	got := ClarifierResponseInstruction()
+	if got != ResponseInstruction() {
+		t.Errorf("Unknown locale should fall back to strict English; got=%q", got)
+	}
+}
+
 func TestTStillLocalizes(t *testing.T) {
 	// Sanity check: the TUI translation path is unaffected by the English-only
 	// agent rule. T() should still switch based on SetLanguage.

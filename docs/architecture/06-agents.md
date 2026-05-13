@@ -171,15 +171,16 @@ main.go (go:embed vars)
 
 ## 6.6 Internationalization (i18n)
 
-**雙軌策略**：TUI chrome 可在地化、但 agent 輸出一律英文。
+**三軌策略**：TUI chrome 可在地化、coding/reviewer 強制英文、clarifier 對話跟隨 locale 但 artifact 仍英文。
 
 - **TUI 字串**（在地化）：`internal/locale/` package，`T(key)` 查找。`language = "en" | "zh-TW"`（config.toml），翻譯在 `en.go` 和 `zh_tw.go`。新增語言需新的 `locale/{lang}.go` + `SetLanguage()` 的新 case。
-- **Agent 輸出**（強制英文）：`locale.ResponseInstruction()` 永遠回傳 non-negotiable 英文規則 — 不因 `language` 切換而改變。規則涵蓋：agent 回話、Issue Spec（title + 所有 sections）、commit message、PR 描述、channel 訊息、tracker labels。使用者可以用任何語言輸入，agent 仍以英文作答。
-- **Agent .md 檔案**：語言指示在 deploy time 由 `injectLangInstruction()` 注入（YAML frontmatter 之後）。適用於 `clarifier.md` / `reviewer.md` / `efficiency.md` / `task-runner.md`。
-- **Prompt builder**：`BuildCodingPrompt` / `BuildReviewerPrompt` / `BuildRevisionPrompt` 在輸出開頭呼叫 `ResponseInstruction()`。
-- **Domain term 例外**：專有名詞若無精確英文對應，agent 允許保留原文於括號，例如 `stocktake (盤點)`。clarifier.md 的 Issue Format 和 Meeting Protocol sections 都有明列此規則。
+- **Agent 輸出 — 嚴格英文軌**（coding / reviewer / revision / efficiency / task-runner）：`locale.ResponseInstruction()` 永遠回傳 non-negotiable 英文規則 — 不因 `language` 切換而改變。規則涵蓋：agent 回話、commit message、PR 描述、channel 訊息、tracker labels。使用者可以用任何語言輸入，agent 仍以英文作答。
+- **Agent 輸出 — Clarifier 例外軌**：`locale.ClarifierResponseInstruction()` 依 `currentLang` 切換。`en` 時等同嚴格英文規則；`zh-TW` 時改為：對話、狀態更新、channel 訊息使用繁體中文，但 **Issue Spec（title + 所有 sections）和 tracker labels 仍強制英文**，避免下游 coding/reviewer/task-runner 拿到非英文 artifact。其他未知 locale 退回嚴格英文。
+- **Agent .md 檔案**：語言指示在 deploy time 由 `injectLangInstruction()`（嚴格軌：`reviewer.md` / `efficiency.md` / `task-runner.md`）或 `injectClarifierLangInstruction()`（例外軌：`clarifier.md`）注入（YAML frontmatter 之後）。兩者共用同一個 `injectLangInstructionWith()` 核心，只差傳入的 instruction 字串。
+- **Prompt builder**：`BuildCodingPrompt` / `BuildReviewerPrompt` / `BuildRevisionPrompt` 在輸出開頭呼叫 `ResponseInstruction()`（嚴格軌）。
+- **Domain term 例外**：專有名詞若無精確英文對應，Issue Spec 允許保留原文於括號，例如 `stocktake (盤點)`；clarifier 的對話則可直接使用原文。clarifier.md 的 Issue Format 和 Meeting Protocol sections 都有明列此規則。
 
-**設計動機**：CJK 字元在 Claude tokenizer 密度約為英文 2×。clarifier Q&A、coding 實作軌跡、reviewer 留言、channel 訊息這些最長的對話強制英文後，整體 token 消耗顯著下降。TUI chrome 走 `T()` 不經模型，i18n 完全不受影響。
+**設計動機**：CJK 字元在 Claude tokenizer 密度約為英文 2×。coding 實作軌跡、reviewer 留言、task-runner 多平行批次這些最長且最多的對話強制英文後，整體 token 消耗顯著下降。clarifier 雖然也跟使用者對話，但相對短、且 Q&A 體驗用使用者母語明顯較好，所以單獨開例外。TUI chrome 走 `T()` 不經模型，i18n 完全不受影響。
 
 ---
 

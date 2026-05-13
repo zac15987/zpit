@@ -608,7 +608,7 @@ func (m Model) deployAllCmd() tea.Cmd {
 	projectName := project.Name
 	logger := m.state.logger
 
-	clarifierMD := injectLangInstruction(m.state.clarifierMD)
+	clarifierMD := injectClarifierLangInstruction(m.state.clarifierMD)
 	reviewerMD := injectLangInstruction(m.state.reviewerMD)
 	taskRunnerMD := m.state.taskRunnerMD
 	efficiencyMD := injectLangInstruction(m.state.efficiencyMD)
@@ -986,9 +986,24 @@ func deployDocs(targetPath, trackerDocContent string, agentGuidelines, codeConst
 	_ = os.WriteFile(filepath.Join(docsDir, "code-construction-principles.md"), codeConstructionPrinciples, 0o644)
 }
 
-// injectLangInstruction prepends the locale response instruction after YAML frontmatter.
+// injectLangInstruction prepends the strict English language rule after the
+// YAML frontmatter. Used for coding / reviewer / efficiency / task-runner —
+// every agent whose artifacts must stay in English.
 func injectLangInstruction(md []byte) []byte {
-	instruction := locale.ResponseInstruction()
+	return injectLangInstructionWith(md, locale.ResponseInstruction())
+}
+
+// injectClarifierLangInstruction prepends the clarifier-specific language rule.
+// The clarifier may converse in the configured locale, but its Issue Spec
+// artifacts and tracker labels still must be English.
+func injectClarifierLangInstruction(md []byte) []byte {
+	return injectLangInstructionWith(md, locale.ClarifierResponseInstruction())
+}
+
+// injectLangInstructionWith inserts the given instruction string after the
+// YAML frontmatter block (the second `---` delimiter). Returns the input
+// unchanged if the instruction is empty or the frontmatter is malformed.
+func injectLangInstructionWith(md []byte, instruction string) []byte {
 	if instruction == "" {
 		return md
 	}

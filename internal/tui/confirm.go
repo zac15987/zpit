@@ -38,7 +38,7 @@ func (m *Model) showDeployConfirm() {
 		),
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAndLaunchAgent("clarifier", injectLangInstruction(m.state.clarifierMD))
+		return m.deployAndLaunchAgent("clarifier", injectClarifierLangInstruction(m.state.clarifierMD))
 	}
 }
 

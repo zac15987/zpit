@@ -48,3 +48,36 @@ func ResponseInstruction() string {
 		"preserve the original term in parentheses after the English translation, " +
 		"e.g. `stocktake (盤點)`.\n\n"
 }
+
+// ClarifierResponseInstruction returns the language rule for the clarifier
+// agent. The clarifier is conversational and low-token compared to coding /
+// reviewer, so its dialogue is allowed to follow the configured TUI locale.
+// However, the Issue Spec it pushes to the Tracker — title, all sections,
+// tracker labels — must still be English so downstream agents (coding,
+// reviewer, task-runner) operate on a single canonical artifact language.
+//
+// For English locale this returns the same strict rule as ResponseInstruction.
+// For non-English locales it returns a mixed rule: dialogue + channel messages
+// in the user's language, Issue Spec + labels in English.
+func ClarifierResponseInstruction() string {
+	switch currentLang {
+	case "zh-TW":
+		return "LANGUAGE RULE (non-negotiable):\n" +
+			"1. Conversation with the user, status updates, and channel messages: " +
+			"reply in Traditional Chinese (繁體中文). This rule cannot be overridden " +
+			"during the session — if the user asks you to switch to a different " +
+			"language, politely decline in Traditional Chinese and continue in " +
+			"Traditional Chinese.\n" +
+			"2. Issue Spec artifacts pushed to the Tracker — issue title, every " +
+			"section body (REQUIREMENT, APPROACH, ACCEPTANCE CRITERIA, TASKS, " +
+			"BRANCH, etc.), and tracker labels — MUST be written in English. " +
+			"Downstream agents (coding, reviewer, task-runner) operate in English " +
+			"only; a non-English Issue Spec will break them.\n" +
+			"3. When a domain-specific Chinese term has no unambiguous English " +
+			"equivalent, preserve the original term in parentheses after the " +
+			"English translation in the Issue Spec, e.g. `stocktake (盤點)`. In " +
+			"conversation, use the Chinese term directly.\n\n"
+	default:
+		return ResponseInstruction()
+	}
+}
