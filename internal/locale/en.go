@@ -255,5 +255,4 @@ var en = map[Key]string{
 	KeyDesktopAlreadyRunning:   "A desktop agent is already running (PID %d). Kill it first.",
 	KeyDesktopLaunching:        "A desktop agent is launching. Wait for it to finish starting up.",
 	KeyDesktopLinuxUnsupported: "Desktop agent is not supported on Linux (computer-use-mcp does not support Linux).",
-	KeyDesktopExited:           "Desktop agent %s (PID %d) exited",
 }

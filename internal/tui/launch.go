@@ -432,7 +432,12 @@ func (m Model) handleDesktopAgentLaunched(msg DesktopAgentLaunchedMsg) (tea.Mode
 	m.state.Unlock()
 
 	m.state.logger.Printf("desktop: launched agent=%s (PID pending session discovery)", msg.AgentName)
-	return m, nil
+	// Kick off active session discovery (same flow as project-scope launches).
+	// Without this, a terminal closed before the 10s periodic scan would leave
+	// the entry stuck with SessionPID=0 — neither the liveness sweep nor the
+	// activeDesktopAgent clear-block can recover an entry that never reached
+	// StateEnded.
+	return m, m.startWatcherDirCmd(trackingKey, msg.HomeDir)
 }
 
 // handleDesktopAgentBlocked surfaces the block reason via the status bar.
@@ -444,8 +449,10 @@ func (m Model) handleDesktopAgentBlocked(msg DesktopAgentBlockedMsg) (tea.Model,
 // handleDesktopAgentExited is dispatched by the liveness check when the
 // active desktop agent PID dies. AppState.activeDesktopAgent has already
 // been cleared by the liveness check before this message reaches here.
-func (m Model) handleDesktopAgentExited(msg DesktopAgentExitedMsg) (tea.Model, tea.Cmd) {
-	m.setStatus(fmt.Sprintf(locale.T(locale.KeyDesktopExited), msg.AgentName, msg.PID))
+// The cleanup is visible to the user via the entry disappearing from
+// Active Terminals and [w] becoming available again — no toast needed,
+// matching how project-scope agents announce their exit (logger only).
+func (m Model) handleDesktopAgentExited(_ DesktopAgentExitedMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 

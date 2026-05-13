@@ -277,6 +277,91 @@ func TestCheckSessionLiveness_ClearsActiveDesktopAgentWhenEnded(t *testing.T) {
 	}
 }
 
+// TestHandleSessionLost_ClearsStuckDesktopAgent guards the fast-close fix:
+// when [w] is pressed and the WT tab is killed before session discovery
+// completes, startWatcherDirCmd times out and emits sessionLostMsg. The
+// SessionPID=0/StateUnknown entry must transition to StateEnded and a
+// subsequent liveness pass must remove it and clear activeDesktopAgent.
+//
+// Pre-fix, this chain was unreachable because handleDesktopAgentLaunched
+// returned nil — nothing ever produced the sessionLostMsg.
+func TestHandleSessionLost_ClearsStuckDesktopAgent(t *testing.T) {
+	state := newTestAppState()
+
+	const trackingKey = "desktop:desktop-cafe"
+
+	// Stage the entry exactly as handleDesktopAgentLaunched creates it:
+	// SessionPID=0 (discovery pending), State=StateUnknown.
+	entry := &ActiveTerminal{
+		SessionPID:     0,
+		WorkDir:        "/home/test",
+		State:          watcher.StateUnknown,
+		StateChangedAt: time.Now(),
+	}
+	state.activeTerminals[trackingKey] = entry
+	state.activeDesktopAgent = entry
+
+	m := Model{state: state}
+
+	// Simulate startWatcherDirCmd timing out (user killed the terminal early).
+	if _, _ = m.handleSessionLost(sessionLostMsg{ProjectID: trackingKey, Text: "no active session found"}); entry.State != watcher.StateEnded {
+		t.Fatalf("handleSessionLost: expected StateEnded, got %v", entry.State)
+	}
+
+	// Age the entry past endedDisplayDuration so the liveness cleanup deletes it.
+	entry.StateChangedAt = time.Now().Add(-endedDisplayDuration - time.Second)
+
+	mPtr := &Model{state: state}
+	_ = mPtr.checkSessionLiveness()
+
+	state.RLock()
+	got := state.activeDesktopAgent
+	_, stillTracked := state.activeTerminals[trackingKey]
+	state.RUnlock()
+	if got != nil {
+		t.Errorf("expected activeDesktopAgent=nil after stuck-entry recovery, got %+v", got)
+	}
+	if stillTracked {
+		t.Errorf("expected entry %q removed from activeTerminals", trackingKey)
+	}
+}
+
+// TestHandleDesktopAgentLaunched_StartsSessionDiscovery guards that the launch
+// handler returns a follow-up cmd (startWatcherDirCmd) rather than nil. Without
+// this, a terminal killed before the 10s periodic scan would leave the entry
+// stuck with SessionPID=0 forever.
+func TestHandleDesktopAgentLaunched_StartsSessionDiscovery(t *testing.T) {
+	state := newTestAppState()
+	m := Model{state: state}
+
+	msg := DesktopAgentLaunchedMsg{
+		AgentName: "desktop-cafe",
+		HomeDir:   t.TempDir(),
+		Result:    nil, // handler only checks msg.Err; Result is stored without deref
+		Err:       nil,
+	}
+
+	_, cmd := m.handleDesktopAgentLaunched(msg)
+	if cmd == nil {
+		t.Fatal("expected non-nil follow-up cmd from handleDesktopAgentLaunched (session discovery); got nil — fast-close fix regressed")
+	}
+
+	// Sanity: the tracking entry was created and linked to activeDesktopAgent.
+	state.RLock()
+	at, ok := state.activeTerminals["desktop:desktop-cafe"]
+	da := state.activeDesktopAgent
+	state.RUnlock()
+	if !ok {
+		t.Fatal("expected tracking entry for desktop:desktop-cafe")
+	}
+	if at != da {
+		t.Error("activeDesktopAgent is not the same pointer as the activeTerminals entry")
+	}
+	if at.WorkDir != msg.HomeDir {
+		t.Errorf("WorkDir = %q, want %q", at.WorkDir, msg.HomeDir)
+	}
+}
+
 // TestWriteDesktopMCPConfig_CreatesZpitDir verifies that writeDesktopMCPConfig
 // creates the ~/.zpit/ directory if it does not yet exist.
 func TestWriteDesktopMCPConfig_CreatesZpitDir(t *testing.T) {

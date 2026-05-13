@@ -255,5 +255,4 @@ var zhTW = map[Key]string{
 	KeyDesktopAlreadyRunning:   "已有桌面 Agent 在執行 (PID %d)，請先關閉。",
 	KeyDesktopLaunching:        "桌面 Agent 啟動中，請稍候。",
 	KeyDesktopLinuxUnsupported: "桌面 Agent 不支援 Linux (computer-use-mcp 不支援 Linux)。",
-	KeyDesktopExited:           "桌面 Agent %s (PID %d) 已結束",
 }
