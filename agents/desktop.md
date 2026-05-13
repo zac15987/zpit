@@ -96,6 +96,25 @@ Replace `Clock` with the friendly name fragment. The output gives you `Name` and
 
 If you skip this step and pass a friendly name or partial PFN, `open_application` will return `activated: false` with a hint pointing back to this same workflow — but you'll have burned a tool call. Look up the AUMID first.
 
+#### Bash-tool quoting on Windows (read this before writing PowerShell)
+
+The Bash tool on Windows pipes the command through bash (Git Bash) before it reaches `powershell.exe`. Bash performs variable expansion inside **double quotes** — so any `$_`, `$var`, or backtick `` ` `` in your PowerShell expression gets rewritten by bash before PowerShell ever sees it. In particular, `$_` is a bash special variable (last argument of the previous command) and frequently expands to the literal string `extglob` after shell init runs `shopt -s extglob`. The symptom: PowerShell errors with `The term 'extglob.Name' is not recognized` (or similar) instead of running your script block.
+
+Rules:
+
+- **Single condition** — use the simple property form, no `$_` needed:
+  ```bash
+  powershell -NoProfile -Command "Get-StartApps | Where-Object Name -like '*Clock*' | Format-Table -AutoSize"
+  ```
+- **Multiple conditions / any script block with `$_`** — wrap the `-Command` argument in **single quotes** (bash literal) and use double quotes for inner PowerShell strings:
+  ```bash
+  powershell -NoProfile -Command 'Get-StartApps | Where-Object { $_.Name -like "*Clock*" -or $_.Name -like "*鬧鐘*" -or $_.Name -like "*時鐘*" } | Format-Table -AutoSize'
+  ```
+  Single-quoted bash strings do not expand `$`, so PowerShell receives `$_` intact.
+- **Never** put `$_` inside a bash double-quoted string. If you must use double quotes for some other reason, escape it as `\$_` so bash leaves it alone.
+
+This rule applies to every `powershell -Command "..."` invocation, not just AUMID lookups.
+
 ### UWP windows in `list_windows`
 
 UWP / packaged apps are hosted inside `ApplicationFrameHost.exe`, not under their own package family name. Two consequences:
