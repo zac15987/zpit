@@ -73,7 +73,7 @@ func (l *DesktopLogger) Errorf(format string, args ...any) {
 
 // Proxy runs the stdio MCP forwarder. It reads JSON-RPC frames from `in`,
 // writes responses to `out`, and forwards approved tool calls to an
-// upstream `npx @zavora-ai/computer-use-mcp` subprocess managed by Proxy.
+// upstream `npx zpit-desktop-mcp` subprocess managed by Proxy.
 //
 // The proxy lifecycle is tied to ctx — cancelling the context kills the
 // upstream subprocess and shuts down both forwarder goroutines.
@@ -110,19 +110,6 @@ func NewProxy(in io.Reader, out io.Writer, policy Policy, logger *DesktopLogger,
 // Returns the first non-EOF error encountered, or nil on clean shutdown.
 func (p *Proxy) Run(ctx context.Context) error {
 	p.logger.Infof("desktop-proxy: starting upstream subprocess")
-
-	// Stopgap for zavora-ai/computer-use-mcp PR #9 — patch the globally-
-	// installed server.js so its broken stdio-entry guard accepts Windows
-	// backslash paths. No-op on macOS, no-op if already patched, no-op if
-	// the package is not globally installed (we fall back to npx in that
-	// case, which won't work on Windows but does work on macOS).
-	if patchedPath, patched, patchErr := PatchInstalledUpstream(); patchErr != nil {
-		p.logger.Warnf("desktop-proxy: stopgap patch skipped: %v", patchErr)
-	} else if patched {
-		p.logger.Infof("desktop-proxy: applied stopgap argv-shim patch at %s (remove after PR #9 ships)", patchedPath)
-	} else if patchedPath != "" {
-		p.logger.Infof("desktop-proxy: stopgap patch already present at %s", patchedPath)
-	}
 
 	cmdPath, cmdArgs, err := resolveUpstream()
 	if err != nil {
@@ -447,34 +434,26 @@ func (p *Proxy) forwardToUpstream(upstreamIn io.Writer, data []byte) {
 	}
 }
 
+// upstreamPackage is the npm package the desktop proxy spawns as its
+// stdio-attached MCP server. This is zpit's own fork of
+// @zavora-ai/computer-use-mcp (1.0.0 ← upstream 6.1.0), carrying:
+//   - Windows AUMID launch support in `open_application`
+//   - Stdio entrypoint detection accepting Windows backslash paths
+const upstreamPackage = "zpit-desktop-mcp"
+
 // resolveUpstream picks the command line for the upstream MCP server.
 //
-// On Windows, prefers a direct `node <global-install>/dist/server.js`
-// invocation when the package is globally installed. This is because:
-//
-//  1. `npx` uses its own ephemeral cache, ignoring global installs, so
-//     anything we patch in global node_modules wouldn't apply.
-//  2. The upstream package has a bug (zavora-ai/computer-use-mcp PR #9)
-//     that prevents stdio startup on Windows. We patch the global install
-//     in place via patchInstalledUpstreamForRun; that patch is only useful
-//     if `node` actually runs the global copy.
-//
-// Everywhere else (macOS, and Windows without a global install), falls back
-// to `npx --yes --prefer-offline @zavora-ai/computer-use-mcp`.
+// Single path: `npx --yes --prefer-offline zpit-desktop-mcp`. On Windows,
+// if `npx` is not directly executable from Go's exec (e.g. resolved to
+// npx.ps1 which exec.Command can't spawn), we fall through to `cmd.exe /c
+// npx ...`.
 func resolveUpstream() (string, []string, error) {
-	if runtime.GOOS == "windows" {
-		if serverPath, err := findGlobalUpstreamServerJS(); err == nil {
-			if nodePath, lookErr := exec.LookPath("node"); lookErr == nil {
-				return nodePath, []string{serverPath}, nil
-			}
-		}
-	}
 	if p, err := exec.LookPath("npx"); err == nil {
-		return p, []string{"--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"}, nil
+		return p, []string{"--yes", "--prefer-offline", upstreamPackage}, nil
 	}
 	if runtime.GOOS == "windows" {
 		if p, err := exec.LookPath("cmd.exe"); err == nil {
-			return p, []string{"/c", "npx", "--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"}, nil
+			return p, []string{"/c", "npx", "--yes", "--prefer-offline", upstreamPackage}, nil
 		}
 	}
 	return "", nil, errors.New("npx not found in PATH — install Node.js to use the desktop agent")

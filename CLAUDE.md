@@ -214,7 +214,7 @@ Agent A (Project X)            Agent B (Project Y)
 
 ### Desktop Agent
 
-A standalone Claude Code session that controls the OS via `@zavora-ai/computer-use-mcp`. Unlike project-scoped agents, it is global (no `project.Path`; cwd is `$HOME`/`%USERPROFILE%`) and limited to one active instance at a time.
+A standalone Claude Code session that controls the OS via `zpit-desktop-mcp` (zpit's fork of `@zavora-ai/computer-use-mcp`, carrying Windows AUMID launch + entrypoint fixes — repo at `github.com/zac15987/computer-use-mcp`). Unlike project-scoped agents, it is global (no `project.Path`; cwd is `$HOME`/`%USERPROFILE%`) and limited to one active instance at a time.
 
 **Policy file**: `~/.zpit/desktop-policy.toml` — auto-created on first `zpit serve-desktop-proxy` invocation. Contains `deny_keys` (blocked keyboard shortcuts) and `allow_bundles` (named shortcut groups the user pre-approves).
 
@@ -224,7 +224,7 @@ A standalone Claude Code session that controls the OS via `@zavora-ai/computer-u
 Claude Code (desktop agent) ─── stdio ──> zpit serve-desktop-proxy (Go)
                                                      │
                                                      ├── policy gate (allow/deny per call)
-                                                     └── stdio ──> npx @zavora-ai/computer-use-mcp (Node subprocess)
+                                                     └── stdio ──> npx zpit-desktop-mcp (Node subprocess)
                                                                               │
                                                                               └── OS APIs (CGEvent / UIA / AX)
 ```

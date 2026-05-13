@@ -1,6 +1,6 @@
 # Desktop Agent Architecture
 
-The desktop agent is a standalone Claude Code session that controls the OS via `@zavora-ai/computer-use-mcp`. Unlike project-scoped coding/reviewer agents, it operates globally (cwd = `$HOME` / `%USERPROFILE%`) and is limited to a single instance across all connected TUI clients.
+The desktop agent is a standalone Claude Code session that controls the OS via `zpit-desktop-mcp` — zpit's fork of `@zavora-ai/computer-use-mcp@6.1.0` ([github.com/zac15987/computer-use-mcp](https://github.com/zac15987/computer-use-mcp)), carrying Windows AUMID launch support in `open_application` and the stdio-entrypoint backslash-path fix. Unlike project-scoped coding/reviewer agents, it operates globally (cwd = `$HOME` / `%USERPROFILE%`) and is limited to a single instance across all connected TUI clients.
 
 ---
 
@@ -8,19 +8,19 @@ The desktop agent is a standalone Claude Code session that controls the OS via `
 
 Four approaches were considered. Three were rejected:
 
-**Raw `.mcp.json` registration of `computer-use-mcp`** — exposes `run_script`, which gives the agent arbitrary PowerShell/AppleScript execution. This bypasses every zpit safety layer (path-guard, bash-firewall, git-guard) and the OS-level sandbox entirely. Rejected.
+**Raw `.mcp.json` registration of `zpit-desktop-mcp` (or upstream `computer-use-mcp`)** — exposes `run_script`, which gives the agent arbitrary PowerShell/AppleScript execution. This bypasses every zpit safety layer (path-guard, bash-firewall, git-guard) and the OS-level sandbox entirely. Rejected.
 
 **`--allowedTools` filtering alone** — Claude Code filters by tool *name* only. There is no parameter-level enforcement. `--allowedTools` can block `run_script` by name, but it cannot reject `key text="win+r"` while permitting `key text="enter"`. Rejected.
 
 **PreToolUse `mcp-firewall.sh` shell hook** — MCP tool parameters arrive as nested JSON inside the hook's input envelope. Shell parsing of nested JSON is brittle and error-prone. Structured, policy-aware error responses (explaining *why* a call was denied) are much easier to produce from a Go process than from a shell script. Rejected.
 
-**Chosen: Go proxy MCP server (`zpit serve-desktop-proxy`)** — sits on the stdio path between Claude Code and the upstream `npx @zavora-ai/computer-use-mcp` subprocess. Every JSON-RPC `tools/call` frame is intercepted, evaluated against the loaded policy, and either forwarded or rejected with a structured error message that the agent can reason about.
+**Chosen: Go proxy MCP server (`zpit serve-desktop-proxy`)** — sits on the stdio path between Claude Code and the `npx zpit-desktop-mcp` subprocess (our fork of `@zavora-ai/computer-use-mcp`). Every JSON-RPC `tools/call` frame is intercepted, evaluated against the loaded policy, and either forwarded or rejected with a structured error message that the agent can reason about.
 
 ```
 Claude Code (desktop agent) ─── stdio ──> zpit serve-desktop-proxy (Go)
                                                      │
                                                      ├── policy gate (allow/deny per call)
-                                                     └── stdio ──> npx @zavora-ai/computer-use-mcp (Node subprocess)
+                                                     └── stdio ──> npx zpit-desktop-mcp (Node subprocess)
                                                                               │
                                                                               └── OS APIs (CGEvent / UIA / AX)
 ```
@@ -114,5 +114,5 @@ Users can loosen these defaults by adding `allow_bundles` entries in `~/.zpit/de
 - **Auto-compact when context window fills** — hook-layer feature, not agent-layer; tracked separately from the proxy work.
 - **Per-profile policies** — Phase 1 uses one global policy file. Per-project profiles would cover situations like "PLC ladder editor allows alt+f4 because that is how you close a dialog in that application."
 - **zpit-API tools** — deferred; would solve the "operate zpit's own TUI" use case without screenshot+hotkey brittleness by exposing TUI actions as MCP tools.
-- **Linux support** — blocked on upstream `computer-use-mcp` adding Linux support; the package declares `os: ["darwin", "win32"]` in its `package.json`. The `[w]` hotkey is a no-op on `runtime.GOOS == "linux"`.
+- **Linux support** — blocked on upstream `@zavora-ai/computer-use-mcp` adding Linux support (our fork tracks upstream's `os: ["darwin", "win32"]` restriction; the Rust NAPI module has no Linux backend). The `[w]` hotkey is a no-op on `runtime.GOOS == "linux"`.
 - **Recording / replay** — capture every approved tool call to a per-session JSONL for replay or audit. Useful for regression testing UI workflows.
