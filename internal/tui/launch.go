@@ -354,7 +354,10 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 			if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
 				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: cannot create ~/.claude/agents/: %s", err)}
 			}
-			processed := injectFrontmatterModel(injectLangInstruction(desktopMD), model)
+			// Desktop agent skips injectLangInstruction: it mirrors the user's input
+			// language because it produces no commit/PR/Issue artifacts that would
+			// justify the English-only rule.
+			processed := injectFrontmatterModel(desktopMD, model)
 			destPath := filepath.Join(claudeAgentsDir, "desktop.md")
 			if err := os.WriteFile(destPath, processed, 0o644); err != nil {
 				return DesktopAgentBlockedMsg{Text: fmt.Sprintf("desktop: failed to deploy desktop.md: %s", err)}
