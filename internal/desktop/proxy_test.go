@@ -992,3 +992,133 @@ func TestProxy_DecisionLogOnAllow(t *testing.T) {
 	h.claudeWrite.Close()
 	h.upToProxyWrite.Close()
 }
+
+// ---- upstream isError logging -----------------------------------------------
+
+// TestProxy_UpstreamIsErrorLogged verifies that an upstream isError response is
+// recorded at Warn level and that the response itself is forwarded verbatim to
+// Claude. The proxy must not swallow or rewrite isError frames — observability
+// only.
+func TestProxy_UpstreamIsErrorLogged(t *testing.T) {
+	h := newTestProxy(DefaultPolicy())
+	cancel, _ := h.run()
+	defer cancel()
+
+	upstreamResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(42),
+		"result": map[string]any{
+			"isError": true,
+			"content": []any{
+				map[string]any{
+					"type": "text",
+					"text": "open_application failed: activated=false hint=use AUMID",
+				},
+			},
+		},
+	}
+	if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+		t.Fatalf("writeFrame upstream: %v", err)
+	}
+
+	resp, err := readFrame(h.claudeRead)
+	if err != nil {
+		t.Fatalf("readFrame claude: %v", err)
+	}
+	if resp["id"] != float64(42) {
+		t.Errorf("expected id=42 forwarded, got: %v", resp["id"])
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok || result["isError"] != true {
+		t.Fatalf("expected isError=true to survive forwarding, got: %v", resp)
+	}
+
+	logStr := h.logBuf.String()
+	if !strings.Contains(logStr, "[Warn]") {
+		t.Errorf("expected Warn level log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "upstream isError") {
+		t.Errorf("expected 'upstream isError' marker in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "id=42") {
+		t.Errorf("expected id=42 in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "agent=test-agent") {
+		t.Errorf("expected agent=test-agent in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "open_application failed") {
+		t.Errorf("expected error text in log, got: %s", logStr)
+	}
+
+	h.claudeWrite.Close()
+	h.upToProxyWrite.Close()
+}
+
+// TestProxy_UpstreamIsErrorTruncated verifies that very long upstream error
+// text is truncated so a single misbehaving response can't blow up a log line.
+func TestProxy_UpstreamIsErrorTruncated(t *testing.T) {
+	h := newTestProxy(DefaultPolicy())
+	cancel, _ := h.run()
+	defer cancel()
+
+	longText := strings.Repeat("A", 2000)
+	upstreamResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(7),
+		"result": map[string]any{
+			"isError": true,
+			"content": []any{
+				map[string]any{"type": "text", "text": longText},
+			},
+		},
+	}
+	if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+		t.Fatalf("writeFrame upstream: %v", err)
+	}
+	if _, err := readFrame(h.claudeRead); err != nil {
+		t.Fatalf("readFrame claude: %v", err)
+	}
+
+	logStr := h.logBuf.String()
+	if !strings.Contains(logStr, "…") {
+		t.Errorf("expected truncation ellipsis in long-text log, got len=%d", len(logStr))
+	}
+	if len(logStr) > 900 {
+		t.Errorf("expected truncated log < 900 chars, got %d", len(logStr))
+	}
+
+	h.claudeWrite.Close()
+	h.upToProxyWrite.Close()
+}
+
+// TestProxy_UpstreamSuccessNotLogged verifies that a non-error upstream
+// response does NOT produce a Warn line — only failures should surface.
+func TestProxy_UpstreamSuccessNotLogged(t *testing.T) {
+	h := newTestProxy(DefaultPolicy())
+	cancel, _ := h.run()
+	defer cancel()
+
+	upstreamResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(1),
+		"result": map[string]any{
+			"isError": false,
+			"content": []any{
+				map[string]any{"type": "text", "text": "ok"},
+			},
+		},
+	}
+	if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+		t.Fatalf("writeFrame upstream: %v", err)
+	}
+	if _, err := readFrame(h.claudeRead); err != nil {
+		t.Fatalf("readFrame claude: %v", err)
+	}
+
+	if strings.Contains(h.logBuf.String(), "upstream isError") {
+		t.Errorf("did not expect upstream isError log for success response, got: %s", h.logBuf.String())
+	}
+
+	h.claudeWrite.Close()
+	h.upToProxyWrite.Close()
+}

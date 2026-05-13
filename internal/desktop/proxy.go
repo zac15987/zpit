@@ -349,6 +349,14 @@ func (p *Proxy) forwardFromUpstream(_ context.Context, upstreamOut io.ReadCloser
 				p.writeToOut(data)
 				continue
 			}
+			// Observability: surface upstream tool-call failures so the
+			// `decision=allow` log line isn't the only evidence of a call.
+			// The proxy can't see the request name from here (responses are
+			// id-keyed), so correlate by reading the immediately preceding
+			// `decision=allow tool=...` line in the same log file.
+			if isErr, _ := result["isError"].(bool); isErr {
+				p.logUpstreamError(frame["id"], result)
+			}
 		}
 
 		p.writeToOut(line)
@@ -388,6 +396,38 @@ func (p *Proxy) filterToolsList(tools any) []any {
 		}
 	}
 	return out
+}
+
+// logUpstreamError records the first text body of an upstream isError response
+// at Warn level. The proxy doesn't track request id → tool name (would require
+// a sync.Map and adds little over reading the log), so the line only includes
+// the response id and a truncated text — correlate with the nearest preceding
+// `decision=allow tool=...` line in the same log file.
+func (p *Proxy) logUpstreamError(id any, result map[string]any) {
+	const maxLen = 500
+	text := ""
+	if content, ok := result["content"].([]any); ok {
+		for _, entry := range content {
+			obj, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := obj["type"].(string); t != "text" {
+				continue
+			}
+			if s, ok := obj["text"].(string); ok && s != "" {
+				text = s
+				break
+			}
+		}
+	}
+	if len(text) > maxLen {
+		text = text[:maxLen] + "…"
+	}
+	// Collapse newlines so the warning fits on one log line.
+	text = strings.ReplaceAll(text, "\r\n", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	p.logger.Warnf("upstream isError id=%v agent=%s text=%q", id, p.agentName, text)
 }
 
 // logDecision logs AC-10 format: decision=<allow|deny> tool=<name> agent=<agentName> reason=<reason>.
