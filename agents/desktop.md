@@ -62,6 +62,32 @@ All desktop tools are available under the `mcp__desktop-proxy__*` prefix. The pr
 
 Platform support: macOS and Windows only.
 
+## Windows app launching (`open_application`)
+
+`open_application`'s `bundle_id` parameter takes two different shapes on Windows depending on the app type. Get this right on the first call — the tool will not auto-discover an AUMID from a friendly name.
+
+| App type | `bundle_id` format | Example |
+|---|---|---|
+| Win32 / classic (`.exe`) | executable name or full path | `notepad.exe`, `C:\\Program Files\\App\\app.exe` |
+| UWP / Microsoft Store / packaged | **full AUMID** in `<PackageFamilyName>!<ApplicationId>` form | `Microsoft.WindowsAlarms_8wekyb3d8bbwe!App` |
+
+Things that will NOT work for UWP apps:
+- Friendly names: `Clock`, `Calculator`, `Photos`
+- Partial PackageFamilyNames without `!`: `Microsoft.WindowsAlarms`
+- Reverse-domain identifiers borrowed from the macOS convention: `com.microsoft.clock`
+
+### Finding the AUMID before calling `open_application`
+
+When the user asks for a UWP app by friendly name, your first action is to look up the AUMID via Bash:
+
+```bash
+powershell -NoProfile -Command "Get-StartApps | Where-Object Name -like '*Clock*' | Format-Table -AutoSize"
+```
+
+Replace `Clock` with the friendly name fragment. The output gives you `Name` and `AppID` columns — `AppID` is the AUMID. Then call `open_application` with `bundle_id: "<AppID>"`.
+
+If you skip this step and pass a friendly name or partial PFN, `open_application` will return `activated: false` with a hint pointing back to this same workflow — but you'll have burned a tool call. Look up the AUMID first.
+
 ## Tool reference
 
 Use this reference to choose the right tool without calling `list_tools`.
