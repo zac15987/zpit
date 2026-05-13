@@ -331,7 +331,7 @@ Defaults: `coding` / `reviewer` / `clarifier` / `efficiency` = `opus[1m]`; `task
 - **Branch naming**: `feat/ISSUE-ID-slug` — Loop always uses `feat/` prefix; PR title classification (feat/fix) decided by agent
 - **Per-issue branch control**: Issue Spec `## BRANCH` specifies PR target branch (optional, falls back to project `base_branch`)
 - **Git model**: `main` ← `dev` ← feature branches
-- **Commit messages**: `[ISSUE-ID] short description`
+- **Commit messages**: `[ISSUE-ID] short description` is **only** for commits produced by the zpit agent workflow (Loop coding/reviewer slots, task-runner subagents). Manual/ad-hoc commits made outside the loop — including any commit you (Claude) make while assisting the user directly — must NOT carry an `[NNN]` prefix; use a plain conventional-commit style (`feat:`, `fix:`, `docs:`, `refactor:`, etc.) without the bracket. The `[ISSUE-ID]` tag is a workflow signal that links a commit back to a tracker issue handled by the Loop, not a generic prefix.
 - **Issue status flow**: pending_confirm → todo → in_progress → ai_review → waiting_review → needs_verify → done
 - **Loop label flow**: todo → wip → review → ai-review (PASS) / needs-changes (auto-retry)
 - **Hook exit codes**: 0 = allow, 2 = block (stderr fed back to Claude), never use exit 1
