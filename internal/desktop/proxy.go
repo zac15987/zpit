@@ -359,6 +359,16 @@ func (p *Proxy) forwardFromUpstream(_ context.Context, upstreamOut io.ReadCloser
 			}
 		}
 
+		// JSON-RPC error frames (top-level "error" field, no "result"). These
+		// surface when the upstream MCP framework rejects a call *before* the
+		// tool handler runs — e.g. Zod schema validation failure raising an
+		// exception that the SDK wraps as a JSON-RPC error rather than as a
+		// `result.isError` tool result. Without this, calls that fail at the
+		// framework layer leave only a `decision=allow` line in the log.
+		if errObj, ok := frame["error"].(map[string]any); ok {
+			p.logUpstreamRPCError(frame["id"], errObj)
+		}
+
 		p.writeToOut(line)
 	}
 
@@ -428,6 +438,36 @@ func (p *Proxy) logUpstreamError(id any, result map[string]any) {
 	text = strings.ReplaceAll(text, "\r\n", " ")
 	text = strings.ReplaceAll(text, "\n", " ")
 	p.logger.Warnf("upstream isError id=%v agent=%s text=%q", id, p.agentName, text)
+}
+
+// logUpstreamRPCError records the JSON-RPC error object at Warn level. This
+// is distinct from `result.isError` — JSON-RPC errors come from the MCP
+// framework itself (schema validation, internal errors, etc.) and arrive
+// without a `result` field. Correlate with the nearest preceding
+// `decision=allow tool=...` line to identify which call failed.
+func (p *Proxy) logUpstreamRPCError(id any, errObj map[string]any) {
+	const maxLen = 500
+	code, _ := errObj["code"].(float64)
+	message, _ := errObj["message"].(string)
+	// data may be a string or an object — render to JSON for either.
+	var dataStr string
+	if d, ok := errObj["data"]; ok && d != nil {
+		if s, ok := d.(string); ok {
+			dataStr = s
+		} else if b, err := json.Marshal(d); err == nil {
+			dataStr = string(b)
+		}
+	}
+	combined := message
+	if dataStr != "" {
+		combined = message + " | data=" + dataStr
+	}
+	if len(combined) > maxLen {
+		combined = combined[:maxLen] + "…"
+	}
+	combined = strings.ReplaceAll(combined, "\r\n", " ")
+	combined = strings.ReplaceAll(combined, "\n", " ")
+	p.logger.Warnf("upstream rpc-error id=%v agent=%s code=%d message=%q", id, p.agentName, int(code), combined)
 }
 
 // logDecision logs AC-10 format: decision=<allow|deny> tool=<name> agent=<agentName> reason=<reason>.

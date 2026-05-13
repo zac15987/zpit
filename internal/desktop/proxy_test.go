@@ -1091,6 +1091,103 @@ func TestProxy_UpstreamIsErrorTruncated(t *testing.T) {
 	h.upToProxyWrite.Close()
 }
 
+// TestProxy_UpstreamRPCErrorLogged verifies that a JSON-RPC error frame (top-level
+// "error" field, no "result") is recorded at Warn level. These surface when the
+// MCP framework rejects a call before the tool handler runs — e.g. schema
+// validation throwing, which a `result.isError` check would miss entirely.
+//
+// Real-world trigger: zpit-desktop-mcp@1.0.1 declared zod ^4.0.0 while
+// @modelcontextprotocol/sdk ^1.12 uses Zod 3 internal APIs (keyValidator._parse),
+// so any tool with a required schema field surfaced as `keyValidator._parse is
+// not a function` in a JSON-RPC error, not as a tool-result isError.
+func TestProxy_UpstreamRPCErrorLogged(t *testing.T) {
+	h := newTestProxy(DefaultPolicy())
+	cancel, _ := h.run()
+	defer cancel()
+
+	upstreamResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(99),
+		"error": map[string]any{
+			"code":    float64(-32603),
+			"message": "keyValidator._parse is not a function",
+			"data":    "stack trace omitted",
+		},
+	}
+	if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+		t.Fatalf("writeFrame upstream: %v", err)
+	}
+
+	resp, err := readFrame(h.claudeRead)
+	if err != nil {
+		t.Fatalf("readFrame claude: %v", err)
+	}
+	// Frame must be forwarded unmodified — the error object reaches Claude verbatim.
+	if resp["id"] != float64(99) {
+		t.Errorf("expected id=99 forwarded, got: %v", resp["id"])
+	}
+	if _, ok := resp["error"].(map[string]any); !ok {
+		t.Fatalf("expected error object to survive forwarding, got: %v", resp)
+	}
+
+	logStr := h.logBuf.String()
+	if !strings.Contains(logStr, "[Warn]") {
+		t.Errorf("expected Warn level log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "upstream rpc-error") {
+		t.Errorf("expected 'upstream rpc-error' marker in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "id=99") {
+		t.Errorf("expected id=99 in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "code=-32603") {
+		t.Errorf("expected code=-32603 in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "keyValidator._parse") {
+		t.Errorf("expected error message in log, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "data=stack trace omitted") {
+		t.Errorf("expected data field in log, got: %s", logStr)
+	}
+
+	h.claudeWrite.Close()
+	h.upToProxyWrite.Close()
+}
+
+// TestProxy_UpstreamRPCErrorObjectData verifies that an object-shaped `data`
+// field (rather than a string) is rendered as JSON in the log line.
+func TestProxy_UpstreamRPCErrorObjectData(t *testing.T) {
+	h := newTestProxy(DefaultPolicy())
+	cancel, _ := h.run()
+	defer cancel()
+
+	upstreamResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(5),
+		"error": map[string]any{
+			"code":    float64(-32602),
+			"message": "Invalid params",
+			"data":    map[string]any{"field": "bundle_id", "expected": "string"},
+		},
+	}
+	if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+		t.Fatalf("writeFrame upstream: %v", err)
+	}
+	if _, err := readFrame(h.claudeRead); err != nil {
+		t.Fatalf("readFrame claude: %v", err)
+	}
+
+	// %q escapes the inner quotes; assert on the escaped form.
+	logStr := h.logBuf.String()
+	if !strings.Contains(logStr, `data={\"expected\":\"string\",\"field\":\"bundle_id\"}`) &&
+		!strings.Contains(logStr, `data={\"field\":\"bundle_id\",\"expected\":\"string\"}`) {
+		t.Errorf("expected JSON-rendered data in log, got: %s", logStr)
+	}
+
+	h.claudeWrite.Close()
+	h.upToProxyWrite.Close()
+}
+
 // TestProxy_UpstreamSuccessNotLogged verifies that a non-error upstream
 // response does NOT produce a Warn line — only failures should surface.
 func TestProxy_UpstreamSuccessNotLogged(t *testing.T) {
