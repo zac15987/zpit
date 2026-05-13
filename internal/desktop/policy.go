@@ -1,7 +1,9 @@
 // Package desktop manages the policy for the desktop-control agent proxy.
-// The proxy forwards MCP tool calls to the upstream computer-use-mcp Node
-// subprocess subject to the constraints defined in Policy. See
-// docs/architecture/desktop-agent.md for the full design rationale.
+// The proxy forwards MCP tool calls to the zpit-desktop-mcp Node subprocess
+// (zpit's fork of @zavora-ai/computer-use-mcp; original work by
+// James Karanja Maina / zavora.ai, MIT) subject to the constraints defined
+// in Policy. See docs/architecture/desktop-agent.md for the full design
+// rationale and upstream credit.
 package desktop
 
 import (
@@ -24,11 +26,11 @@ var validFocusStrategies = []string{"strict", "best_effort", "none", "prepare_di
 const policyTemplate = `# Zpit Desktop Agent Policy
 # Auto-created on first run; you own this file thereafter.
 
-# allowed_tools: MCP tools forwarded to the upstream computer-use-mcp
-# subprocess. Anything not in this list is rejected without spawning the
-# subprocess. Default is the safe 42-tool subset — escape hatches
-# (run_script, filesystem, process_kill, registry, virtual-desktop tools)
-# are intentionally omitted.
+# allowed_tools: MCP tools forwarded to the zpit-desktop-mcp subprocess
+# (zpit's fork of @zavora-ai/computer-use-mcp). Anything not in this list
+# is rejected without spawning the subprocess. Default is the safe 42-tool
+# subset — escape hatches (run_script, filesystem, process_kill, registry,
+# virtual-desktop tools) are intentionally omitted.
 allowed_tools = [
     "screenshot", "zoom", "left_click", "right_click", "middle_click",
     "double_click", "triple_click", "mouse_move", "left_click_drag",

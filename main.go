@@ -304,8 +304,9 @@ func runServeChannel() {
 
 // runServeDesktopProxy starts the desktop-control proxy MCP server.
 // Reads ~/.zpit/desktop-policy.toml (auto-created on first run) and spawns
-// the upstream computer-use-mcp Node subprocess; gates every tool call
-// through the policy before forwarding.
+// the zpit-desktop-mcp Node subprocess (zpit's fork of
+// @zavora-ai/computer-use-mcp); gates every tool call through the policy
+// before forwarding.
 //
 // Stdio is bound to os.Stdin/os.Stdout — Claude Code launches this
 // subprocess via .mcp.json and talks JSON-RPC over the pipes.

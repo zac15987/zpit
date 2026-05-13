@@ -116,3 +116,26 @@ Users can loosen these defaults by adding `allow_bundles` entries in `~/.zpit/de
 - **zpit-API tools** — deferred; would solve the "operate zpit's own TUI" use case without screenshot+hotkey brittleness by exposing TUI actions as MCP tools.
 - **Linux support** — blocked on upstream `@zavora-ai/computer-use-mcp` adding Linux support (our fork tracks upstream's `os: ["darwin", "win32"]` restriction; the Rust NAPI module has no Linux backend). The `[w]` hotkey is a no-op on `runtime.GOOS == "linux"`.
 - **Recording / replay** — capture every approved tool call to a per-session JSONL for replay or audit. Useful for regression testing UI workflows.
+
+---
+
+## Upstream credit
+
+The `[w]` desktop agent is backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) — zpit's fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) (forked at v6.1.0). The original `computer-use-mcp` package is the work of [James Karanja Maina](mailto:james@zavora.ai) / [zavora.ai](https://zavora.ai), released under the MIT License. Their package contributes everything that makes this agent possible:
+
+- The MCP server scaffolding (tool schemas, JSON-RPC handlers, session management).
+- The Rust NAPI native module bridging Node to OS APIs (`CGEvent` on macOS, UIAutomation on Windows).
+- The full ~60-tool surface across pointer, keyboard, clipboard, observation, app/window management, and accessibility.
+- The cross-platform packaging strategy (per-arch `.node` binaries via NAPI, `os: ["darwin", "win32"]` declaration).
+
+Zpit's fork carries three deltas on top of upstream:
+
+| Delta | Why |
+|------|-----|
+| Windows AUMID launch in `open_application` | Upstream's `bundle_id` path resolved the executable but could not activate UWP / Microsoft Store apps. The fork accepts a `<PackageFamilyName>!<ApplicationId>` AUMID and dispatches via `IApplicationActivationManager`. |
+| Stdio-entrypoint detection on Windows | Upstream's `endsWith('/server.js')` guard was structurally unreachable on Windows (where `argv[1]` uses backslashes). Without the fix, `npx zpit-desktop-mcp` exited silently within 1 s of spawn. Filed upstream as PR #9; carried as a fork patch until that merges. |
+| `@modelcontextprotocol/sdk` bump to `^1.23.0` | Required for Zod 4 compatibility (upstream pinned an older SDK that conflicts with Zod 4). |
+
+Everything else — every tool, every native call, every test scaffold — is upstream. Sincere thanks to the zavora.ai team for the foundation this layer of zpit is built on.
+
+License: both packages are MIT. The fork repository at [github.com/zac15987/computer-use-mcp](https://github.com/zac15987/computer-use-mcp) retains upstream's `LICENSE` file and copyright notice unchanged.

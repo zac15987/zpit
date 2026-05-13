@@ -103,6 +103,7 @@ You (TUI)                    Claude Code Agents
 - **i18n** — TUI chrome localized to English or Traditional Chinese (zh-TW) via `locale.T()`; all agent output (Issue Specs, commits, PR bodies, channel messages) is always English regardless of TUI locale, for token efficiency
 - **Per-role model selection** — `[agent_models]` lets you choose a model per agent role (defaults to Opus across all roles with 1M context, tuned for single-round coding→review accuracy); override any value in config
 - **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
+- **Desktop agent** — `[w]` launches a global Claude Code session that drives the OS (mouse, keyboard, screenshots, accessibility actions) through a policy-enforced MCP proxy. Backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp), our fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp). Single-instance, macOS + Windows only.
 
 ## Session sync (cross-machine /resume)
 
@@ -290,6 +291,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `U` | Run `claude update` in new terminal (stays open to show result) |
 | `a` | Add project (coming soon) |
 | `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
+| `w` | Window — launch desktop agent (macOS + Windows only; single instance across all clients) |
 | `x` | Close Terminal — force-close selected terminal (when Terminals panel focused) |
 | `Tab` | Switch focus between panels (Projects, Terminals, Loop Slots) |
 | `?` | Help |
@@ -383,6 +385,18 @@ go run . connect         # SSH client shortcut
 
 Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 
+## Desktop Agent
+
+Press `[w]` from the main view to launch the desktop agent — a standalone Claude Code session that controls the operating system (mouse, keyboard, screenshots, window/app management, accessibility actions). Unlike project-scoped agents, it is global (cwd = `$HOME` / `%USERPROFILE%`) and limited to one active instance across all connected TUI clients.
+
+The desktop agent is backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) — our fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) by [James Karanja Maina / zavora.ai](https://zavora.ai). The fork adds Windows AUMID launch support in `open_application`, a stdio-entrypoint fix for Windows backslash paths, and tracks the upstream `@modelcontextprotocol/sdk` Zod 4 bump. Many thanks to the upstream authors — none of this would exist without their original work.
+
+Safety is enforced by `zpit serve-desktop-proxy`, a Go MCP proxy that sits between Claude Code and the `npx zpit-desktop-mcp` subprocess. Every JSON-RPC `tools/call` frame is intercepted, evaluated against `~/.zpit/desktop-policy.toml` (auto-created on first run), and either forwarded or rejected with a structured error. Hard-blocked tools include `run_script`, `filesystem`, `process_kill`, `registry`, `notification`, and all virtual-desktop tools; `deny_keys` blocks OS-level escape hatches like `win+r`, `ctrl+alt+del`, and `alt+f4`. The conventional 5-layer hook stack does **not** apply to the desktop agent — the proxy is the safety layer.
+
+Platform support: macOS and Windows. On Linux, `[w]` is a no-op (the upstream Rust NAPI module has no Linux backend).
+
+See [docs/architecture/desktop-agent.md](docs/architecture/desktop-agent.md) for the full design rationale (why proxy over hooks, tool-by-tool allowlist justification, default `deny_keys` per platform).
+
 ## Architecture
 
 See [docs/architecture/](docs/architecture/) for the full architecture documents (split by topic, with an [index](docs/architecture/README.md)).
@@ -409,6 +423,15 @@ Zpit is built on top of the following open source libraries:
 
 All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`, `wish`, `ssh`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
 `fsnotify` and `golang.org/x/*` are BSD-3-Clause; their copyright notices are retained as required.
+
+### Desktop agent — upstream credit
+
+The [`[w]` desktop agent](#desktop-agent) is backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp), our fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) (forked at v6.1.0). The original `computer-use-mcp` package — including the Rust NAPI native backend, the MCP server scaffolding, and the full macOS + Windows toolset — is the work of [James Karanja Maina](mailto:james@zavora.ai) / [zavora.ai](https://zavora.ai), released under the MIT License. Zpit's fork adds Windows AUMID launch support, the stdio-entrypoint backslash fix, and the SDK Zod 4 bump; everything else is upstream. Sincere thanks to the zavora.ai team for making this layer of zpit possible.
+
+| Package | Purpose | License |
+|---------|---------|---------|
+| [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) (zpit fork) | Desktop-control MCP server for the `[w]` agent | MIT |
+| [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) (upstream) | Original MCP server + Rust NAPI native backend | MIT |
 
 ## License
 
