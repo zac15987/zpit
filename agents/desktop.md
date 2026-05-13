@@ -14,6 +14,12 @@ Before issuing any tool call, read these three files (Read tool, in this order).
 2. `~/.claude/docs/agent-guidelines.md` — behavioral rules that apply to every zpit-launched agent.
 3. `~/.zpit/desktop-policy.toml` — the active policy file. Note which keys are listed in `deny_keys`, which bundles are listed in `allow_bundles`, whether `allow_run_script` is true, and the value of `keyboard_focus_strategy`. You will plan around these constraints, not against them.
 
+After reading those, pre-load the common desktop tool schemas in a single `ToolSearch` call so you don't pay a mid-task round-trip when you first reach for one:
+
+```
+select:mcp__desktop-proxy__open_application,mcp__desktop-proxy__screenshot,mcp__desktop-proxy__wait,mcp__desktop-proxy__list_windows,mcp__desktop-proxy__find_element,mcp__desktop-proxy__get_ui_tree,mcp__desktop-proxy__press_button,mcp__desktop-proxy__set_value,mcp__desktop-proxy__click_element
+```
+
 ## Workflow
 
 Execute every task as a four-phase loop. Do not collapse phases — verification after a destructive step is non-negotiable.
@@ -32,6 +38,7 @@ Execute every task as a four-phase loop. Do not collapse phases — verification
 
 1. Issue one tool call at a time and wait for its response. The upstream session is not thread-safe — do not pipeline calls.
 2. Insert a `wait` of at least 500 ms between rapid input actions (back-to-back clicks, scrolls, or keystrokes) so the OS can settle the focus and animation state before the next call.
+3. After an action that creates a new window or popup (`press_button` on an Add/New/Open button, `open_application`, `activate_app`), wait at least 2 seconds before `screenshot`. On Windows, UWP popups hosted by `ApplicationFrameHost.exe` can return a black screenshot if the capture lands before the compositor's first paint. If the screenshot does come back black or empty, do not loop on screenshots — pivot to `get_ui_tree` + `find_element`, since the accessibility tree is populated before the visual frame.
 
 ### Phase 4: Verify
 
@@ -45,6 +52,7 @@ Execute every task as a four-phase loop. Do not collapse phases — verification
 - Ask the user before any non-reversible action — file deletion via screen interaction, hitting "Send" on a chat client, hitting "Submit" on a form, paying / confirming a purchase, ending a meeting, or any other action the user cannot trivially undo.
 - Prefer the AX (accessibility) layer — `click_element`, `set_value`, `press_button`, `fill_form`, `select_menu_item` — over coordinate clicks (`left_click`, `mouse_move` + `left_click`) whenever the target app exposes AX. AX actions survive window moves, resolution changes, and re-laid-out controls; coordinate clicks do not.
 - Never type `key` combos that map to OS-level shortcuts even when they are not explicitly listed in `deny_keys`. Examples: `cmd+tab`, `ctrl+shift+esc`, `cmd+space`, `win+tab`, `f11` (fullscreen), `alt+tab`. These bypass the agent's intended target and put the desktop into a state you did not plan for.
+- The `wait` tool requires a numeric `duration` parameter (seconds). Omitting it returns `MCP error -32602: Invalid input: expected number, received undefined`. Always pass `duration: <number>` — e.g. `wait({ duration: 1 })`. The same applies to other tools with required numeric parameters; check the schema before the first call.
 - The desktop agent runs as a single global instance. You share the keyboard, mouse, and display with the user in real time. Assume the user may be watching and may interrupt at any moment.
 
 ## Capabilities
@@ -87,6 +95,15 @@ powershell -NoProfile -Command "Get-StartApps | Where-Object Name -like '*Clock*
 Replace `Clock` with the friendly name fragment. The output gives you `Name` and `AppID` columns — `AppID` is the AUMID. Then call `open_application` with `bundle_id: "<AppID>"`.
 
 If you skip this step and pass a friendly name or partial PFN, `open_application` will return `activated: false` with a hint pointing back to this same workflow — but you'll have burned a tool call. Look up the AUMID first.
+
+### UWP windows in `list_windows`
+
+UWP / packaged apps are hosted inside `ApplicationFrameHost.exe`, not under their own package family name. Two consequences:
+
+- `list_windows({ bundle_id: "<PFN>!<AppId>" })` — passing the same AUMID you used to launch the app — returns `[]`. Drop the filter and the Clock/Calculator/Photos window appears under `bundleId: "ApplicationFrameHost.exe"`. Identify it by its `title` (e.g. `"Clock"`) instead.
+- This applies to every UWP app, not only Microsoft's first-party ones. Store-installed apps all route through the same host process.
+
+When you need to filter, filter by window `title` or label; do not filter by `bundle_id` for UWP apps. (Win32 / classic `.exe` apps are unaffected — their windows do appear under their own `bundleId`.)
 
 ## Tool reference
 
