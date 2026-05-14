@@ -312,3 +312,112 @@ Issue #99 smoke test (2026-04-22, PR #100 — NOT reverted, files landed correct
 - Session log: `C:/Users/Peanut/.claude/projects/D--Documents--worktrees-zpit-99--loop-sync-local-base-branch-after-pr-mer/daffd87e-fb24-4720-aab9-e6513c774b96.jsonl`
 - Both T1 and T2 teammates ran `cd "D:\Documents\.worktrees\zpit\99--..."` as their first Bash command. Commits landed on the parent branch immediately (`522d2f6` for T1, `b170506` for T2). Teammate branches remained empty at `b35f0d2`. Orchestrator's cherry-pick produced `You are currently cherry-picking commit b35f0d2` and `The previous cherry-pick is now empty` — `b35f0d2` was the pre-batch parent HEAD. Orchestrator then ran `git cherry-pick --skip`.
 - Contrast: issue #3 smoke test (2026-04-22 earlier, PR #4) where teammate branches correctly advanced past parent HEAD (`git branch -D` reported `was 24b81e4` / `was 87c6aa0`). Same prompt version, different orchestrator behavior — the `cd` trigger is non-deterministic and depends on what the orchestrator happens to write in the teammate's spawn prompt. Reinforces why the architectural fix (Layer 1 sanity check) is required, not just prompt guidance.
+
+---
+
+## 7. Windows: Desktop agent cannot interact with elevated (High IL) installers / admin apps
+
+**Affected OS:** Windows only
+**Component:** Desktop agent (`zpit serve-desktop-proxy` → `npx zpit-desktop-mcp`), Windows UIPI (User Interface Privilege Isolation)
+**First observed:** 2026-05-14 (KV Studio installer dialog, session `022a118c-…`)
+
+### Symptom
+
+Desktop agent operates an installer or other admin app. Tool calls return success but the target UI shows zero state change:
+
+```
+mcp__desktop-proxy__activate_window  →  {"activated": true}
+mcp__desktop-proxy__left_click       →  "Clicked (1052, 580)"
+mcp__desktop-proxy__key {text:"return"} →  "Pressed return"
+mcp__desktop-proxy__screenshot       →  identical to previous frame
+```
+
+Same dialog persists across multiple click / key attempts. `press_button` may also fail upstream with `No button matches label="OK"` because the target uses owner-drawn controls invisible to UI Automation — but the deeper issue is that even coordinate-based input is silently dropped.
+
+### Root Cause
+
+Windows **UIPI** blocks `SendInput` / `PostMessage` / `SetCursorPos` from a lower Integrity Level (IL) process to a higher-IL target window. The Win32 API call returns success; the message is discarded before delivery.
+
+Default zpit launch chain:
+
+```
+unelevated pwsh / cmd  (Medium IL)
+  └─ zpit.exe             (Medium IL)
+       └─ claude.exe       (Medium IL)
+            └─ zpit serve-desktop-proxy  (Medium IL)
+                 └─ npx zpit-desktop-mcp / Node  (Medium IL)
+                      └─ SendInput → setup.exe  (High IL)  ✗ dropped by UIPI
+```
+
+`ConsentPromptBehaviorAdmin=0` (silent UAC elevation) does NOT mitigate this — it only suppresses the UAC popup, it does not lower the installer's IL or raise the desktop agent's IL.
+
+### Diagnostic recipe
+
+Confirm the target is High IL from an unelevated PowerShell (no admin rights needed for these calls):
+
+```powershell
+$pid_target = <installer-PID>
+
+# Indirect IL probe via OpenProcess access rights
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class ProcCheck {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool CloseHandle(IntPtr h);
+}
+"@
+$h1 = [ProcCheck]::OpenProcess(0x0400, $false, $pid_target)   # PROCESS_QUERY_INFORMATION
+$err1 = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+$h2 = [ProcCheck]::OpenProcess(0x1000, $false, $pid_target)   # PROCESS_QUERY_LIMITED_INFORMATION
+$err2 = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+"0x0400: handle=$h1 err=$err1"
+"0x1000: handle=$h2 err=$err2"
+```
+
+Diagnosis table:
+
+| 0x0400 result | 0x1000 result | IL of target |
+|---|---|---|
+| success | success | same IL as caller (Medium) — UIPI is NOT the issue, look elsewhere |
+| err=5 (ACCESS_DENIED) | success | **target is High IL** — UIPI confirmed |
+| err=5 | err=5 | different user / protected process — not solvable by elevating zpit |
+
+A secondary tell: `Get-CimInstance Win32_Process -Filter "ProcessId=$pid"` returns empty `ExecutablePath` and `CommandLine` for a High IL target queried from Medium IL (those fields require 0x0400).
+
+### Workaround
+
+Run zpit from an **elevated** Windows Terminal / PowerShell 7 session for the duration of the admin task:
+
+1. Right-click Windows Terminal → "Run as administrator" (or use an elevated WT profile)
+2. Inside, run `zpit` normally — every child process inherits High IL
+3. Press `[w]` to launch the desktop agent; the MCP chain is now High IL end-to-end and `SendInput` reaches admin apps
+
+Verification inside the elevated WT:
+
+```powershell
+whoami /groups | findstr Mandatory   # → "Mandatory Label\High Mandatory Level"
+```
+
+Title bar should show `Administrator:` prefix. `wt.exe` keeps elevated / non-elevated `WindowsTerminal.exe` instance pools fully isolated, so calling `wt.exe` from a High IL process always spawns or joins the High IL pool — the new tab's shell is reliably High IL.
+
+### Caveats of running zpit elevated
+
+- **Safety boundary widens** — the desktop agent now has High IL against every app, not just the installer. `~/.zpit/desktop-policy.toml` (`deny_keys`, `allow_bundles`, tool allowlist) becomes the only safety layer for the elevated surface; review it before launching the agent under elevation.
+- **`ssh.auto_serve = true` inherits elevation** — remote SSH sessions opened against an elevated zpit are also High IL. Avoid if you SSH from untrusted networks.
+- **File Explorer drag-and-drop stops working into the elevated WT** — Medium IL Explorer cannot drag into High IL windows (UIPI in the other direction). Use `Copy as path` + paste instead.
+- **Treat as temporary mode** — elevate only for the admin task at hand, then close the elevated WT. Do NOT set zpit.exe's compatibility flag to "always run as administrator"; that would leave every zpit session at High IL.
+
+### Why this is filed under known-issues rather than fixed
+
+A code-level fix would require zpit / desktop-proxy to self-elevate via UAC (`runas` verb + `ShellExecute`), which spawns a new elevated process tree rather than elevating the current one — meaning the user still hits a UAC prompt, and the TUI state would not transfer cleanly across the elevation boundary. The manual "open elevated WT first" workflow has the same UAC cost with a cleaner mental model and zero TUI/state migration.
+
+If this becomes a frequent friction point, the cleanest direction is a **per-session elevation prompt** in the TUI: when the user presses `[w]` and any visible top-level window has a higher IL than zpit, surface a one-line warning ("Target apps may need admin — relaunch zpit elevated?") rather than letting the agent run blind into silent input drops.
+
+### Related code / docs
+
+- `docs/architecture/desktop-agent.md` — desktop agent architecture and policy file format
+- `~/.zpit/desktop-policy.toml` — the only safety layer once running elevated; auto-created on first `zpit serve-desktop-proxy` invocation
+- `internal/terminal/launcher_windows.go` `launchWindows` — `exec.Command("wt.exe", ...)` is standard `CreateProcess`, inherits parent IL (this is what makes the elevated-WT workaround work end-to-end)
