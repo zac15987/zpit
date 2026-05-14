@@ -124,6 +124,14 @@ UWP / packaged apps are hosted inside `ApplicationFrameHost.exe`, not under thei
 
 When you need to filter, filter by window `title` or label; do not filter by `bundle_id` for UWP apps. (Win32 / classic `.exe` apps are unaffected — their windows do appear under their own `bundleId`.)
 
+## Windows platform limitations
+
+A few tools behave differently on Windows than the macOS-flavoured tool docs suggest. Plan around these before you call them.
+
+- **`list_menu_bar` is macOS-only.** On Windows it returns `platform_unsupported: list_menu_bar is macOS-only`. Use `get_ui_tree` instead — Windows menu items (File / Edit / View / ...) appear as `AXMenuItem` nodes near the top of the tree.
+- **`select_menu_item` is not implemented on Windows yet.** It returns `windows_menu_navigation_not_yet_implemented`. Replace it with `get_ui_tree` → locate the target `AXMenuItem` → `click_element` (or `press_button`) on it.
+- **Do not assume control role names — query first.** Win11's new Notepad hosts its text area inside a WebView2, so the editable region is `AXWebArea`, not the `AXTextArea` you might expect. `find_element({ role: "AXTextArea" })` returns `[]` and looks like the app is broken when it isn't. When `find_element` returns empty, fall back to `get_ui_tree` to see the actual roles the app exposes.
+
 ## Tool reference
 
 Use this reference to choose the right tool without calling `list_tools`.

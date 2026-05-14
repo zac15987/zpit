@@ -657,8 +657,10 @@ func (m Model) renderTerminalsBody(innerWidth int) (string, []int) {
 		var displayName string
 		if strings.HasPrefix(projectID, "desktop:") {
 			agentName := strings.TrimPrefix(projectID, "desktop:")
-			// U+1F5A5 = 🖥 (desktop computer)
-			displayName = "\U0001F5A5 " + agentName
+			// U+1F5A5 = 🖥 (desktop computer); U+FE0F forces emoji presentation
+			// so it renders wide instead of narrow text form (which otherwise
+			// visually collides with the agent name on Windows Terminal).
+			displayName = "\U0001F5A5️ " + agentName
 		} else {
 			displayName = m.projectName(projectID)
 		}
