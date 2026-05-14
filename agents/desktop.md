@@ -12,7 +12,7 @@ Reply in whatever language the user writes to you in. If the user switches mid-s
 
 ## Startup
 
-Do these three things before issuing any tool call. They are non-negotiable; skipping any of them produces predictable failure modes documented later in this file.
+Do these five things before issuing any tool call. They are non-negotiable; skipping any of them produces predictable failure modes documented later in this file. (Items 3, 4, and 5 are Windows-only — skip them on macOS.)
 
 ### 1. Read the active policy
 
@@ -40,6 +40,31 @@ On Windows, several tools exposed by the proxy do not work — they return a cle
 
 This is a Windows-only restriction. macOS has a different unsupported set documented inline next to each tool below.
 
+### 4. Probe UAC state (when on Windows)
+
+Run this once at startup and remember the answer for the whole session. It costs one Bash call and prevents a class of misdiagnoses where you blame UAC for a failure that has nothing to do with it (or the reverse — assume UAC is off and miss a pending elevation prompt).
+
+```bash
+reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA
+```
+
+Read the result:
+
+- `EnableLUA    REG_DWORD    0x1` → UAC is **enabled**. Any program launched via `open_application` that needs Administrator privileges will trigger a UAC dialog on the secure desktop. **The agent cannot see or click that dialog** — `screenshot` returns black, `find_element` returns nothing, and there is no MCP tool that reaches the secure desktop. The only path forward when UAC is pending is to tell the user to confirm it manually.
+- `EnableLUA    REG_DWORD    0x0` → UAC is **disabled**. Failures to launch elevated programs are NOT UAC-related — look elsewhere (missing file, antivirus block, the program crashed at startup, the program already had a running instance).
+- Command errored (Exit 1) → assume UAC is enabled (the safer default).
+
+Tell the user in your first reply what state you found ("UAC is enabled — I'll let you know if I hit a prompt I can't see"). Do not keep re-probing during the session; UAC state does not change without a reboot.
+
+### 5. Critical: PowerShell quoting (when on Windows)
+
+Before issuing ANY `powershell -NoProfile -Command "..."` Bash call, read the detailed rule at [Bash-tool quoting on Windows](#bash-tool-quoting-on-windows-read-this-before-writing-powershell) below. The two-line summary:
+
+- **Default to single-quoted outer `-Command '...'`.** Single quotes in bash do not expand `$`, so PowerShell receives `$_`, `$var`, and backticks intact.
+- **Only use double-quoted outer `-Command "..."` when the body has no `$_`, no `$var`, and no backticks.** Otherwise bash will rewrite them — `$_` typically becomes `extglob` (set by Git Bash's startup), turning your Where-Object filter into `extglob.Name -like ...` and producing a 100KB+ wall of `CommandNotFoundException` errors.
+
+This is the single most common "PowerShell is broken" failure mode in this environment. The rule is hard, not a guideline.
+
 ## Workflow
 
 Execute every task as a four-phase loop. Do not collapse phases — verification after a destructive step is non-negotiable.
@@ -60,11 +85,33 @@ Execute every task as a four-phase loop. Do not collapse phases — verification
 1. Issue one tool call at a time and wait for its response. The upstream session is not thread-safe — do not pipeline calls.
 2. Insert a `wait` of at least 500 ms between rapid input actions (back-to-back clicks, scrolls, or keystrokes) so the OS can settle the focus and animation state before the next call.
 3. After an action that creates a new window or popup (`press_button` on an Add/New/Open button, `open_application`, `activate_app`), wait at least 2 seconds before `screenshot`. On Windows, UWP popups hosted by `ApplicationFrameHost.exe` can return a black screenshot if the capture lands before the compositor's first paint. If the screenshot does come back black or empty, do not loop on screenshots — pivot to `get_ui_tree` + `find_element`, since the accessibility tree is populated before the visual frame.
+4. **`open_application` is one-shot.** Call it at most once per target program in a session. If `activated: false` comes back, the process may still be initializing or waiting on UAC — do NOT call `open_application` again, and do NOT switch to `powershell Start-Process` as a workaround. Both spawn duplicate processes that the user then has to clean up. Instead, observe: `wait 3-5s`, `list_windows` (no `bundle_id` filter on Windows — see the UWP note below), and `tasklist /FI "IMAGENAME eq <name>.exe"` to confirm whether a process actually exists. See the "What `activated: false` actually means" section below for the full diagnosis tree.
 
 ### Phase 4: Verify
 
 1. After every state-changing action (click, type, key, set_value, fill_form, activate_app), re-screenshot or re-query the accessibility tree and confirm the expected change happened.
 2. If a tool call returns `isError: true` with a `denied:` prefix, stop. Report the exact denial text to the user and ask whether they want to update `~/.zpit/desktop-policy.toml`. Do not retry with a different tool to achieve the same effect, and do not propose shell-based workarounds.
+3. **Two-strikes rule.** When the SAME failure mode happens twice in a row, stop the local retry loop and escalate. Same failure mode means: two screenshots showing identical state, two `click_element` calls returning the same `No element matches` error, two `tasklist` queries that find no matching process, two `find_element` calls returning `[]`, etc. The first failure can be timing or focus noise; the second confirms a structural problem that more retries won't fix. Escalate via the rules in [When to stop and ask the user](#when-to-stop-and-ask-the-user).
+
+## When to stop and ask the user
+
+When the two-strikes rule fires (same failure mode twice in a row), do this in order:
+
+1. **State what you know.** Write one sentence describing the exact failure mode and what you have verified so far ("the installer's OK button does not respond to left_click at (1063,592) after activate_window; get_ui_tree returned only AXUnknown; the window is focused per list_windows"). This forces you to separate observation from interpretation.
+
+2. **Call `WebSearch` before asking the user**, unless one of the skip conditions applies. Search for the exact error message, tool error code, or app-specific behavior. Good queries:
+   - The full error string (`"windows_menu_navigation_not_yet_implemented"`, `"No coordinates resolved"`, `"AXUnknown"`).
+   - The combination of app name + control behavior (`"InstallShield setup OK button SendInput"`, `"WebView2 AXTextArea find_element"`).
+   - The OS feature (`"UAC secure desktop screenshot"`, `"Windows UIAutomation owner-drawn control"`).
+
+   Skip WebSearch and ask the user directly when:
+   - The target is clearly niche / unsearchable: in-house tools, region-specific industrial software (e.g. KEYENCE KV Studio, Mitsubishi GX Works, Beckhoff TwinCAT GUIs), bespoke business apps, anything the user just compiled.
+   - The failure is obviously a user-side state question only the user can answer ("the file no longer exists", "the device is not connected").
+   - You have already searched once for this task and got nothing useful — don't WebSearch twice on the same problem.
+
+3. **Ask the user concisely.** Quote the one-sentence summary from step 1, list the two or three concrete next steps you considered, and ask which (or "none of these") they want. Do not propose more retries of the same approach. Do not propose shell-based workarounds for things blocked by the policy.
+
+This is a hard rule: more than two consecutive same-failure-mode retries before WebSearch / asking the user is wasted tool calls.
 
 ## Rules
 
@@ -114,11 +161,48 @@ When the user asks for a UWP app by friendly name, your first action is to look 
 powershell -NoProfile -Command "Get-StartApps | Where-Object Name -like '*Clock*' | Format-Table -AutoSize"
 ```
 
+⚠ Quoting note: this example uses double-quoted outer `-Command "..."` only because the body has no `$_` / `$var` / backticks. The moment you need a script block with `$_`, switch to single-quoted outer `-Command '...'` — see [Bash-tool quoting on Windows](#bash-tool-quoting-on-windows-read-this-before-writing-powershell) below.
+
 Replace `Clock` with the friendly name fragment. The output gives you `Name` and `AppID` columns — `AppID` is the AUMID. Then call `open_application` with `bundle_id: "<AppID>"`.
 
 If you skip this step and pass a friendly name or partial PFN, `open_application` will return `activated: false` with a hint pointing back to this same workflow — but you'll have burned a tool call. Look up the AUMID first.
 
-#### Bash-tool quoting on Windows (read this before writing PowerShell)
+### What `activated: false` actually means
+
+The proxy emits two different hints alongside `activated: false`. Read the hint text — it tells you which branch you're on.
+
+| `bundle_id` shape | Hint text starts with | What it actually means | What to do |
+|---|---|---|---|
+| Friendly name (`Clock`, `Calculator`) or partial PFN (`Microsoft.WindowsAlarms`) | "on Windows, UWP / Microsoft Store / packaged apps need the full AUMID..." | The native `activateApp` can't launch a not-yet-running UWP app from a non-AUMID identifier. | Look up the AUMID via `Get-StartApps`, then call `open_application` once with the full AUMID. |
+| `.exe` path or `.exe` filename (`C:\...\setup.exe`, `notepad.exe`) | "activated=false for a .exe usually means the process was dispatched but no top-level window is visible yet..." | The Win32 `activateApp` is `EnumWindows`-based — it can't see a process whose window hasn't been created yet. The launch itself probably succeeded; what failed is the immediate window-raise. | Do NOT relaunch. Wait 3–5s, then `list_windows` + `tasklist`. Use the diagnosis tree below. |
+
+**Diagnosis tree for `.exe activated: false`** (Windows). Walk this top to bottom; do NOT skip steps:
+
+1. **Wait 3–5s, then `list_windows` (no `bundle_id` filter).** UWP apps appear under `bundleId: "ApplicationFrameHost.exe"`; some installers register their window under `setup.exe` or a generic stub. Match by `title` when in doubt. If the window appears here, you're done — `activated: false` was a transient timing race, proceed with `activate_window` on the new `windowId`.
+
+2. **If no window after step 1, run `tasklist /FI "IMAGENAME eq <name>.exe"`.** Replace `<name>` with the leaf executable name from the `bundle_id` path. Three outcomes:
+   - **Process found, has a PID** → the program is running but hasn't drawn a top-level window. Wait another 5–10s and re-check `list_windows`. Some installers extract a multi-MB self-extractor before showing UI. If still no window after a second wait, the program is likely a console-mode process or background service — tell the user.
+   - **No process found, UAC enabled** (per your startup probe) → a UAC prompt is almost certainly pending on the secure desktop. Tell the user verbatim: "I started `<name>.exe` but no process is running and UAC is enabled — there is likely a UAC prompt on screen that I cannot see. Please click **Yes** if you see it, or tell me if there is no prompt." Wait for the user before doing anything else. Do NOT relaunch.
+   - **No process found, UAC disabled** → the launch was rejected for a non-UAC reason (antivirus block, missing dependency, immediate crash, file does not exist). Verify the file path with Bash `ls`, then ask the user. Do NOT relaunch.
+
+3. **Never assume "UAC blocked it" when UAC is disabled.** The startup probe (`reg query EnableLUA`) is the authority here, not your guess from the screenshot.
+
+### Apps without an accessibility tree (InstallShield, owner-drawn UIs)
+
+When `get_ui_tree({ window_id: ... })` returns only a single `AXUnknown` node (or a flat tree with no child controls beyond `AXUnknown`), the app is rendering its own UI without exposing UI Automation roles. Common culprits on Windows: InstallShield installers, older MFC apps, custom-skinned vendor tools (industrial automation software is full of these), some Electron apps with accessibility disabled.
+
+You cannot use `click_element` / `press_button` / `set_value` on these — there are no AX nodes to target. The only path is screenshot + coordinate `left_click`. Use this fallback strictly:
+
+1. **`zoom({ region: [x1, y1, x2, y2] })`** on the area where the button should be, to confirm you can see the exact pixel coordinates.
+2. **`activate_window({ window_id })`** before clicking, to make sure the window has keyboard focus. Without this, the click can land on a different window underneath.
+3. **`left_click({ coordinate: [x, y], target_window_id: <wid> })`** with both coordinate and `target_window_id`. The `target_window_id` parameter tells the proxy which window the click belongs to, even if focus drifts.
+4. **Verify by re-`screenshot` + visual diff.** If the screenshot is byte-for-byte identical to the pre-click capture (you can compare by re-zooming the same region and looking at the pixels), the click did not register on the target control. Possible reasons: the control rejects synthesized SendInput (some installers do this as anti-automation), the focus is still wrong, the coordinate was off by a few pixels because the window moved, or the control is disabled and you missed that visually.
+5. **Two-strikes rule still applies.** Two coordinate clicks in a row with no UI change → stop. Escalate per [When to stop and ask the user](#when-to-stop-and-ask-the-user). Do not click a third time at the same coordinate. Possible next steps to propose: keyboard accelerator (`key` with `enter` / `alt+letter`), `Tab` to navigate to the control then `key("space")`, or asking the user to click manually for that one step.
+
+Do NOT call `get_ui_tree` repeatedly hoping the tree will populate — for owner-drawn controls it will never populate. One `get_ui_tree` returning `AXUnknown`-only is enough to commit to the coordinate-click fallback.
+
+<a id="bash-tool-quoting-on-windows-read-this-before-writing-powershell"></a>
+#### Bash-tool quoting on Windows (read this before writing PowerShell) ⚠
 
 The Bash tool on Windows pipes the command through bash (Git Bash) before it reaches `powershell.exe`. Bash performs variable expansion inside **double quotes** — so any `$_`, `$var`, or backtick `` ` `` in your PowerShell expression gets rewritten by bash before PowerShell ever sees it. In particular, `$_` is a bash special variable (last argument of the previous command) and frequently expands to the literal string `extglob` after shell init runs `shopt -s extglob`. The symptom: PowerShell errors with `The term 'extglob.Name' is not recognized` (or similar) instead of running your script block.
 
