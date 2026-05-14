@@ -617,17 +617,24 @@ const upstreamPackage = "zpit-desktop-mcp"
 
 // resolveUpstream picks the command line for the upstream MCP server.
 //
-// Single path: `npx --yes --prefer-offline zpit-desktop-mcp`. On Windows,
+// Single path: `npx --yes zpit-desktop-mcp@latest`. On Windows,
 // if `npx` is not directly executable from Go's exec (e.g. resolved to
 // npx.ps1 which exec.Command can't spawn), we fall through to `cmd.exe /c
 // npx ...`.
+//
+// `@latest` + no `--prefer-offline` means npm consults the registry on
+// each launch (~1-3s round-trip) but always picks up fork releases the
+// moment they ship — no manual `npm cache clean` step. This is the right
+// tradeoff for an in-house fork that ships infrequently and where stale
+// MCP behavior is hard to diagnose from the agent's side.
 func resolveUpstream() (string, []string, error) {
+	spec := upstreamPackage + "@latest"
 	if p, err := exec.LookPath("npx"); err == nil {
-		return p, []string{"--yes", "--prefer-offline", upstreamPackage}, nil
+		return p, []string{"--yes", spec}, nil
 	}
 	if runtime.GOOS == "windows" {
 		if p, err := exec.LookPath("cmd.exe"); err == nil {
-			return p, []string{"/c", "npx", "--yes", "--prefer-offline", upstreamPackage}, nil
+			return p, []string{"/c", "npx", "--yes", spec}, nil
 		}
 	}
 	return "", nil, errors.New("npx not found in PATH — install Node.js to use the desktop agent")
