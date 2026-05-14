@@ -609,6 +609,9 @@ func (p *Proxy) forwardToUpstream(upstreamIn io.Writer, data []byte) {
 // stdio-attached MCP server. This is zpit's own fork of
 // @zavora-ai/computer-use-mcp (1.0.0 ← upstream 6.1.0), carrying:
 //   - Windows AUMID launch support in `open_application`
+//   - Windows Win32 `.exe` launch via ShellExecuteExW + PID return in
+//     `open_application` (upstream only raises existing windows; never
+//     spawns the process for `.exe` paths)
 //   - Stdio entrypoint detection accepting Windows backslash paths
 const upstreamPackage = "zpit-desktop-mcp"
 

@@ -1,6 +1,6 @@
 # Desktop Agent Architecture
 
-The desktop agent is a standalone Claude Code session that controls the OS via `zpit-desktop-mcp` — zpit's fork of `@zavora-ai/computer-use-mcp@6.1.0` ([github.com/zac15987/computer-use-mcp](https://github.com/zac15987/computer-use-mcp)), carrying Windows AUMID launch support in `open_application` and the stdio-entrypoint backslash-path fix. Unlike project-scoped coding/reviewer agents, it operates globally (cwd = `$HOME` / `%USERPROFILE%`) and is limited to a single instance across all connected TUI clients.
+The desktop agent is a standalone Claude Code session that controls the OS via `zpit-desktop-mcp` — zpit's fork of `@zavora-ai/computer-use-mcp@6.1.0` ([github.com/zac15987/computer-use-mcp](https://github.com/zac15987/computer-use-mcp)), carrying Windows AUMID launch support in `open_application`, the Win32 `.exe` launch + PID return path, and the stdio-entrypoint backslash-path fix. Unlike project-scoped coding/reviewer agents, it operates globally (cwd = `$HOME` / `%USERPROFILE%`) and is limited to a single instance across all connected TUI clients.
 
 ---
 
@@ -157,11 +157,12 @@ The `[w]` desktop agent is backed by [`zpit-desktop-mcp`](https://github.com/zac
 - The full ~60-tool surface across pointer, keyboard, clipboard, observation, app/window management, and accessibility.
 - The cross-platform packaging strategy (per-arch `.node` binaries via NAPI, `os: ["darwin", "win32"]` declaration).
 
-Zpit's fork carries three deltas on top of upstream:
+Zpit's fork carries four deltas on top of upstream:
 
 | Delta | Why |
 |------|-----|
 | Windows AUMID launch in `open_application` | Upstream's `bundle_id` path resolved the executable but could not activate UWP / Microsoft Store apps. The fork accepts a `<PackageFamilyName>!<ApplicationId>` AUMID and dispatches via `IApplicationActivationManager`. |
+| Windows Win32 `.exe` launch + PID return in `open_application` | Upstream's `activateApp` on Windows is `EnumWindows`-based: it only raises an *existing* window and never spawns a new process. For a not-yet-running `.exe` path it returned `activated: false` while the program was never actually launched, and the hint text blamed UAC (often incorrectly). The fork adds a native `launchExe` (Rust `ShellExecuteExW`) that the `open_application` handler invokes when `activateApp` returns `not_running` and the bid `looksLikeWin32App`. The response now includes `pid: N` so agents can walk the process tree (parent PID → child processes) instead of guessing by executable name — essential for self-extracting installers whose UI lives in a child process. |
 | Stdio-entrypoint detection on Windows | Upstream's `endsWith('/server.js')` guard was structurally unreachable on Windows (where `argv[1]` uses backslashes). Without the fix, `npx zpit-desktop-mcp` exited silently within 1 s of spawn. Filed upstream as PR #9; carried as a fork patch until that merges. |
 | `@modelcontextprotocol/sdk` bump to `^1.23.0` | Required for Zod 4 compatibility (upstream pinned an older SDK that conflicts with Zod 4). |
 

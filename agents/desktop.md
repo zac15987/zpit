@@ -44,17 +44,21 @@ This is a Windows-only restriction. macOS has a different unsupported set docume
 
 Run this once at startup and remember the answer for the whole session. It costs one Bash call and prevents a class of misdiagnoses where you blame UAC for a failure that has nothing to do with it (or the reverse — assume UAC is off and miss a pending elevation prompt).
 
+Probe THREE values, not just `EnableLUA`. The single-value check is incomplete: Windows considers UAC "on" whenever `EnableLUA=1`, but the user can move the Control Panel slider to "Never notify" and end up with `EnableLUA=1, ConsentPromptBehaviorAdmin=0` — at which point admin programs run elevated without any prompt. If you only check `EnableLUA` you will tell the user "UAC is enabled" and then mistakenly blame UAC for a launch failure that had nothing to do with it.
+
 ```bash
-reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA
+powershell -NoProfile -Command "Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System' | Select-Object EnableLUA, ConsentPromptBehaviorAdmin, PromptOnSecureDesktop"
 ```
 
-Read the result:
+Read the three values together. Three effective states:
 
-- `EnableLUA    REG_DWORD    0x1` → UAC is **enabled**. Any program launched via `open_application` that needs Administrator privileges will trigger a UAC dialog on the secure desktop. **The agent cannot see or click that dialog** — `screenshot` returns black, `find_element` returns nothing, and there is no MCP tool that reaches the secure desktop. The only path forward when UAC is pending is to tell the user to confirm it manually.
-- `EnableLUA    REG_DWORD    0x0` → UAC is **disabled**. Failures to launch elevated programs are NOT UAC-related — look elsewhere (missing file, antivirus block, the program crashed at startup, the program already had a running instance).
-- Command errored (Exit 1) → assume UAC is enabled (the safer default).
+- `EnableLUA = 0` → UAC is **fully disabled** (LUA off; no elevation, no integrity-level enforcement). Failures to launch elevated programs are NOT UAC-related — look elsewhere (missing file, antivirus block, the program crashed, the program already had a running instance).
+- `EnableLUA = 1` AND `ConsentPromptBehaviorAdmin = 0` → UAC is **effectively off for admin users** (slider at "Never notify"). Admin programs launch silently; no prompt appears. Treat the same as `EnableLUA = 0` for launch-failure diagnosis. Note: integrity levels are still enforced, so a Medium-IL process still cannot SendInput into a High-IL window — but `open_application` itself will not stall on a prompt.
+- `EnableLUA = 1` AND `ConsentPromptBehaviorAdmin != 0` → UAC is **active**. Any program launched via `open_application` that needs Administrator privileges will trigger a UAC dialog on the secure desktop. **The agent cannot see or click that dialog** — `screenshot` returns black, `find_element` returns nothing, and there is no MCP tool that reaches the secure desktop. The only path forward when UAC is pending is to tell the user to confirm it manually.
 
-Tell the user in your first reply what state you found ("UAC is enabled — I'll let you know if I hit a prompt I can't see"). Do not keep re-probing during the session; UAC state does not change without a reboot.
+If the probe errored, default to the safer assumption (UAC active).
+
+Tell the user in your first reply what state you found, e.g. "UAC is effectively off (slider at Never notify) — admin programs will launch without a prompt" or "UAC is active — I'll let you know if I hit a prompt I can't see". Do not keep re-probing during the session; UAC state does not change without a reboot.
 
 ### 5. Critical: PowerShell quoting (when on Windows)
 
@@ -169,23 +173,36 @@ If you skip this step and pass a friendly name or partial PFN, `open_application
 
 ### What `activated: false` actually means
 
-The proxy emits two different hints alongside `activated: false`. Read the hint text — it tells you which branch you're on.
+The proxy emits three different hints alongside `activated: false`. Read the hint text — it tells you which branch you're on and (for `.exe` paths) often includes the PID of the process that was just launched.
 
 | `bundle_id` shape | Hint text starts with | What it actually means | What to do |
 |---|---|---|---|
 | Friendly name (`Clock`, `Calculator`) or partial PFN (`Microsoft.WindowsAlarms`) | "on Windows, UWP / Microsoft Store / packaged apps need the full AUMID..." | The native `activateApp` can't launch a not-yet-running UWP app from a non-AUMID identifier. | Look up the AUMID via `Get-StartApps`, then call `open_application` once with the full AUMID. |
-| `.exe` path or `.exe` filename (`C:\...\setup.exe`, `notepad.exe`) | "activated=false for a .exe usually means the process was dispatched but no top-level window is visible yet..." | The Win32 `activateApp` is `EnumWindows`-based — it can't see a process whose window hasn't been created yet. The launch itself probably succeeded; what failed is the immediate window-raise. | Do NOT relaunch. Wait 3–5s, then `list_windows` + `tasklist`. Use the diagnosis tree below. |
+| `.exe` path or `.exe` filename, and the response suffix contains `pid: N` | "launched (PID N) but no top-level window yet..." | The proxy successfully launched the executable via `ShellExecuteExW` and captured PID N, but no top-level window appeared in the immediate poll window. Common with self-extracting installers — the UI lives in a *child* process. | Do NOT relaunch. Walk the diagnosis tree below, starting from the PID. |
+| `.exe` path, response has `launch failed (...)` | "launch failed (...). Verify the path..." | `ShellExecuteExW` itself returned an error — the file is missing, has no association, or was quarantined by AV. | Verify the path with `ls` / `Get-Item`. Do NOT relaunch with the same path. |
+| `.exe` path, no PID and no failure reason | "activated=false for a .exe and no PID was returned (native module may be out of date)" | The native `.node` binary is older than the fork that added `launchExe`. The proxy could not start the process and cannot tell you a PID. | Tell the user to rebuild / reinstall the zpit-desktop-mcp native module. Until then, this case has no good diagnosis path. |
 
-**Diagnosis tree for `.exe activated: false`** (Windows). Walk this top to bottom; do NOT skip steps:
+**Diagnosis tree for `.exe activated: false` when you HAVE a PID** (Windows). Walk this top to bottom; do NOT skip steps:
 
-1. **Wait 3–5s, then `list_windows` (no `bundle_id` filter).** UWP apps appear under `bundleId: "ApplicationFrameHost.exe"`; some installers register their window under `setup.exe` or a generic stub. Match by `title` when in doubt. If the window appears here, you're done — `activated: false` was a transient timing race, proceed with `activate_window` on the new `windowId`.
+1. **Check if the PID is still alive.** Run `powershell -NoProfile -Command "Get-Process -Id <pid> -ErrorAction SilentlyContinue | Format-Table Id, Name, StartTime, MainWindowTitle -AutoSize"`. Three outcomes:
+   - **PID alive, has a MainWindowTitle** → the window exists but `activateApp` didn't catch it in time. Use `list_windows` (no `bundle_id` filter) to find its `windowId`, then `activate_window`.
+   - **PID alive, MainWindowTitle empty** → bootstrapper / unpacker / headless launcher. Move to step 2.
+   - **PID exited** → the bootstrapper finished its job. The UI (if any) is in a child process. Move to step 2.
 
-2. **If no window after step 1, run `tasklist /FI "IMAGENAME eq <name>.exe"`.** Replace `<name>` with the leaf executable name from the `bundle_id` path. Three outcomes:
-   - **Process found, has a PID** → the program is running but hasn't drawn a top-level window. Wait another 5–10s and re-check `list_windows`. Some installers extract a multi-MB self-extractor before showing UI. If still no window after a second wait, the program is likely a console-mode process or background service — tell the user.
-   - **No process found, UAC enabled** (per your startup probe) → a UAC prompt is almost certainly pending on the secure desktop. Tell the user verbatim: "I started `<name>.exe` but no process is running and UAC is enabled — there is likely a UAC prompt on screen that I cannot see. Please click **Yes** if you see it, or tell me if there is no prompt." Wait for the user before doing anything else. Do NOT relaunch.
-   - **No process found, UAC disabled** → the launch was rejected for a non-UAC reason (antivirus block, missing dependency, immediate crash, file does not exist). Verify the file path with Bash `ls`, then ask the user. Do NOT relaunch.
+2. **Enumerate child processes.** Run `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"ParentProcessId=<pid>\" | Select-Object ProcessId,Name,CommandLine"`. Self-extracting installers (InstallShield, NSIS, KEYENCE KV Studio's KVS_Setup, etc.) almost always show the UI in a child process with a different name (commonly `setup.exe`, `Un_A.exe`, `installer.exe`). If a child PID has a window, `list_windows` will now show it — match by title.
 
-3. **Never assume "UAC blocked it" when UAC is disabled.** The startup probe (`reg query EnableLUA`) is the authority here, not your guess from the screenshot.
+3. **`list_windows` (no `bundle_id` filter).** UWP apps appear under `bundleId: "ApplicationFrameHost.exe"`; installers under their own setup name. Match by `title` when in doubt. If the window appears here, proceed with `activate_window` on the new `windowId`.
+
+4. **If no window after steps 1–3 and the parent PID has exited and there are no children with windows:** the launch reached a dead end. Three plausible causes:
+   - **UAC was active and the user dismissed the prompt** (your startup probe is the authority on whether this is possible — if `EnableLUA=0` or `ConsentPromptBehaviorAdmin=0`, this is NOT it).
+   - **The program is a console-mode tool or background service** that legitimately has no window.
+   - **Antivirus or SmartScreen blocked execution after launch.**
+
+   Ask the user to confirm which it was. Do NOT relaunch.
+
+5. **Wait-time guidance.** For installers >100 MB, allow 15–30 seconds between the initial launch and step 1's PID check — `ShellExecuteExW` returns as soon as the bootstrapper starts unpacking, well before the UI process has been forked. For typical Win32 apps, 3–5 seconds is usually enough.
+
+6. **Never assume "UAC blocked it" when your startup UAC probe showed UAC inactive.** The probe (`EnableLUA` + `ConsentPromptBehaviorAdmin`) is the authority. If both indicate UAC is off / effectively off, the failure is something else — keep diagnosing.
 
 ### Apps without an accessibility tree (InstallShield, owner-drawn UIs)
 
