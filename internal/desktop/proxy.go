@@ -356,6 +356,17 @@ func (p *Proxy) forwardFromUpstream(_ context.Context, upstreamOut io.ReadCloser
 			// `decision=allow tool=...` line in the same log file.
 			if isErr, _ := result["isError"].(bool); isErr {
 				p.logUpstreamError(frame["id"], result)
+				if appendErrorHints(result) {
+					// Re-marshal so the hint reaches the agent. On marshal
+					// failure, fall through and emit the original line —
+					// the original was already valid JSON.
+					if data, err := json.Marshal(frame); err == nil {
+						p.writeToOut(data)
+						continue
+					} else {
+						p.logger.Errorf("desktop-proxy: re-marshal hinted error response: %v", err)
+					}
+				}
 			}
 		}
 
@@ -381,13 +392,22 @@ func (p *Proxy) forwardFromUpstream(_ context.Context, upstreamOut io.ReadCloser
 // filterToolsList filters the tools array from an upstream tools/list response
 // so that only effectively-allowed tools survive: must be in AllowedTools AND
 // must not be in DeniedTools (deny precedence per AC-1).
+//
+// When AllowedTools contains WildcardTool ("*"), the allowlist check is
+// skipped — every upstream tool passes through unless it appears in
+// DeniedTools. Used by the `trusted` profile.
 func (p *Proxy) filterToolsList(tools any) []any {
 	toolsSlice, ok := tools.([]any)
 	if !ok {
 		return nil
 	}
+	wildcard := false
 	allowed := make(map[string]bool, len(p.policy.AllowedTools))
 	for _, t := range p.policy.AllowedTools {
+		if t == WildcardTool {
+			wildcard = true
+			continue
+		}
 		allowed[t] = true
 	}
 	denied := make(map[string]bool, len(p.policy.DeniedTools))
@@ -401,11 +421,78 @@ func (p *Proxy) filterToolsList(tools any) []any {
 			continue
 		}
 		name, _ := obj["name"].(string)
-		if allowed[name] && !denied[name] {
+		if denied[name] {
+			continue
+		}
+		if wildcard || allowed[name] {
 			out = append(out, entry)
 		}
 	}
 	return out
+}
+
+// errorHints maps known upstream error patterns to friendly next-step hints.
+// Patterns are case-insensitive substrings; the first match wins per response.
+// Hints exist because upstream errors from the native Rust layer (and a few
+// session.ts handlers) are intentionally terse snake_case codes — useful for
+// log correlation but unhelpful when an agent needs to recover. Adding hints
+// at the source (the fork) would help, but it also requires a fork release
+// every time a new failure mode is discovered, so we triage hints here.
+var errorHints = []struct {
+	pattern string
+	hint    string
+}{
+	{
+		pattern: "No coordinates resolved",
+		hint:    "Hint: call `get_ui_tree` or `find_element({ role: ..., label: ... })` first to discover the target element, then pass the resolved `labels` (or explicit `locs`) to this tool. Calling AX actions without prior observation is the most common cause of this error.",
+	},
+	{
+		pattern: "windows_menu_navigation_not_yet_implemented",
+		hint:    "Hint: on Windows, traverse menus manually — call `get_ui_tree`, locate the target `AXMenuItem`, then `click_element` on it. For File / Edit / View menus, sending the underline-letter accelerator (e.g. `alt+f` then `n`) via `key` is also reliable.",
+	},
+	{
+		pattern: "virtual_desktop_window_move_requires_internal_com_interface",
+		hint:    "Hint: Windows virtual-desktop mutations require an internal CGS COM interface that is not publicly available. This operation cannot be performed on Windows — surface the limitation to the user instead of retrying.",
+	},
+	{
+		pattern: "virtual_desktop_creation_requires_internal_com_interface",
+		hint:    "Hint: Windows virtual-desktop mutations require an internal CGS COM interface that is not publicly available. This operation cannot be performed on Windows — surface the limitation to the user instead of retrying.",
+	},
+}
+
+// appendErrorHints scans an isError result's content for known error patterns
+// and, on first match, appends the matching hint to the offending text block.
+// Returns true when the result was mutated so the caller knows to re-marshal.
+// The original text is preserved verbatim; the hint is appended with a blank
+// line separator so humans reading the log still see the upstream error first.
+func appendErrorHints(result map[string]any) bool {
+	content, ok := result["content"].([]any)
+	if !ok {
+		return false
+	}
+	for i, entry := range content {
+		obj, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := obj["type"].(string); t != "text" {
+			continue
+		}
+		text, _ := obj["text"].(string)
+		if text == "" {
+			continue
+		}
+		lower := strings.ToLower(text)
+		for _, h := range errorHints {
+			if strings.Contains(lower, strings.ToLower(h.pattern)) {
+				obj["text"] = text + "\n\n" + h.hint
+				content[i] = obj
+				result["content"] = content
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // logUpstreamError records the first text body of an upstream isError response

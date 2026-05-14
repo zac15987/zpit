@@ -841,7 +841,15 @@ func TestProxy_DenyAllDefaultDeniedTools(t *testing.T) {
 		t.Run(toolName, func(t *testing.T) {
 			// Add the tool to allowed_tools as well so that ONLY deny precedence
 			// (not the absence-from-allowlist path) explains the rejection.
-			policy := DefaultPolicy()
+			//
+			// Use the strict profile explicitly: this test asserts that every
+			// entry in the strict-profile DeniedTools list (the historical
+			// 16-tool denylist) is rejected by the proxy. The new default
+			// profile (standard) trims six of those entries — running this
+			// test against DefaultPolicy() would surface that intentional
+			// relaxation as a regression. Profile coverage for standard /
+			// none-script / trusted lives in policy_test.go.
+			policy, _ := ProfilePolicy(ProfileStrict)
 			policy.AllowedTools = append(policy.AllowedTools, toolName)
 
 			h := newTestProxy(policy)
@@ -1190,6 +1198,123 @@ func TestProxy_UpstreamRPCErrorObjectData(t *testing.T) {
 
 // TestProxy_UpstreamSuccessNotLogged verifies that a non-error upstream
 // response does NOT produce a Warn line — only failures should surface.
+// TestProxy_ErrorHintAppendedForKnownPattern verifies that when upstream
+// returns an isError response whose text matches a known fragile pattern
+// (e.g. `No coordinates resolved`), the proxy appends a friendly hint
+// before forwarding to the agent. The original text must be preserved
+// verbatim — the hint is additive, not a replacement.
+func TestProxy_ErrorHintAppendedForKnownPattern(t *testing.T) {
+	cases := []struct {
+		name      string
+		original  string
+		mustMatch string
+	}{
+		{
+			name:      "no_coordinates_resolved",
+			original:  "No coordinates resolved. Provide locs or valid labels.",
+			mustMatch: "get_ui_tree",
+		},
+		{
+			name:      "windows_menu_navigation",
+			original:  `{"error":"windows_menu_navigation_not_yet_implemented","bundle_id":"notepad.exe"}`,
+			mustMatch: "underline-letter accelerator",
+		},
+		{
+			name:      "virtual_desktop_move",
+			original:  `{"reason":"virtual_desktop_window_move_requires_internal_com_interface"}`,
+			mustMatch: "CGS COM interface",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestProxy(DefaultPolicy())
+			cancel, _ := h.run()
+			defer cancel()
+
+			upstreamResp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      float64(99),
+				"result": map[string]any{
+					"isError": true,
+					"content": []any{
+						map[string]any{"type": "text", "text": tc.original},
+					},
+				},
+			}
+			if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+				t.Fatalf("writeFrame upstream: %v", err)
+			}
+
+			resp, err := readFrame(h.claudeRead)
+			if err != nil {
+				t.Fatalf("readFrame claude: %v", err)
+			}
+			result, ok := resp["result"].(map[string]any)
+			if !ok || result["isError"] != true {
+				t.Fatalf("expected isError=true response, got: %v", resp)
+			}
+			content, ok := result["content"].([]any)
+			if !ok || len(content) == 0 {
+				t.Fatalf("expected content array, got: %v", result)
+			}
+			block, ok := content[0].(map[string]any)
+			if !ok {
+				t.Fatalf("expected content[0] to be object, got: %v", content[0])
+			}
+			text, _ := block["text"].(string)
+			if !strings.Contains(text, tc.original) {
+				t.Errorf("expected original text preserved, got: %q", text)
+			}
+			if !strings.Contains(text, tc.mustMatch) {
+				t.Errorf("expected hint containing %q, got: %q", tc.mustMatch, text)
+			}
+
+			h.claudeWrite.Close()
+			h.upToProxyWrite.Close()
+		})
+	}
+}
+
+// TestProxy_ErrorHintNotAppendedForUnknownPattern verifies that error
+// responses whose text doesn't match any known pattern pass through verbatim
+// — we don't want to bloat every upstream error with generic advice.
+func TestProxy_ErrorHintNotAppendedForUnknownPattern(t *testing.T) {
+	h := newTestProxy(DefaultPolicy())
+	cancel, _ := h.run()
+	defer cancel()
+
+	original := "open_application failed: activated=false hint=use AUMID"
+	upstreamResp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(99),
+		"result": map[string]any{
+			"isError": true,
+			"content": []any{
+				map[string]any{"type": "text", "text": original},
+			},
+		},
+	}
+	if err := writeFrame(h.upToProxyWrite, upstreamResp); err != nil {
+		t.Fatalf("writeFrame upstream: %v", err)
+	}
+
+	resp, err := readFrame(h.claudeRead)
+	if err != nil {
+		t.Fatalf("readFrame claude: %v", err)
+	}
+	result := resp["result"].(map[string]any)
+	content := result["content"].([]any)
+	block := content[0].(map[string]any)
+	text, _ := block["text"].(string)
+	if text != original {
+		t.Errorf("expected verbatim passthrough for unknown error pattern,\n  want: %q\n  got:  %q", original, text)
+	}
+
+	h.claudeWrite.Close()
+	h.upToProxyWrite.Close()
+}
+
 func TestProxy_UpstreamSuccessNotLogged(t *testing.T) {
 	h := newTestProxy(DefaultPolicy())
 	cancel, _ := h.run()

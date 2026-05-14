@@ -59,6 +59,35 @@ OS-level dependency: Accessibility permission (macOS) / UIAutomation registratio
 
 ---
 
+## Profiles
+
+Rather than hand-editing the full tool allowlist, denylist, and deny_keys, users pick a named profile and let `LoadPolicy` resolve the defaults. The `profile` field in `~/.zpit/desktop-policy.toml` is the only thing they need to set; any explicit field below it overrides that profile's preset.
+
+| Profile | Allowed | Denied | Deny keys | run_script | Focus | Use case |
+|---|---|---|---|---|---|---|
+| `read-only` | 18 (observation only) | 16 (same as strict) | 0 | false | strict | "Just look at my screen" diagnosis. No clicks, keys, app activation, or clipboard writes. |
+| `strict` | 42 | 16 | 8 (incl. `alt+f4`) | false | strict | Maximum restrictions while still functional. Default before this change; useful when you are unsure what the agent will need. |
+| `standard` *(default)* | 48 (= strict + 6 audit-only) | 10 (= strict − 6) | 7 (no `alt+f4`) | false | strict | Daily automation. Drops audit-granularity blocks (`snapshot`, `multi_edit`, `multi_select`, `resize_window`, `list_spaces`, `get_active_space`) and allows `alt+f4`. All shell / filesystem / registry / process_kill escape hatches still blocked. |
+| `none-script` | 52 (= standard + 4 virtual-desktop) | 6 (escape hatches only) | 3 (lock-screen / SAS only) | false | best_effort | Trust the agent on the GUI but never let it reach shell / filesystem / registry / process_kill. Opens `win+r` and `cmd+space` — the agent can launch any GUI app but cannot execute commands directly. |
+| `trusted` | `["*"]` (wildcard) | 0 | 0 | true | none | Equivalent to mounting `computer-use-mcp` without the proxy. Use only when you fully trust the task and the session. |
+
+### Resolution rules
+
+1. **Omitted `profile` field** → `standard` (the shipping default).
+2. **Unknown profile name** → log a warning at Warn level and fall back to `standard`. A typo cannot brick the agent.
+3. **Explicit field overrides the preset.** `BurntSushi/toml`'s `MetaData.IsDefined` is the discriminator — a field that the file does not write inherits from the preset, even if the resulting value is the Go zero value (`false`, `""`, `nil`). Setting `denied_tools = []` is a valid override; commenting the line out is not.
+4. **Wildcard `*` in `AllowedTools`.** A single `"*"` entry bypasses the allowlist check entirely; only `DeniedTools` still gates. Used by `trusted`. Mixing `"*"` with other tool names is allowed but redundant.
+
+### Adding a new profile
+
+Profiles live in `profilePresets` in `internal/desktop/policy.go`. Adding one requires a code change (and a doc update here). The fence is deliberate: profile presets ship with the binary so a malicious or mistaken policy file cannot define a new ultra-permissive profile and have the proxy accept it. The same rule applies to the default `deny_keys` set.
+
+### Backward compatibility
+
+Pre-profile policy files (no `profile` field, full explicit `allowed_tools` / `denied_tools` / `deny_keys` lists) behave exactly as before: `LoadPolicy` defaults the profile to `standard`, then every explicit field overrides the standard preset back to the user's old values. The result equals the historical `DefaultPolicy()` output. No migration is required.
+
+---
+
 ## Tool-by-tool allowlist justification
 
 **Pointer (12 tools)** — `move_mouse`, `click`, `double_click`, `right_click`, `middle_click`, `scroll`, `drag`, `hover`, `click_and_hold`, `release`, `multi_click`, `mouse_position`. Core desktop-control primitives. No shell execution, no file I/O. Parameter policy (focus-strategy) is applied before forwarding.

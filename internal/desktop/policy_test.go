@@ -175,25 +175,21 @@ func TestLoadPolicy_MalformedTOML(t *testing.T) {
 	}
 }
 
-// TestLoadPolicy_DefaultIncludesDeniedTools verifies the auto-created policy
-// includes the 16 default denied tools and that decoding fills DeniedTools
-// from the template correctly.
-func TestLoadPolicy_DefaultIncludesDeniedTools(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, PolicyFileName)
-
-	policy, created, err := LoadPolicy(path, discardLogger())
-	if err != nil {
-		t.Fatalf("LoadPolicy: %v", err)
-	}
-	if !created {
-		t.Fatal("expected created=true")
+// TestStrictProfileIncludesDeniedTools verifies that the `strict` profile
+// preset still pins the historical 16-tool denylist exactly. The default
+// profile is now `standard`, which trims six of those entries — this test
+// guards the strict preset against accidental drift.
+func TestStrictProfileIncludesDeniedTools(t *testing.T) {
+	policy, ok := ProfilePolicy(ProfileStrict)
+	if !ok {
+		t.Fatal("ProfilePolicy(strict) returned ok=false")
 	}
 
 	if len(policy.DeniedTools) != 16 {
-		t.Errorf("DeniedTools length: got %d, want 16", len(policy.DeniedTools))
+		t.Errorf("strict DeniedTools length: got %d, want 16", len(policy.DeniedTools))
 	}
-	// Spot-check a few entries.
+	// Spot-check the escape-hatch entries that all profiles below `trusted` must
+	// keep blocking, plus resize_window (strict-specific — standard relaxes it).
 	wantInList := []string{"run_script", "filesystem", "process_kill", "registry", "resize_window"}
 	for _, w := range wantInList {
 		found := false
@@ -204,8 +200,207 @@ func TestLoadPolicy_DefaultIncludesDeniedTools(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("DeniedTools missing %q", w)
+			t.Errorf("strict DeniedTools missing %q", w)
 		}
+	}
+}
+
+// TestLoadPolicy_DefaultProfileIsStandard verifies that when the user does
+// not set a `profile` field, LoadPolicy resolves to the `standard` preset —
+// six tools moved out of the deny list, alt+f4 removed from deny_keys.
+func TestLoadPolicy_DefaultProfileIsStandard(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	// Empty file → profile field absent → falls back to standard.
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	policy, _, err := LoadPolicy(path, discardLogger())
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+
+	if policy.Profile != ProfileStandard {
+		t.Errorf("Profile: got %q, want %q", policy.Profile, ProfileStandard)
+	}
+	if len(policy.DeniedTools) != 10 {
+		t.Errorf("standard DeniedTools length: got %d, want 10", len(policy.DeniedTools))
+	}
+	for _, key := range policy.DenyKeys {
+		if key == "alt+f4" {
+			t.Errorf("standard DenyKeys should NOT include alt+f4")
+		}
+	}
+	for _, tool := range policy.AllowedTools {
+		if tool == "resize_window" {
+			// Spot-check that one of the six audit-only tools is in the allowlist
+			// (it was in the strict denied list).
+			return
+		}
+	}
+	t.Errorf("standard AllowedTools should include resize_window")
+}
+
+// TestLoadPolicy_AppliesNamedProfile verifies that setting `profile = "read-only"`
+// pulls the observation-only preset — pointer / keyboard tools are absent
+// from AllowedTools.
+func TestLoadPolicy_AppliesNamedProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	content := `profile = "read-only"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	policy, _, err := LoadPolicy(path, discardLogger())
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+
+	if policy.Profile != ProfileReadOnly {
+		t.Errorf("Profile: got %q, want %q", policy.Profile, ProfileReadOnly)
+	}
+	// read-only must NOT include any state-mutating tool.
+	mutators := []string{"left_click", "type", "key", "click_element", "set_value", "write_clipboard"}
+	for _, m := range mutators {
+		for _, t2 := range policy.AllowedTools {
+			if t2 == m {
+				t.Errorf("read-only AllowedTools must not include %q", m)
+			}
+		}
+	}
+	// read-only must include screenshot (observation).
+	found := false
+	for _, t2 := range policy.AllowedTools {
+		if t2 == "screenshot" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("read-only AllowedTools must include screenshot")
+	}
+}
+
+// TestLoadPolicy_ExplicitFieldsOverrideProfile verifies that an explicitly
+// defined field in the TOML file wins over the chosen profile's preset value.
+func TestLoadPolicy_ExplicitFieldsOverrideProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	// strict has 8 deny_keys including alt+f4. The explicit empty list must win.
+	content := `profile = "strict"
+deny_keys = []
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	policy, _, err := LoadPolicy(path, discardLogger())
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+
+	if policy.Profile != ProfileStrict {
+		t.Errorf("Profile: got %q, want %q", policy.Profile, ProfileStrict)
+	}
+	if len(policy.DenyKeys) != 0 {
+		t.Errorf("explicit deny_keys=[] should win over strict preset; got %v", policy.DenyKeys)
+	}
+	// Sanity: AllowedTools was NOT overridden, so it should still be strict's 42.
+	if len(policy.AllowedTools) != 42 {
+		t.Errorf("strict AllowedTools should remain 42 when only deny_keys was overridden; got %d", len(policy.AllowedTools))
+	}
+}
+
+// TestLoadPolicy_UnknownProfileFallsBackToStandard verifies that a typo in
+// the `profile` field logs a warning and falls back to standard rather than
+// bricking the agent.
+func TestLoadPolicy_UnknownProfileFallsBackToStandard(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	content := `profile = "bogus-profile-name"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := bufLogger(&buf)
+
+	policy, _, err := LoadPolicy(path, logger)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+
+	if policy.Profile != ProfileStandard {
+		t.Errorf("Profile: got %q, want fallback to %q", policy.Profile, ProfileStandard)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("bogus-profile-name")) {
+		t.Errorf("expected warning log to mention the unknown profile name; got: %s", buf.String())
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("falling back")) {
+		t.Errorf("expected warning log to mention fallback; got: %s", buf.String())
+	}
+}
+
+// TestLoadPolicy_OmittedFieldsRetainProfileDefaults verifies that when only
+// `profile = "trusted"` is set with no overrides, every field inherits the
+// trusted preset — including wildcard AllowedTools and AllowRunScript=true.
+func TestLoadPolicy_OmittedFieldsRetainProfileDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, PolicyFileName)
+
+	content := `profile = "trusted"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	policy, _, err := LoadPolicy(path, discardLogger())
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+
+	if policy.Profile != ProfileTrusted {
+		t.Errorf("Profile: got %q, want %q", policy.Profile, ProfileTrusted)
+	}
+	if !policy.AllowRunScript {
+		t.Error("trusted profile should set AllowRunScript=true")
+	}
+	if len(policy.AllowedTools) != 1 || policy.AllowedTools[0] != WildcardTool {
+		t.Errorf("trusted AllowedTools should be [%q]; got %v", WildcardTool, policy.AllowedTools)
+	}
+	if len(policy.DeniedTools) != 0 {
+		t.Errorf("trusted DeniedTools should be empty; got %v", policy.DeniedTools)
+	}
+	if len(policy.DenyKeys) != 0 {
+		t.Errorf("trusted DenyKeys should be empty; got %v", policy.DenyKeys)
+	}
+	if policy.KeyboardFocusStrategy != "none" {
+		t.Errorf("trusted KeyboardFocusStrategy should be 'none'; got %q", policy.KeyboardFocusStrategy)
+	}
+}
+
+// TestPolicy_IsToolAllowed_Wildcard verifies that AllowedTools = ["*"]
+// permits every tool name (the trusted profile relies on this so users do
+// not need to enumerate every upstream tool).
+func TestPolicy_IsToolAllowed_Wildcard(t *testing.T) {
+	p := Policy{AllowedTools: []string{WildcardTool}}
+	for _, name := range []string{"screenshot", "run_script", "filesystem", "anything_random_xyz"} {
+		if !p.IsToolAllowed(name) {
+			t.Errorf("IsToolAllowed(%q) under wildcard: got false, want true", name)
+		}
+	}
+	// Empty allowlist is still empty even when wildcard is absent.
+	pEmpty := Policy{AllowedTools: []string{}}
+	if pEmpty.IsToolAllowed("screenshot") {
+		t.Error("empty AllowedTools must not permit anything")
 	}
 }
 

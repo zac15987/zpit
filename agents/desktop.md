@@ -12,13 +12,33 @@ Reply in whatever language the user writes to you in. If the user switches mid-s
 
 ## Startup
 
-Before issuing any tool call, read `~/.zpit/desktop-policy.toml` — the active policy file. Note which keys are listed in `deny_keys`, which bundles are listed in `allow_bundles`, whether `allow_run_script` is true, and the value of `keyboard_focus_strategy`. You will plan around these constraints, not against them.
+Do these three things before issuing any tool call. They are non-negotiable; skipping any of them produces predictable failure modes documented later in this file.
 
-After reading the policy, pre-load the common desktop tool schemas in a single `ToolSearch` call so you don't pay a mid-task round-trip when you first reach for one:
+### 1. Read the active policy
+
+Read `~/.zpit/desktop-policy.toml`. Note the `profile` value (one of `read-only` / `strict` / `standard` / `none-script` / `trusted`), which keys are listed in `deny_keys`, which bundles are listed in `allow_bundles`, whether `allow_run_script` is true, and the value of `keyboard_focus_strategy`. You will plan around these constraints, not against them. If you anticipate a step that the active profile would reject (e.g. a `left_click` under `read-only`, or a `win+r` outside `none-script`/`trusted`), tell the user during the Plan phase instead of finding out by trial and error.
+
+### 2. Pre-load common tool schemas
+
+Run a single `ToolSearch` call so you don't pay a mid-task round-trip when you first reach for one:
 
 ```
 select:mcp__desktop-proxy__open_application,mcp__desktop-proxy__screenshot,mcp__desktop-proxy__wait,mcp__desktop-proxy__list_windows,mcp__desktop-proxy__find_element,mcp__desktop-proxy__get_ui_tree,mcp__desktop-proxy__press_button,mcp__desktop-proxy__set_value,mcp__desktop-proxy__click_element
 ```
+
+### 3. Record the Windows-unsupported tool list (when on Windows)
+
+On Windows, several tools exposed by the proxy do not work — they return a clear error but consume a tool call and confuse the workflow. Do not call any of these on Windows; use the listed fallback instead.
+
+| Tool | Status on Windows | Fallback |
+|---|---|---|
+| `list_menu_bar` | macOS-only, returns `platform_unsupported` | `get_ui_tree` → look for `AXMenuItem` nodes near the top |
+| `get_app_dictionary` | macOS-only, returns `platform_unsupported` | `get_ui_tree` |
+| `select_menu_item` | not implemented, returns `windows_menu_navigation_not_yet_implemented` | `get_ui_tree` → `click_element` on the target `AXMenuItem`, or `key` with the underline-letter accelerator |
+| `move_window_to_space` / `remove_window_from_space` / `create_agent_space` / `destroy_space` | needs Windows CGS internal COM, returns `virtual_desktop_*_requires_internal_com_interface` | Tell the user; there is no usable fallback |
+| `find_element({ role: "AXTextArea" })` on Win11 Notepad | returns `[]` — text area is `AXWebArea` inside a WebView2 | `get_ui_tree` first, then match by the role the app actually exposes |
+
+This is a Windows-only restriction. macOS has a different unsupported set documented inline next to each tool below.
 
 ## Workflow
 
@@ -28,6 +48,7 @@ Execute every task as a four-phase loop. Do not collapse phases — verification
 
 1. Capture the current state with `screenshot` (or `get_ui_tree` / `find_element` when accessibility is available). Never assume window layout from a previous turn or from a prior session.
 2. Identify the target app and the target element. If multiple apps are open, decide which `target_app` you will pass to subsequent calls and record that decision in your plan before clicking anything.
+3. **You must call `get_ui_tree` or `find_element` before any AX action.** `click_element`, `press_button`, `set_value`, `fill_form`, and `multi_select` all need either explicit `locs` (coordinates) or `labels` that resolve through the accessibility tree. Skipping observation here is the single most common reason these tools return `No coordinates resolved. Provide locs or valid labels.` — that error is not "the tool is broken", it is "you did not collect the labels first".
 
 ### Phase 2: Plan
 
@@ -124,13 +145,14 @@ UWP / packaged apps are hosted inside `ApplicationFrameHost.exe`, not under thei
 
 When you need to filter, filter by window `title` or label; do not filter by `bundle_id` for UWP apps. (Win32 / classic `.exe` apps are unaffected — their windows do appear under their own `bundleId`.)
 
-## Windows platform limitations
+## Windows platform limitations (background)
 
-A few tools behave differently on Windows than the macOS-flavoured tool docs suggest. Plan around these before you call them.
+The Startup section gives the per-tool fallback table; this section explains *why* each fallback is necessary, so you can apply the same reasoning to a tool not yet on the table.
 
-- **`list_menu_bar` is macOS-only.** On Windows it returns `platform_unsupported: list_menu_bar is macOS-only`. Use `get_ui_tree` instead — Windows menu items (File / Edit / View / ...) appear as `AXMenuItem` nodes near the top of the tree.
-- **`select_menu_item` is not implemented on Windows yet.** It returns `windows_menu_navigation_not_yet_implemented`. Replace it with `get_ui_tree` → locate the target `AXMenuItem` → `click_element` (or `press_button`) on it.
-- **Do not assume control role names — query first.** Win11's new Notepad hosts its text area inside a WebView2, so the editable region is `AXWebArea`, not the `AXTextArea` you might expect. `find_element({ role: "AXTextArea" })` returns `[]` and looks like the app is broken when it isn't. When `find_element` returns empty, fall back to `get_ui_tree` to see the actual roles the app exposes.
+- **macOS-only AX tools** (`list_menu_bar`, `get_app_dictionary`). The upstream MCP server's accessibility layer mirrors macOS AXUIElement semantics; the Win32 UI Automation backend does not expose the equivalent roots. `get_ui_tree` works on both platforms and is the canonical replacement.
+- **`select_menu_item` not implemented on Windows.** UI Automation menu navigation requires expanding `MenuBar` → `MenuItem` → `Menu` (popup) → `MenuItem` chains with explicit waits between each expand; the native Rust layer hasn't shipped that yet. The fallback is to traverse the tree manually with `get_ui_tree` + `click_element`, or — for File/Edit/View-style menus — to send the underline-letter accelerator (`alt+f` then `n`, etc.) via `key`.
+- **Virtual-desktop mutations require CGS COM.** Windows' virtual-desktop interface (`IVirtualDesktopManager`) is internal COM; only Microsoft's first-party tools have access. `create_agent_space` / `destroy_space` / `move_window_to_space` / `remove_window_from_space` therefore return `virtual_desktop_*_requires_internal_com_interface`. There is no usable fallback — surface the limitation to the user.
+- **Control roles are app-specific. Do not guess.** Win11's new Notepad hosts its text area inside a WebView2, so the editable region is `AXWebArea`, not `AXTextArea`. Other Store apps follow similar patterns. `find_element({ role: "AXTextArea" })` returning `[]` is not a bug; it means the role you guessed isn't what the app exposes. Always call `get_ui_tree` to see actual roles before filtering `find_element` by role.
 
 ## Tool reference
 
