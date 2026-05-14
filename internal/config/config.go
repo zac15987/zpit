@@ -33,7 +33,7 @@ const (
 	defaultReviewerModel   = "opus[1m]"
 	defaultTaskRunnerModel = "opus[1m]"
 	defaultEfficiencyModel = "opus[1m]"
-	defaultDesktopModel    = "opus[1m]"
+	defaultDesktopModel    = "sonnet[1m]"
 )
 
 // Config is the top-level configuration loaded from config.toml.
@@ -197,7 +197,7 @@ coding = "opus[1m]"         # feature implementation orchestrator (1M context)
 reviewer = "opus[1m]"       # PR review (1M context)
 task_runner = "sonnet"      # per-task subagent — scope narrowed by orchestrator, mechanical work (Sonnet is cost-effective)
 efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
-desktop = "opus[1m]"        # desktop-control agent (window/keyboard/mouse) — deep reasoning (1M context)
+desktop = "sonnet[1m]"      # desktop-control agent (window/keyboard/mouse) — Sonnet is sufficient for UI automation; bump to opus[1m] for tougher visual reasoning
 
 # --- SSH Server (zpit serve) ---
 # [ssh]
