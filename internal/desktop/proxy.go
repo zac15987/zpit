@@ -443,8 +443,12 @@ var errorHints = []struct {
 	hint    string
 }{
 	{
+		pattern: "No element matches",
+		hint:    "Hint: this error means you tried an AX action without first observing the target window. Pick a label from the `similar` array above if one of those candidates matches your intent, or call `get_ui_tree` to inspect the full element tree before retrying with the correct role/label. Per desktop.md Phase 1, AX actions (`click_element` / `press_button` / `set_value` / `fill_form`) require prior observation.",
+	},
+	{
 		pattern: "No coordinates resolved",
-		hint:    "Hint: call `get_ui_tree` or `find_element({ role: ..., label: ... })` first to discover the target element, then pass the resolved `labels` (or explicit `locs`) to this tool. Calling AX actions without prior observation is the most common cause of this error.",
+		hint:    "Hint: call `get_ui_tree` or `find_element({ role: ..., label: ... })` first to discover the target element, then pass the resolved `labels` (or explicit `locs`) to this tool. Calling batch AX actions (`multi_select` / `multi_edit`) without prior observation is the most common cause of this error.",
 	},
 	{
 		pattern: "windows_menu_navigation_not_yet_implemented",

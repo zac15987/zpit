@@ -1215,6 +1215,11 @@ func TestProxy_ErrorHintAppendedForKnownPattern(t *testing.T) {
 			mustMatch: "get_ui_tree",
 		},
 		{
+			name:      "no_element_matches",
+			original:  `{"error":"No element matches role=\"AXButton\" label=\"foo\"","similar":[]}`,
+			mustMatch: "similar",
+		},
+		{
 			name:      "windows_menu_navigation",
 			original:  `{"error":"windows_menu_navigation_not_yet_implemented","bundle_id":"notepad.exe"}`,
 			mustMatch: "underline-letter accelerator",
