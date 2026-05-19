@@ -481,23 +481,35 @@ Caveats of the SendInput path:
 - Requires the target window to be foreground at click time. `session.ts`'s `ensureFocusV4` already runs before every `press_button`, so production callers are covered.
 - Loses theoretical UIA Invoke semantics for keyboard-accelerator-only commands (commands bound to a button via UIA but with no visible-click handler). Empirically irrelevant for normal GUI buttons.
 
-### `set_value` is fine — the 96 s case was cross-IL, not the same root cause
+### `set_value` and `get_ui_tree` 76 s / 96 s session timings: not reproducible, cause unknown
 
-Initial doc draft assumed `set_value` had the same risk (`IUIAutomationValuePattern.SetValue` carries the same Microsoft "should be async — but provider-dependent" contract). Targeted testing showed it does not, at least against Windows Common File Dialog:
+The same May 19 session that surfaced the press_button modal-blocking also showed `get_ui_tree(wid=Open dialog, depth=4)` taking 76 s (user-interrupted) and the earlier May 14 session showed `set_value` on the File name field taking 96 s. Initial speculation attributed both to cross-IL UIA proxy slowdown (see §7), but the user clarified both sessions were running same-IL (no elevated zpit). That hypothesis is therefore retracted.
 
-| Test condition | Same-IL (this machine) |
-|---|---|
-| `set_value` AXTextField "File name:" = real existing path (matches 96 s session call) | 235 ms |
-| `set_value` AXComboBox "File name:" = real existing path | 193 ms |
-| `set_value` AXComboBox "File name:" = empty (clear) | 191 ms |
+Targeted reproduction attempts under matching conditions — same-IL, empty project, dialog defaulting to Documents folder, `*.kpr` filter, real-existing path identical to the session call — failed to surface anything close:
 
-The session's 96 s is consistent with **cross-IL UIA proxy slowdown** (see §7), not a SetValue-synchronous-with-modal pattern. Cross-IL ratio for `set_value` (96 000 / 235 ≈ 408×) is steeper than for `get_ui_tree` (76 000 / 601 ≈ 126×) because `set_value` makes more internal COM calls per invocation (find element + read-only check + pattern fetch + SetValue), each paying the proxy round-trip. Common File Dialog's `IValueProvider::SetValue` does return promptly — Microsoft's "should be async" contract is honored here.
+| Call | Stress-test stats (5 iters, same-IL) | Session timing |
+|---|---|---|
+| `find_element` AXButton on main window | 96–152 ms (p50 103 ms) | n/a |
+| `get_ui_tree` main window d=6 | 166–176 ms | n/a |
+| `get_ui_tree` Open dialog d=4 (160 nodes) | 595–633 ms | **76 000 ms** |
+| `set_value` AXTextField "File name:" = real path | 189–194 ms (max var 5 ms across 5 iters) | **96 000 ms** |
+| `find_element` Cancel button | 284–293 ms | n/a |
 
-Implication: `set_value` does NOT need the SendInput rewrite `press_button` got. The mitigation is at a different layer — avoid running zpit elevated against Medium-IL targets, or fall back to `click_element` + `key`/`type` if you observe a UIA write taking >5 s. `agents/desktop.md` carries the agent-side guidance.
+The MCP-layer path was also exercised end-to-end (spawned `dist/server.js` as subprocess, talked JSON-RPC over stdio exactly like the desktop-proxy does) — `set_value` and `get_ui_tree` measured identically to the direct NAPI bench. `press_button` shows a one-shot ~5 s cold-start on the first call (the `ensureFocusV4` → `activateApp` → `activateWindow` Win32 dance bringing the app from background to foreground), then drops to 24–26 ms — same cold-start pattern that's visible in the session log around 02:23:50 (`activate_window` 5.19 s) and 02:24:09 (`left_click` 5.26 s). That cold-start is not the 76 s / 96 s mystery.
 
-### Cross-IL UIA proxy slowdown as a compounding factor
+Plausible-but-unverifiable causes for the 76 s / 96 s:
 
-When zpit runs elevated (High IL) and the agent operates a Medium-IL app, every UIA RPC crosses the IL boundary via the system's mssproxy. The 1.2.2 FindFirst fast path partially mitigates this for `press_button`'s find phase; the 1.2.3 SendInput fix bypasses UIA entirely for `press_button` so cross-IL no longer matters there. Other tools (`get_ui_tree`, `find_element`, `set_value`, etc.) still pay the cross-IL tax. §7 of this document covers the elevated-WT workaround and its caveats — preferred mitigation is to keep zpit and the target at matching IL when possible.
+- **Transient external load at the moment of the call** — antivirus full-disk scan, Windows Search indexer rebuild, OneDrive sync, Windows Update background download. Any of these can stall UIA queries that touch the Shell namespace by holding NTFS / Shell-extension locks.
+- **A Shell extension hook on path validation** that wasn't active at reproduction time. Common Item Dialog routes path entry through registered Shell namespace handlers; a buggy extension could synchronously block.
+- **KV Studio internal state at the moment** — some one-time cache miss / first-open-after-launch initialization that doesn't repeat.
+
+None of these are actionable from zpit-desktop-mcp's side. **`set_value` is therefore not being rewritten preemptively**; the working hypothesis is the 96 s was a transient environmental factor, not a `ValuePattern.SetValue` bug. If the same long timing reappears, capture: (a) Process Explorer snapshot at the time, (b) Resource Monitor disk/CPU/network, (c) Windows Event Log around the call, (d) whether it reproduces back-to-back or only once after some idle period.
+
+### Activate-app cold start: a smaller, related observation
+
+The MCP-layer bench surfaced one repeatable pattern: the **first** `press_button` / `left_click` / `activate_window` after a long idle period (or after the target app sat in the background) measures ~5 s. The cost is in `ensureFocusV4` → `native.activateApp` → `AttachThreadInput` + `SetForegroundWindow`, which Windows throttles when a background app tries to steal focus (the well-known `LockSetForegroundWindow` / foreground-lock-timeout dance). Subsequent calls drop to <50 ms once the target is already in the foreground.
+
+This is documented Win32 behavior, not a bug. It surfaces in the session at the same magnitude (5.19 s / 5.26 s before any modal interaction). If you ever need to optimize an interactive agent loop that wakes a background app frequently, the workaround is to keep the target activated; otherwise, accept the ~5 s tax on the first call.
 
 ### Related code / docs
 
