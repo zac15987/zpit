@@ -1,10 +1,19 @@
 package terminal
 
 import (
+	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func init() {
+	// Make exe resolution deterministic so tests can assert on bare
+	// "pwsh"/"powershell" instead of whatever absolute path the host happens
+	// to resolve to. Real builds use exec.LookPath via the production default.
+	exePathLookup = func(name string) (string, error) { return name, nil }
+}
 
 // --- Existing tests updated for new BuildWindowsArgs signature (profile="", shell="") ---
 
@@ -29,7 +38,7 @@ func TestBuildWindowsArgs_NewWindow(t *testing.T) {
 func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "clarifier"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
-		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "clarifier"}
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "clarifier", "claude", "--agent", "clarifier"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -38,7 +47,7 @@ func TestBuildWindowsArgs_WithExtraArgs(t *testing.T) {
 func TestBuildWindowsArgs_AgentModeWithInitMsg(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "", "", []string{"--agent", "coding", "init message"})
 	want := []string{"new-tab", "-d", "/path", "--title", "Test", "--",
-		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "coding", "init message"}
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "coding", "claude", "--agent", "coding", "init message"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -77,7 +86,7 @@ func TestBuildWindowsArgs_WithProfile_NewWindow(t *testing.T) {
 func TestBuildWindowsArgs_WithProfile_AgentPwsh(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "PowerShell 7", "pwsh", []string{"--agent", "coding"})
 	want := []string{"new-tab", "-p", "PowerShell 7", "-d", "/path", "--title", "Test", "--",
-		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "claude", "--agent", "coding"}
+		"pwsh", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "coding", "claude", "--agent", "coding"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -86,7 +95,7 @@ func TestBuildWindowsArgs_WithProfile_AgentPwsh(t *testing.T) {
 func TestBuildWindowsArgs_WithProfile_AgentPowershell(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "Windows PowerShell", "powershell", []string{"--agent", "coding"})
 	want := []string{"new-tab", "-p", "Windows PowerShell", "-d", "/path", "--title", "Test", "--",
-		"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "claude", "--agent", "coding"}
+		"powershell", "-NoProfile", "-File", ".claude\\hooks\\zpit-env.ps1", "coding", "claude", "--agent", "coding"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -95,7 +104,7 @@ func TestBuildWindowsArgs_WithProfile_AgentPowershell(t *testing.T) {
 func TestBuildWindowsArgs_WithProfile_AgentCmd(t *testing.T) {
 	args := BuildWindowsArgs("Test", "/path", "new_tab", "Command Prompt", "cmd", []string{"--agent", "coding"})
 	want := []string{"new-tab", "-p", "Command Prompt", "-d", "/path", "--title", "Test", "--",
-		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "claude", "--agent", "coding"}
+		"cmd", "/c", ".claude\\hooks\\zpit-env.cmd", "coding", "claude", "--agent", "coding"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -203,7 +212,7 @@ func TestBuildTmuxArgs_NewPane(t *testing.T) {
 func TestBuildTmuxArgs_AgentMode(t *testing.T) {
 	args := BuildTmuxArgs("ase", "/mnt/d/Projects/ASE", "new_window", []string{"--agent", "clarifier"})
 	want := []string{"new-window", "-n", "ase", "-c", "/mnt/d/Projects/ASE",
-		"ZPIT_AGENT=1 claude --agent clarifier"}
+		"ZPIT_AGENT=1 ZPIT_AGENT_TYPE=clarifier claude --agent clarifier"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
 	}
@@ -342,12 +351,35 @@ func TestNeedsAgentEnv(t *testing.T) {
 		{"reviewer", []string{"--agent", "reviewer"}, true},
 		{"efficiency skipped", []string{"--agent", "efficiency"}, false},
 		{"efficiency with channel", []string{"--agent", "efficiency", "--channel-enabled"}, false},
+		{"desktop skipped", []string{"--agent", "desktop"}, false},
 		{"agent flag without value", []string{"--agent"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := needsAgentEnv(tt.args); got != tt.want {
 				t.Errorf("needsAgentEnv(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetAgentRole(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"nil", nil, ""},
+		{"empty", []string{}, ""},
+		{"no agent", []string{"--resume"}, ""},
+		{"clarifier", []string{"--agent", "clarifier"}, "clarifier"},
+		{"coding with init", []string{"--agent", "coding", "init msg"}, "coding"},
+		{"agent flag without value", []string{"--agent"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getAgentRole(tt.args); got != tt.want {
+				t.Errorf("getAgentRole(%v) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -377,5 +409,159 @@ func TestBuildTmuxArgs_EfficiencyNoPrefix(t *testing.T) {
 	want := []string{"new-window", "-n", "proj", "-c", "/path", "claude --agent efficiency"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+// --- Lazygit / claude update arg builder tests ---
+
+func TestBuildLazygitWindowsArgs_NewTabNoProfile(t *testing.T) {
+	args := BuildLazygitWindowsArgs("lazygit", "D:/Projects/Foo", "new_tab", "")
+	want := []string{"new-tab", "-d", "D:/Projects/Foo", "--title", "lazygit", "--", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildLazygitWindowsArgs_NewWindowWithProfile(t *testing.T) {
+	args := BuildLazygitWindowsArgs("lazygit", "/path", "new_window", "PowerShell 7")
+	want := []string{"-w", "new", "-p", "PowerShell 7", "-d", "/path", "--title", "lazygit", "--", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildLazygitTmuxArgs_NewWindow(t *testing.T) {
+	args := BuildLazygitTmuxArgs("lazygit", "/mnt/d/proj", "new_window")
+	want := []string{"new-window", "-n", "lazygit", "-c", "/mnt/d/proj", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildLazygitTmuxArgs_NewPane(t *testing.T) {
+	args := BuildLazygitTmuxArgs("lazygit", "/mnt/d/proj", "new_pane")
+	want := []string{"split-window", "-h", "-c", "/mnt/d/proj", "lazygit"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateWindowsArgs_NewTab(t *testing.T) {
+	args := BuildClaudeUpdateWindowsArgs("new_tab", "")
+	want := []string{"new-tab", "--title", "claude update", "--",
+		"cmd", "/c", "claude update & pause"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateWindowsArgs_NewWindowWithProfile(t *testing.T) {
+	args := BuildClaudeUpdateWindowsArgs("new_window", "CMD")
+	want := []string{"-w", "new", "-p", "CMD", "--title", "claude update", "--",
+		"cmd", "/c", "claude update & pause"}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateTmuxArgs_NewWindow(t *testing.T) {
+	args := BuildClaudeUpdateTmuxArgs("new_window")
+	want := []string{"new-window", "-n", "claude-update",
+		`claude update; read -n1 -r -p "Press any key to close..."`}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+func TestBuildClaudeUpdateTmuxArgs_NewPane(t *testing.T) {
+	args := BuildClaudeUpdateTmuxArgs("new_pane")
+	want := []string{"split-window", "-h",
+		`claude update; read -n1 -r -p "Press any key to close..."`}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("got %v, want %v", args, want)
+	}
+}
+
+// --- buildShellWrapper fallback + ShellResolutionWarning tests ---
+
+// withFailingLookup swaps exePathLookup to always return an error and resets
+// the cache so the failure path actually runs. Restores both on cleanup.
+func withFailingLookup(t *testing.T) {
+	t.Helper()
+	origLookup := exePathLookup
+	exePathLookup = func(string) (string, error) { return "", errors.New("not found") }
+	exePathCache = sync.Map{}
+	t.Cleanup(func() {
+		exePathLookup = origLookup
+		exePathCache = sync.Map{}
+	})
+}
+
+func TestBuildShellWrapper_FallsBackToCmdWhenLookupFails(t *testing.T) {
+	withFailingLookup(t)
+	cases := []string{"pwsh", "powershell"}
+	wantEnv := []string{"cmd", "/c", ".claude\\hooks\\zpit-env.cmd"}
+	wantExit := []string{"cmd", "/c", ".claude\\hooks\\zpit-exit.cmd"}
+	for _, shell := range cases {
+		t.Run(shell+"/env", func(t *testing.T) {
+			got := buildShellWrapper(shell, "zpit-env")
+			if !reflect.DeepEqual(got, wantEnv) {
+				t.Errorf("got %v, want %v", got, wantEnv)
+			}
+		})
+		t.Run(shell+"/exit", func(t *testing.T) {
+			got := buildShellWrapper(shell, "zpit-exit")
+			if !reflect.DeepEqual(got, wantExit) {
+				t.Errorf("got %v, want %v", got, wantExit)
+			}
+		})
+	}
+}
+
+func TestShellResolutionWarning(t *testing.T) {
+	t.Run("resolved/empty", func(t *testing.T) {
+		// Identity lookup is installed by init() — pwsh/powershell resolve.
+		exePathCache = sync.Map{}
+		t.Cleanup(func() { exePathCache = sync.Map{} })
+		for _, shell := range []string{"pwsh", "powershell", "cmd", "", "unknown"} {
+			if got := ShellResolutionWarning(shell); got != "" {
+				t.Errorf("ShellResolutionWarning(%q) = %q, want empty", shell, got)
+			}
+		}
+	})
+	t.Run("unresolved/warns", func(t *testing.T) {
+		withFailingLookup(t)
+		for _, shell := range []string{"pwsh", "powershell"} {
+			got := ShellResolutionWarning(shell)
+			if !strings.Contains(got, shell) || !strings.Contains(got, "cmd") {
+				t.Errorf("ShellResolutionWarning(%q) = %q, want msg mentioning %q and fallback", shell, got, shell)
+			}
+		}
+		// Non-PowerShell shells stay quiet even when lookup would fail.
+		for _, shell := range []string{"cmd", "", "unknown"} {
+			if got := ShellResolutionWarning(shell); got != "" {
+				t.Errorf("ShellResolutionWarning(%q) = %q, want empty", shell, got)
+			}
+		}
+	})
+}
+
+func TestResolveShellExe_CachesLookup(t *testing.T) {
+	origLookup := exePathLookup
+	calls := 0
+	exePathLookup = func(name string) (string, error) {
+		calls++
+		return name, nil
+	}
+	exePathCache = sync.Map{}
+	t.Cleanup(func() {
+		exePathLookup = origLookup
+		exePathCache = sync.Map{}
+	})
+	for i := 0; i < 5; i++ {
+		resolveShellExe("pwsh")
+	}
+	if calls != 1 {
+		t.Errorf("expected exePathLookup to be called once, got %d", calls)
 	}
 }

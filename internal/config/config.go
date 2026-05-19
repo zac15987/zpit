@@ -27,25 +27,40 @@ const (
 	defaultSSHHost               = "0.0.0.0"
 	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
 	defaultSSHAuthorizedKeysPath = "~/.ssh/authorized_keys"
+
+	defaultClarifierModel  = "opus[1m]"
+	defaultCodingModel     = "opus[1m]"
+	defaultReviewerModel   = "opus[1m]"
+	defaultTaskRunnerModel = "opus[1m]"
+	defaultEfficiencyModel = "opus[1m]"
+	defaultDesktopModel    = "sonnet[1m]"
 )
 
 // Config is the top-level configuration loaded from config.toml.
-// ProfileConfig holds agent-relevant metadata per project type.
-type ProfileConfig struct {
-	LogPolicy string `toml:"log_policy"` // "strict" | "standard" | "minimal"
+type Config struct {
+	Language     string             `toml:"language"`
+	BrokerPort   int                `toml:"broker_port"`
+	ZpitBin      string             `toml:"zpit_bin"`
+	Terminal     TerminalConfig     `toml:"terminal"`
+	Notification NotificationConfig `toml:"notification"`
+	Worktree     WorktreeConfig     `toml:"worktree"`
+	SSH          SSHConfig          `toml:"ssh"`
+	AgentModels  AgentModelsConfig  `toml:"agent_models"`
+	Providers    ProvidersConfig    `toml:"providers"`
+	Projects     []ProjectConfig    `toml:"projects"`
 }
 
-type Config struct {
-	Language     string                    `toml:"language"`
-	BrokerPort   int                       `toml:"broker_port"`
-	ZpitBin      string                    `toml:"zpit_bin"`
-	Terminal     TerminalConfig            `toml:"terminal"`
-	Notification NotificationConfig        `toml:"notification"`
-	Worktree     WorktreeConfig            `toml:"worktree"`
-	SSH          SSHConfig                 `toml:"ssh"`
-	Providers    ProvidersConfig           `toml:"providers"`
-	Profiles     map[string]ProfileConfig  `toml:"profiles"`
-	Projects     []ProjectConfig           `toml:"projects"`
+// AgentModelsConfig holds the --model value passed to Claude Code for each
+// agent role. Accepts a full model ID (e.g. "claude-sonnet-4-6") or a short
+// alias ("sonnet"). Full IDs are preferred because short aliases resolve
+// differently per backend (Anthropic API vs Bedrock/Vertex/Foundry).
+type AgentModelsConfig struct {
+	Clarifier  string `toml:"clarifier"`
+	Coding     string `toml:"coding"`
+	Reviewer   string `toml:"reviewer"`
+	TaskRunner string `toml:"task_runner"`
+	Efficiency string `toml:"efficiency"`
+	Desktop    string `toml:"desktop"`
 }
 
 // SSHConfig holds settings for the Wish SSH server (zpit serve).
@@ -59,9 +74,9 @@ type SSHConfig struct {
 }
 
 type TerminalConfig struct {
-	WindowsMode            string `toml:"windows_mode"`              // "new_tab" | "new_window"
-	TmuxMode               string `toml:"tmux_mode"`                 // "new_window" | "new_pane"
-	WindowsTerminalProfile string `toml:"windows_terminal_profile"`  // WT profile name for -p flag
+	WindowsMode            string `toml:"windows_mode"`             // "new_tab" | "new_window"
+	TmuxMode               string `toml:"tmux_mode"`                // "new_window" | "new_pane"
+	WindowsTerminalProfile string `toml:"windows_terminal_profile"` // WT profile name for -p flag
 }
 
 type NotificationConfig struct {
@@ -103,13 +118,14 @@ type ProjectConfig struct {
 	TrackerProject string            `toml:"tracker_project"`
 	Git            string            `toml:"git"`
 	Repo           string            `toml:"repo"`
-	SharedCore     bool              `toml:"shared_core"`
-	LogLevel       string            `toml:"log_level"`
+	LogPolicy      string            `toml:"log_policy"` // "strict" | "standard" | "minimal"
 	BaseBranch     string            `toml:"base_branch"`
 	ChannelEnabled bool              `toml:"channel_enabled"`
 	ChannelListen  []string          `toml:"channel_listen"`
 	Tags           []string          `toml:"tags"`
 	Path           ProjectPathConfig `toml:"path"`
+	AutoMerge      bool              `toml:"auto_merge"`
+	MergeMethod    string            `toml:"merge_method"`
 }
 
 type ProjectPathConfig struct {
@@ -165,6 +181,24 @@ max_per_project = 5
 # poll_seconds = 10         # todo issue polling interval (seconds)
 # pr_poll_seconds = 10      # PR merge polling interval (seconds)
 
+# --- Agent Models ---
+# Model passed to Claude Code via --model when launching each agent role.
+# Accepts either a short alias (opus, sonnet, haiku) or a full model ID
+# (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001).
+# Append [1m] to opt into the 1M-context tier (Opus 4.7 / Sonnet 4.6 / Opus 4.6).
+#
+# Aliases track the "recommended" version for your provider — on the
+# Anthropic API "opus" = Opus 4.7 and "sonnet" = Sonnet 4.6, but on
+# Bedrock/Vertex/Foundry they resolve one version behind (4.6 / 4.5).
+# Pin to a full ID if you need cross-provider consistency.
+[agent_models]
+clarifier = "opus[1m]"      # requirement clarification — deepest reasoning (1M context)
+coding = "opus[1m]"         # feature implementation orchestrator (1M context)
+reviewer = "opus[1m]"       # PR review (1M context)
+task_runner = "sonnet"      # per-task subagent — scope narrowed by orchestrator, mechanical work (Sonnet is cost-effective)
+efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
+desktop = "sonnet[1m]"      # desktop-control agent (window/keyboard/mouse) — Sonnet is sufficient for UI automation; bump to opus[1m] for tougher visual reasoning
+
 # --- SSH Server (zpit serve) ---
 # [ssh]
 # port = 2200
@@ -186,24 +220,24 @@ max_per_project = 5
 # type = "github_issues"
 # token_env = "GITHUB_TOKEN"
 
-# --- Profiles ---
-
-# [profiles.default]
-# log_policy = "standard"   # strict | standard | minimal
-
 # --- Projects ---
 # Add at least one project to get started.
 
 # [[projects]]
 # name = "My Project"
 # id = "my-project"
-# profile = "default"
+# profile = "machine"       # display tag: machine | desktop | web | android | terminal (for TUI icon)
 # hook_mode = "standard"    # strict | standard | relaxed
+# log_policy = "standard"   # strict | standard | minimal
 # tracker = "my-github"
 # repo = "owner/repo"
 # base_branch = "dev"
 # channel_enabled = false  # enable cross-agent channel communication
 # tags = ["go"]
+# auto_merge: when true, Zpit calls the tracker's merge API after ai-review; default false.
+# auto_merge = false
+# merge_method: one of "squash" | "merge" | "rebase"; default "squash" when auto_merge=true.
+# merge_method = "squash"
 #
 # [projects.path]
 # windows = "D:/Projects/my-project"
@@ -281,6 +315,9 @@ func Diff(old, new *Config) ConfigDiff {
 	if old.Terminal != new.Terminal {
 		diff.HotReload = append(diff.HotReload, "terminal")
 	}
+	if old.AgentModels != new.AgentModels {
+		diff.HotReload = append(diff.HotReload, "agent_models")
+	}
 	if !projectsChannelEqual(old.Projects, new.Projects) {
 		diff.HotReload = append(diff.HotReload, "channel")
 	}
@@ -331,8 +368,8 @@ func projectsChannelEqual(a, b []ProjectConfig) bool {
 	return true
 }
 
-// projectsMetaEqual checks if hook_mode, base_branch, and log_level are
-// identical across matching projects.
+// projectsMetaEqual checks if hook_mode, base_branch, log_policy, auto_merge,
+// and merge_method are identical across matching projects.
 func projectsMetaEqual(a, b []ProjectConfig) bool {
 	am := projectMap(a)
 	bm := projectMap(b)
@@ -343,7 +380,9 @@ func projectsMetaEqual(a, b []ProjectConfig) bool {
 		}
 		if ap.HookMode != bp.HookMode ||
 			ap.BaseBranch != bp.BaseBranch ||
-			ap.LogLevel != bp.LogLevel {
+			ap.LogPolicy != bp.LogPolicy ||
+			ap.AutoMerge != bp.AutoMerge ||
+			ap.MergeMethod != bp.MergeMethod {
 			return false
 		}
 	}
@@ -458,12 +497,37 @@ func applyDefaults(cfg *Config) {
 		cfg.SSH.AuthorizedKeysPath = defaultSSHAuthorizedKeysPath
 	}
 
+	if cfg.AgentModels.Clarifier == "" {
+		cfg.AgentModels.Clarifier = defaultClarifierModel
+	}
+	if cfg.AgentModels.Coding == "" {
+		cfg.AgentModels.Coding = defaultCodingModel
+	}
+	if cfg.AgentModels.Reviewer == "" {
+		cfg.AgentModels.Reviewer = defaultReviewerModel
+	}
+	if cfg.AgentModels.TaskRunner == "" {
+		cfg.AgentModels.TaskRunner = defaultTaskRunnerModel
+	}
+	if cfg.AgentModels.Efficiency == "" {
+		cfg.AgentModels.Efficiency = defaultEfficiencyModel
+	}
+	if cfg.AgentModels.Desktop == "" {
+		cfg.AgentModels.Desktop = defaultDesktopModel
+	}
+
 	for i := range cfg.Projects {
 		if cfg.Projects[i].BaseBranch == "" {
 			cfg.Projects[i].BaseBranch = defaultBaseBranch
 		}
 		if cfg.Projects[i].HookMode == "" {
 			cfg.Projects[i].HookMode = "strict"
+		}
+		if cfg.Projects[i].LogPolicy == "" {
+			cfg.Projects[i].LogPolicy = "standard"
+		}
+		if cfg.Projects[i].AutoMerge && cfg.Projects[i].MergeMethod == "" {
+			cfg.Projects[i].MergeMethod = "squash"
 		}
 	}
 }

@@ -45,6 +45,20 @@ poll_seconds = 10             # todo issue polling 間隔（秒）
 pr_poll_seconds = 10          # PR/label 狀態 polling 間隔（秒）
 
 # ──────────────────────────────────────────────
+# Per-Role Model Selection
+# ──────────────────────────────────────────────
+# 啟動 agent 時透過 --model <id> 傳給 Claude Code。
+# 接受 short alias（opus/sonnet/haiku，依 provider 解析到不同版本）或
+# full model ID（跨 provider 行為一致）。附加 [1m] 啟用 1M-context tier。
+# 詳見 §6.7。
+[agent_models]
+clarifier = "opus[1m]"      # 需求澄清 — 最深層推理（1M context）
+coding = "opus[1m]"         # 功能實作（1M context）
+reviewer = "opus[1m]"       # PR review（1M context）
+task_runner = "opus[1m]"    # advisory — 由 coding session 繼承
+efficiency = "opus[1m]"     # 效能檢視 agent（[f] 啟動）— 深層推理
+
+# ──────────────────────────────────────────────
 # SSH Server（zpit serve）
 # ──────────────────────────────────────────────
 [ssh]
@@ -80,39 +94,24 @@ url = "https://git.nas.local"
 type = "github"
 
 # ──────────────────────────────────────────────
-# Profiles
-# ──────────────────────────────────────────────
-
-[profiles.machine]
-log_policy = "strict"     # 所有 Service 方法有進出 log，硬體操作有指令/回應 log
-
-[profiles.web]
-log_policy = "minimal"    # 只 log 錯誤和關鍵操作
-
-[profiles.desktop]
-log_policy = "standard"   # Service 方法有進出 log，異常有完整 log
-
-[profiles.android]
-log_policy = "standard"
-
-# ──────────────────────────────────────────────
 # 專案定義
 # ──────────────────────────────────────────────
 
 [[projects]]
 name = "ASE 檢測清潔機台"
 id = "ase-inspection"
-profile = "machine"
+profile = "machine"             # 顯示標籤：machine | desktop | web | android | terminal (TUI icon)
 hook_mode = "strict"            # strict | standard | relaxed
+log_policy = "strict"           # strict | standard | minimal
 tracker = "my-forgejo"          # 指向 providers.tracker 的 key
 tracker_project = "ase-inspection"
 git = "forgejo-local"
 repo = "leyu/ase-inspection"
-shared_core = true
-log_level = "strict"
 base_branch = "dev"
 channel_enabled = false         # 啟用跨 agent channel 通訊
 channel_listen = []             # 額外訂閱的 project key，如 ["_global", "other-proj"]
+auto_merge = false              # true 時 Zpit 自動呼叫 tracker merge API（opt-in，預設 false）
+merge_method = "squash"         # squash | merge | rebase，auto_merge=true 時使用
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
@@ -201,21 +200,22 @@ Zpit 需要 6 個 label（pending, todo, wip, review, ai-review, needs-changes�
 
 ---
 
-## 4.3 Profiles 定義
+## 4.3 log_policy 與 profile 欄位
 
-Profile 只存放 **agent prompt 需要的 metadata**。
+`log_policy` 是 **per-project** 設定，會注入到 Coding Agent 和 Reviewer Agent 的 prompt 中，
+讓 agent 在實作和 review 時都遵循對應的 logging 規範。三個可選值：
+
+| log_policy | 說明 |
+|-----------|------|
+| strict | 所有 Service 方法有進出 log，硬體操作有指令/回應 log，狀態機轉換有前後狀態 log |
+| standard | Service 方法有進出 log，異常有完整 log |
+| minimal | 只 log 錯誤和關鍵操作 |
+
 Build、test、review、開 PR 等執行動作都是 agent 的職責（agent 從各專案 CLAUDE.md 得知 build 指令），
 Zpit 不介入 agent 的工作內容。
 
-`log_policy` 會注入到 Coding Agent 和 Reviewer Agent 的 prompt 中，
-讓 agent 在實作和 review 時都遵循對應的 logging 規範：
-
-| Profile | log_policy | 說明 |
-|---------|-----------|------|
-| machine | strict | 所有 Service 方法有進出 log，硬體操作有指令/回應 log，狀態機轉換有前後狀態 log |
-| web | minimal | 只 log 錯誤和關鍵操作 |
-| desktop | standard | Service 方法有進出 log，異常有完整 log |
-| android | standard | 同 desktop |
+`profile` 欄位是 **純顯示標籤**，用於 TUI 專案清單挑選 icon（machine / desktop / web / android），
+不影響 agent 行為；未來可能用於 TUI 的 group 分類視覺化。
 
 ---
 
@@ -231,9 +231,10 @@ Zpit 支援在 TUI 運行中重新載入 config.toml。設定欄位分為兩類�
 | `notification.*` | 呼叫 `notifier.UpdateConfig()` |
 | `worktree.poll_seconds` / `pr_poll_seconds` / `max_review_rounds` | 呼叫 `wtManager.UpdateConfig()` |
 | `terminal.*` | 更新 cfg，下次啟動 agent 時生效 |
+| `agent_models.*` | 更新 cfg，下次啟動 agent 時生效（已運行的 session 沿用啟動時 model） |
 | per-project `channel_enabled` | 動態 subscribe/unsubscribe EventBus |
 | per-project `channel_listen` | 動態管理跨專案訂閱 |
-| per-project `hook_mode` / `base_branch` / `log_level` | 更新 cfg，下次操作時生效 |
+| per-project `hook_mode` / `base_branch` / `log_policy` / `auto_merge` / `merge_method` | 更新 cfg，下次操作時生效（已在執行中的 merge 使用 handler 進入時捕獲的設定） |
 
 ### Restart-Required（需重啟）
 

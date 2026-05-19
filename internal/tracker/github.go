@@ -37,6 +37,7 @@ type githubPR struct {
 	MergedAt *string     `json:"merged_at"` // list endpoint omits "merged"; use as fallback
 	HTMLURL  string      `json:"html_url"`
 	Head     githubPRRef `json:"head"`
+	Base     githubPRRef `json:"base"`
 }
 
 type githubPRRef struct {
@@ -172,14 +173,47 @@ func (c *GitHubClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, 
 	var result []PRInfo
 	for _, pr := range prs {
 		result = append(result, PRInfo{
-			ID:     fmt.Sprintf("%d", pr.Number),
-			Title:  pr.Title,
-			Branch: pr.Head.Ref,
-			State:  pr.State,
-			URL:    pr.HTMLURL,
+			ID:         fmt.Sprintf("%d", pr.Number),
+			Title:      pr.Title,
+			Branch:     pr.Head.Ref,
+			BaseBranch: pr.Base.Ref,
+			State:      pr.State,
+			URL:        pr.HTMLURL,
 		})
 	}
 	return result, nil
+}
+
+func (c *GitHubClient) MergePR(ctx context.Context, repo string, prID string, method string, commitTitle string) (*PRStatus, error) {
+	// Validate method without making any HTTP call.
+	switch method {
+	case "squash", "merge", "rebase":
+	default:
+		return nil, fmt.Errorf("invalid merge method: %q (want squash|merge|rebase)", method)
+	}
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%s/merge", owner, name, prID)
+	body := struct {
+		MergeMethod string `json:"merge_method"`
+		CommitTitle string `json:"commit_title,omitempty"`
+	}{MergeMethod: method, CommitTitle: commitTitle}
+
+	var resp struct {
+		Merged  bool   `json:"merged"`
+		Message string `json:"message"`
+		SHA     string `json:"sha"`
+	}
+	if err := c.doJSON(ctx, http.MethodPut, path, body, &resp); err != nil {
+		return nil, fmt.Errorf("merge PR: %w", err)
+	}
+	// Merge succeeded; re-fetch to obtain the PR URL for PRStatus.
+	pr, err := c.GetPRStatus(ctx, repo, prID)
+	if err != nil {
+		// Merge succeeded but couldn't fetch URL; return merged status without URL.
+		return &PRStatus{ID: prID, State: "merged"}, nil
+	}
+	pr.State = "merged"
+	return pr, nil
 }
 
 func (c *GitHubClient) ListRepoLabels(ctx context.Context, repo string) ([]string, error) {

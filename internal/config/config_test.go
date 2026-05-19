@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -58,8 +59,8 @@ func TestLoad(t *testing.T) {
 	}
 
 	// Projects
-	if len(cfg.Projects) != 5 {
-		t.Fatalf("Projects = %d, want 5", len(cfg.Projects))
+	if len(cfg.Projects) != 7 {
+		t.Fatalf("Projects = %d, want 7", len(cfg.Projects))
 	}
 
 	first := cfg.Projects[0]
@@ -71,9 +72,6 @@ func TestLoad(t *testing.T) {
 	}
 	if first.HookMode != "strict" {
 		t.Errorf("Projects[0].HookMode = %q", first.HookMode)
-	}
-	if !first.SharedCore {
-		t.Error("Projects[0].SharedCore should be true")
 	}
 	if len(first.Tags) != 3 {
 		t.Errorf("Projects[0].Tags = %v", first.Tags)
@@ -87,26 +85,45 @@ func TestLoad(t *testing.T) {
 	if first.BaseBranch != "dev" {
 		t.Errorf("Projects[0].BaseBranch = %q, want %q", first.BaseBranch, "dev")
 	}
+	if first.LogPolicy != "strict" {
+		t.Errorf("Projects[0].LogPolicy = %q, want %q", first.LogPolicy, "strict")
+	}
 
 	// SSH
 	if !cfg.SSH.AutoServe {
 		t.Error("SSH.AutoServe should be true")
 	}
 
-	// Profiles
-	if len(cfg.Profiles) != 4 {
-		t.Fatalf("Profiles = %d, want 4", len(cfg.Profiles))
+	// Agent models — testdata/config.toml explicitly sets all five
+	if cfg.AgentModels.Clarifier != "opus[1m]" {
+		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, "opus[1m]")
 	}
-	machine, ok := cfg.Profiles["machine"]
-	if !ok {
-		t.Fatal("machine profile not found")
+	if cfg.AgentModels.Coding != "opus[1m]" {
+		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, "opus[1m]")
 	}
-	if machine.LogPolicy != "strict" {
-		t.Errorf("machine.LogPolicy = %q, want %q", machine.LogPolicy, "strict")
+	if cfg.AgentModels.Reviewer != "opus[1m]" {
+		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, "opus[1m]")
 	}
-	desktop := cfg.Profiles["desktop"]
-	if desktop.LogPolicy != "standard" {
-		t.Errorf("desktop.LogPolicy = %q, want %q", desktop.LogPolicy, "standard")
+	if cfg.AgentModels.TaskRunner != "sonnet" {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, "sonnet")
+	}
+	if cfg.AgentModels.Efficiency != "opus[1m]" {
+		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, "opus[1m]")
+	}
+
+	// log_policy is now per-project: verify a different project has a different policy
+	var desktopProj *ProjectConfig
+	for i := range cfg.Projects {
+		if cfg.Projects[i].Profile == "desktop" {
+			desktopProj = &cfg.Projects[i]
+			break
+		}
+	}
+	if desktopProj == nil {
+		t.Fatal("no project with profile=desktop found in testdata")
+	}
+	if desktopProj.LogPolicy != "standard" {
+		t.Errorf("desktop project LogPolicy = %q, want %q", desktopProj.LogPolicy, "standard")
 	}
 }
 
@@ -147,6 +164,137 @@ func TestLoadMinimal_AppliesAllDefaults(t *testing.T) {
 	}
 	if cfg.Worktree.DirFormat != defaultDirFormat {
 		t.Errorf("DirFormat = %q, want %q", cfg.Worktree.DirFormat, defaultDirFormat)
+	}
+}
+
+func TestAgentModelsDefaults_Minimal(t *testing.T) {
+	cfg, err := Load(testdataPath("config_minimal.toml"))
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.AgentModels.Clarifier != defaultClarifierModel {
+		t.Errorf("AgentModels.Clarifier = %q, want %q", cfg.AgentModels.Clarifier, defaultClarifierModel)
+	}
+	if cfg.AgentModels.Coding != defaultCodingModel {
+		t.Errorf("AgentModels.Coding = %q, want %q", cfg.AgentModels.Coding, defaultCodingModel)
+	}
+	if cfg.AgentModels.Reviewer != defaultReviewerModel {
+		t.Errorf("AgentModels.Reviewer = %q, want %q", cfg.AgentModels.Reviewer, defaultReviewerModel)
+	}
+	if cfg.AgentModels.TaskRunner != defaultTaskRunnerModel {
+		t.Errorf("AgentModels.TaskRunner = %q, want %q", cfg.AgentModels.TaskRunner, defaultTaskRunnerModel)
+	}
+	if cfg.AgentModels.Efficiency != defaultEfficiencyModel {
+		t.Errorf("AgentModels.Efficiency = %q, want %q", cfg.AgentModels.Efficiency, defaultEfficiencyModel)
+	}
+}
+
+func TestAgentModelsPartialOverride(t *testing.T) {
+	// Write a temp config with only `clarifier` overridden; the other four
+	// fields must fall back to defaults.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := "[terminal]\n\n[agent_models]\nclarifier = \"custom-opus-id\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.AgentModels.Clarifier != "custom-opus-id" {
+		t.Errorf("Clarifier override lost: %q", cfg.AgentModels.Clarifier)
+	}
+	if cfg.AgentModels.Coding != defaultCodingModel {
+		t.Errorf("Coding = %q, want default %q", cfg.AgentModels.Coding, defaultCodingModel)
+	}
+	if cfg.AgentModels.Reviewer != defaultReviewerModel {
+		t.Errorf("Reviewer = %q, want default %q", cfg.AgentModels.Reviewer, defaultReviewerModel)
+	}
+	if cfg.AgentModels.TaskRunner != defaultTaskRunnerModel {
+		t.Errorf("TaskRunner = %q, want default %q", cfg.AgentModels.TaskRunner, defaultTaskRunnerModel)
+	}
+	if cfg.AgentModels.Efficiency != defaultEfficiencyModel {
+		t.Errorf("Efficiency = %q, want default %q", cfg.AgentModels.Efficiency, defaultEfficiencyModel)
+	}
+}
+
+func TestAgentModelsDiff_HotReload(t *testing.T) {
+	base := &Config{}
+	updated := &Config{AgentModels: AgentModelsConfig{Clarifier: "new"}}
+	d := Diff(base, updated)
+	found := false
+	for _, f := range d.HotReload {
+		if f == "agent_models" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("agent_models change should be hot-reloadable; got HotReload=%v", d.HotReload)
+	}
+}
+
+// TestProjectAutoMergeDiff_HotReload guards the invariant that toggling
+// per-project `auto_merge` / `merge_method` is picked up by the running loop
+// without requiring a restart. Both fields flow through `projectsMetaEqual`
+// and must surface under `HotReload` (via the `project_meta` tag), never
+// under `RestartRequired`.
+func TestProjectAutoMergeDiff_HotReload(t *testing.T) {
+	base := &Config{
+		Projects: []ProjectConfig{
+			{ID: "p1", AutoMerge: false, MergeMethod: "squash"},
+		},
+	}
+	cases := []struct {
+		name    string
+		updated *Config
+	}{
+		{
+			name: "toggle_auto_merge",
+			updated: &Config{
+				Projects: []ProjectConfig{
+					{ID: "p1", AutoMerge: true, MergeMethod: "squash"},
+				},
+			},
+		},
+		{
+			name: "change_merge_method",
+			updated: &Config{
+				Projects: []ProjectConfig{
+					{ID: "p1", AutoMerge: false, MergeMethod: "rebase"},
+				},
+			},
+		},
+		{
+			name: "toggle_both",
+			updated: &Config{
+				Projects: []ProjectConfig{
+					{ID: "p1", AutoMerge: true, MergeMethod: "merge"},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Diff(base, tc.updated)
+			foundHot := false
+			for _, f := range d.HotReload {
+				if f == "project_meta" {
+					foundHot = true
+					break
+				}
+			}
+			if !foundHot {
+				t.Errorf("auto_merge/merge_method change should be hot-reloadable; got HotReload=%v", d.HotReload)
+			}
+			for _, f := range d.RestartRequired {
+				if f == "project_meta" || f == "projects (added/removed)" {
+					t.Errorf("auto_merge/merge_method change must NOT require restart; got RestartRequired=%v", d.RestartRequired)
+				}
+			}
+		})
 	}
 }
 

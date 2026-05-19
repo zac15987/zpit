@@ -1,6 +1,6 @@
 # Zpit 架構文件索引
 
-> 版本: 2.1 | 日期: 2026-04-11
+> 版本: 2.2 | 日期: 2026-04-19
 
 Zpit 是一個 TUI 調度中心，用 Go + Bubble Tea 打造，負責選專案、啟動 Claude Code agent、監控進度、協調完整的 issue 生命週期。
 
@@ -20,3 +20,4 @@ Zpit 是一個 TUI 調度中心，用 Go + Bubble Tea 打造，負責選專案�
 | 10 | [AppState 與多客戶端](10-appstate.md) | SSH Server、併發安全、Pub/Sub |
 | 11 | [Milestone 紀錄](11-milestone.md) | M1-M4c 完成紀錄、M5 規劃 |
 | 12 | [跨 Agent Channel 通訊](12-channel.md) | Broker + MCP + 跨專案通訊、TUI 整合 |
+| 13 | [Desktop Agent](desktop-agent.md) | Proxy MCP architecture, policy model, tool allowlist, deny_keys; backed by `zpit-desktop-mcp` (fork of `@zavora-ai/computer-use-mcp`) |

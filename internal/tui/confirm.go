@@ -38,7 +38,7 @@ func (m *Model) showDeployConfirm() {
 		),
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAndLaunchAgent("clarifier", injectLangInstruction(m.state.clarifierMD))
+		return m.deployAndLaunchAgent("clarifier", injectClarifierLangInstruction(m.state.clarifierMD))
 	}
 }
 
@@ -75,6 +75,25 @@ func (m *Model) showEfficiencyDeployConfirm() {
 	).WithWidth(50)
 	m.confirmAction = func() tea.Cmd {
 		return m.deployAndLaunchAgentLite()
+	}
+}
+
+// showRedeployConfirm displays a huh confirm dialog for running deployAllCmd
+// (undeploy + re-deploy all agents/hooks/docs, no Claude launch).
+func (m *Model) showRedeployConfirm() {
+	confirmed := new(bool)
+	m.confirmResult = confirmed
+	m.confirmForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(locale.T(locale.KeyRedeployConfirm)).
+				Affirmative(locale.T(locale.KeyRedeployButton)).
+				Negative(locale.T(locale.KeyCancel)).
+				Value(confirmed),
+		),
+	).WithWidth(60)
+	m.confirmAction = func() tea.Cmd {
+		return m.deployAllCmd()
 	}
 }
 
@@ -218,6 +237,9 @@ func (m *Model) executePendingOp() (tea.Model, tea.Cmd) {
 			m.loopCleanupMergedCmd(project.ID),
 			m.loopScanOpenPRsCmd(project.ID),
 			m.loopPollCmd(project.ID),
+			// Kick off tick-driven heartbeat. handleLoopPoll no longer reschedules;
+			// the tick handler reschedules itself as long as the loop is active.
+			m.loopSchedulePoll(project.ID),
 		}
 		if project.ChannelEnabled && m.state.broker != nil {
 			cmds = append(cmds, m.channelSubscribeCmd(project.ID))

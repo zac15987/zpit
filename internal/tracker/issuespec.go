@@ -22,11 +22,12 @@ var vagueWords = []string{"appropriate", "reasonable", "sufficient", "when neces
 
 // TaskEntry represents a single task line in the ## TASKS section.
 type TaskEntry struct {
-	ID          string   // e.g. "T1", "T2"
-	Description string   // task description text
-	Parallel    bool     // true if [P] marker is present
-	Paths       []string // file paths extracted from [create], [modify], [delete] actions
-	DependsOn   []string // task IDs this task depends on; empty if (depends: none)
+	ID           string   // e.g. "T1", "T2"
+	Description  string   // task description text
+	Parallel     bool     // true if [P] marker is present
+	Paths        []string // file paths extracted from [create], [modify], [delete] actions
+	DependsOn    []string // task IDs this task depends on; empty if (depends: none)
+	RelevantACs  []string // AC IDs this task implements, from optional `(covers: AC-N, AC-M)` suffix; nil if absent
 }
 
 // IssueSpec is the structured representation of an issue body.
@@ -91,6 +92,9 @@ func ValidateIssueSpec(body string) ValidationResult {
 
 	// Check TASKS-SCOPE cross-validation
 	checkTasksScopeCoverage(body, &result)
+
+	// Check TASKS-AC cross-validation (every AC covered by at least one task)
+	checkTasksACCoverage(body, &result)
 
 	// Check DEPENDS_ON format (warnings only — optional section)
 	checkDependsOnFormat(body, &result)
@@ -443,9 +447,92 @@ func checkTasksScopeCoverage(body string, result *ValidationResult) {
 	}
 }
 
+// checkTasksACCoverage warns when an AC is not referenced by any task's
+// (covers: ...) suffix. Only fires when both TASKS and ACCEPTANCE_CRITERIA are
+// present — older specs without TASKS are unaffected. Warning, not error: an
+// uncovered AC may legitimately be a non-actionable statement (rare) or signal
+// a missing task (common) — the human reading the warning makes the call.
+func checkTasksACCoverage(body string, result *ValidationResult) {
+	sections := splitBySections(body)
+	tasksContent, ok := sections["TASKS"]
+	if !ok || tasksContent == "" {
+		return
+	}
+	acContent := sections["ACCEPTANCE_CRITERIA"]
+	if acContent == "" {
+		return
+	}
+
+	// Collect declared AC IDs.
+	declared := make(map[string]bool)
+	var declaredOrder []string
+	for _, line := range strings.Split(acContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "AC-") {
+			continue
+		}
+		id := extractACID(trimmed)
+		if id == "AC-?" || declared[id] {
+			continue
+		}
+		declared[id] = true
+		declaredOrder = append(declaredOrder, id)
+	}
+
+	// Collect ACs covered by tasks.
+	covered := make(map[string]bool)
+	for _, line := range strings.Split(tasksContent, "\n") {
+		entry, ok := parseTaskEntry(strings.TrimSpace(line))
+		if !ok {
+			continue
+		}
+		for _, ac := range entry.RelevantACs {
+			covered[ac] = true
+		}
+	}
+
+	// Warn for each declared AC not covered (preserve declaration order).
+	for _, id := range declaredOrder {
+		if !covered[id] {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s is not covered by any task's (covers: ...) — add it to a task or justify why no task implements it", id))
+		}
+	}
+}
+
+// extractParenSuffix locates the last `marker ... )` block in s (where marker
+// includes the opening paren and label, e.g. "(depends:" or "(covers:") and
+// returns the trimmed content between the marker and its matching close paren,
+// plus s with that block (and any adjacent whitespace) removed. If the marker
+// is absent or has no closing `)`, returns ("", s, false).
+//
+// Used by parseTaskEntry to peel trailing `(covers: ...)` and `(depends: ...)`
+// suffixes order-independently — they may appear in either order on a TASKS line.
+func extractParenSuffix(s, marker string) (content, remaining string, ok bool) {
+	openIdx := strings.LastIndex(s, marker)
+	if openIdx < 0 {
+		return "", s, false
+	}
+	closeRel := strings.Index(s[openIdx:], ")")
+	if closeRel < 0 {
+		return "", s, false
+	}
+	closeIdx := openIdx + closeRel
+	content = strings.TrimSpace(s[openIdx+len(marker) : closeIdx])
+	before := strings.TrimRight(s[:openIdx], " \t")
+	after := strings.TrimLeft(s[closeIdx+1:], " \t")
+	if after == "" {
+		remaining = before
+	} else {
+		remaining = before + " " + after
+	}
+	return content, remaining, true
+}
+
 // parseTaskEntry parses a task line like:
 // T1: Add TaskEntry struct [modify] issuespec.go (depends: none)
 // T2: [P] Update prompt [modify] coding.go [modify] common.go (depends: T1)
+// T3: Wire policy [modify] policy.go (depends: T1) (covers: AC-1, AC-2)
 // Returns the parsed entry and true if the line is a valid task line.
 func parseTaskEntry(line string) (TaskEntry, bool) {
 	// Task lines start with T followed by a number and a colon
@@ -475,18 +562,23 @@ func parseTaskEntry(line string) (TaskEntry, bool) {
 		rest = strings.TrimSpace(rest[3:])
 	}
 
-	// Extract (depends: ...) from the end
-	if depStart := strings.LastIndex(rest, "(depends:"); depStart >= 0 {
-		depSection := rest[depStart:]
-		rest = strings.TrimSpace(rest[:depStart])
-
-		// Extract the content between "depends:" and ")"
-		depContent := strings.TrimPrefix(depSection, "(depends:")
-		depContent = strings.TrimSuffix(strings.TrimSpace(depContent), ")")
-		depContent = strings.TrimSpace(depContent)
-
-		if depContent != "none" && depContent != "" {
-			for _, dep := range strings.Split(depContent, ",") {
+	// Peel trailing `(covers: AC-N, AC-M)` and `(depends: T-N, T-M)` suffixes.
+	// Order is not fixed — clarifier emits depends-then-covers but parser accepts both.
+	// extractParenSuffix finds the last `(marker ...)` block, returns its content
+	// and the line with that block removed.
+	if content, newRest, ok := extractParenSuffix(rest, "(covers:"); ok {
+		rest = newRest
+		for _, ac := range strings.Split(content, ",") {
+			ac = strings.TrimSpace(ac)
+			if ac != "" {
+				entry.RelevantACs = append(entry.RelevantACs, ac)
+			}
+		}
+	}
+	if content, newRest, ok := extractParenSuffix(rest, "(depends:"); ok {
+		rest = newRest
+		if content != "none" {
+			for _, dep := range strings.Split(content, ",") {
 				dep = strings.TrimSpace(dep)
 				if dep != "" {
 					entry.DependsOn = append(entry.DependsOn, dep)

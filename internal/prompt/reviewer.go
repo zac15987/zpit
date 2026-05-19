@@ -50,13 +50,19 @@ func BuildReviewerPrompt(p ReviewerParams) string {
 	b.WriteString(p.Spec.Approach)
 
 	b.WriteString("\n\n## Acceptance Criteria (check each item, mark each as PASS / FAIL)\n\n")
+	b.WriteString("<acceptance_criteria>\n")
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
+	b.WriteString("\n</acceptance_criteria>")
 
 	b.WriteString("\n\n## Allowed File Scope\n\n")
+	b.WriteString("<scope>\n")
 	b.WriteString(formatScope(p.Spec.Scope))
+	b.WriteString("</scope>\n")
 
 	b.WriteString("\n## Constraints\n\n")
+	b.WriteString("<constraints>\n")
 	b.WriteString(p.Spec.Constraints)
+	b.WriteString("\n</constraints>")
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
@@ -79,7 +85,7 @@ func buildFirstReviewProcess(b *strings.Builder, p ReviewerParams) {
    Read .claude/docs/tracker.md to understand how to operate the tracker (write comment, update label)
    Read .claude/docs/agent-guidelines.md to understand the behavioral rules for AI agents
 2. Read issue comments and PR comments to understand the full context (clarifier decisions, coding agent's change summary)
-3. Use git diff %s...HEAD to view all changes
+3. Use git diff origin/%s...HEAD to view all changes
 4. Re-read ACCEPTANCE_CRITERIA to confirm your understanding before marking verdicts — do not rely on your initial reading
 5. Check each ACCEPTANCE_CRITERIA item, marking each as PASS or FAIL
 6. Check whether any changes touch files outside the SCOPE
@@ -112,12 +118,12 @@ You must focus on the delta — do NOT re-review the entire implementation from 
 2. Read PR comments to find the previous NEEDS CHANGES review report
    Read issue comments for any additional context
 3. List all MUST FIX (🔴) items from the previous review
-4. Use git log --oneline %s...HEAD to see all commits; identify the revision commits
+4. Use git log --oneline origin/%s...HEAD to see all commits; identify the revision commits
    (typically the latest commits with [%s] fix: prefix, added after the previous review)
 5. Use git show or git diff on only the revision commits to view the delta
 6. For each previous MUST FIX item, verify whether it was addressed — mark as ✅ Fixed / ❌ Still open
 7. Re-read ACCEPTANCE_CRITERIA before the regression check — confirm your understanding of what each AC requires
-8. Spot-check the full diff (git diff %s...HEAD) to verify no regressions in existing ACs
+8. Spot-check the full diff (git diff origin/%s...HEAD) to verify no regressions in existing ACs
    You do NOT need to re-verify every AC in detail — only check for regressions introduced by the revision
 9. Check scope + constraints on the new changes only
 10. Produce the Revision Review Report (see format below)
@@ -141,13 +147,15 @@ You must focus on the delta — do NOT re-review the entire implementation from 
 - Regressions found: ✅ None / ❌ [describe regression]
 
 ### New Findings (if any)
-- 🔴 MUST FIX: [new blocking issue introduced by the revision]
-- 🟡 SUGGEST: [improvement suggestion]
+Severity rules match the first-review reviewer prompt: any correctness bug, dead code, dangling reference, or code-construction-principles violation introduced by the revision is 🔴 MUST FIX, **even if no AC requires otherwise**. 🟡 is reserved for genuine taste preferences only.
+- 🔴 MUST FIX: [new blocking issue introduced by the revision — AC not met, broken behavior, dead code, tech debt, principles violation]
+- 🟡 SUGGEST: [taste/style preference — NOT for correctness issues]
 
 ### Verdict Rules
 - Any previous MUST FIX still open → NEEDS CHANGES
 - Any regression found → NEEDS CHANGES
-- All MUST FIX items fixed + no regressions → PASS (even if there are 🟡 suggestions)
+- **Any new 🔴 MUST FIX introduced by the revision → NEEDS CHANGES**, regardless of AC coverage
+- All previous MUST FIX fixed + no regressions + no new 🔴 → PASS (🟡 suggestions do not block)
 `, p.BaseBranch, p.IssueID, p.BaseBranch, p.ReviewRound)
 
 	b.WriteString(reviewerTrackerNotes)

@@ -33,6 +33,26 @@ if echo "$COMMAND" | grep -qiE 'git\s+push'; then
   exit 2
 fi
 
+# Per-subagent worktree cleanup: allow `git branch -D` when every branch arg
+# matches the parallel-subagent naming convention `<parent>-agent-<hex>` (what
+# worktree-create.sh produces using Claude Code's default isolation slug).
+# Arbitrary `git branch -D` still falls through to the blocklist below.
+if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+branch[[:space:]]+-[dD][[:space:]]+(.+)$ ]]; then
+  rest="${BASH_REMATCH[1]}"
+  all_subagent_branches=1
+  for b in $rest; do
+    b="${b%%[;&|]*}"
+    [ -z "$b" ] && continue
+    if ! [[ "$b" =~ -agent-[0-9a-f]+$ ]]; then
+      all_subagent_branches=0
+      break
+    fi
+  done
+  if [ "$all_subagent_branches" = "1" ]; then
+    exit 0
+  fi
+fi
+
 # Blocked git operations
 GIT_BLOCKED=(
   'git\s+reset\s+--hard'

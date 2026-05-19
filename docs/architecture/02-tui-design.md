@@ -4,59 +4,71 @@
 
 ---
 
-## 2.1 主畫面 — 專案總覽 + 終端調度 ✅ 已實作
+## 2.1 主畫面 — Dock 版面（Catppuccin Mocha + 獨立捲動的四面板）✅ 已實作
+
+主畫面採用 lazygit 風格的 dock 版面：左欄由上到下堆疊 Projects / Active Terminals / Loop Engine，
+右欄固定 Hotkeys。四個面板各自擁有獨立的 `viewport.Model`，互不干擾地上下捲動；
+Catppuccin Mocha 色盤，無邊框、單欄寬的 `▎` mauve accent bar 只出現在當下 focused 面板的標題列。
 
 ```
-╔══════════════════════════════════════════════════════════════════════╗
-║  Zpit v0.1                              03/18 14:32  WSL  ║
-╠══════════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║  專案列表                          快捷鍵                          ║
-║  ─────────────────────────────     ──────────────────────          ║
-║                                                                    ║
-║  ⚙️  ASE 檢測清潔機台              [Enter] 開 Claude Code (新終端) ║
-║     WPF+硬體 │ 3 todo │ 1 進行中   [c] Clarify 需求               ║
-║     🟢 Agent 運行中 (tmux:2)       [l] Loop 自動實作               ║
-║                                    [r] Review 機台改動             ║
-║  ⚙️  ChipMOS 點膠機台              [f] 效率 Agent                  ║
-║     WPF+硬體 │ 1 todo │ 0 進行中   [s] 狀態總覽                    ║
-║                                    [o] 開啟專案資料夾              ║
-║                                    [p] 開啟 Issue Tracker          ║
-║  🌐  個人品牌網頁                   [u] Undeploy 部署檔案           ║
-║     Astro    │ 5 todo │ 0 進行中                                  ║
-║                                    ──────────────────────          ║
-║  🖥️  報警管理工具                   [x] 關閉終端                    ║
-║     WPF      │ 0 todo │ 0 進行中   [a] 新增專案                    ║
-║                                    [e] 編輯設定 (子選單)            ║
-║                                    [?] 說明                       ║
-║ ›📱  Android 監控 App               [q] 離開                       ║
-║     Kotlin   │ 2 todo │ 0 進行中                                  ║
-║                                                                    ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  活躍終端 (Tab 切換至此區域，↑↓ 選擇，x 關閉終端)                  ║
-║ ›[1] ASE 檢測  │ 🟢 實作中: EtherCAT reconnect backoff │ 02:15    ║
-║      切換: tmux select-window -t ase-inspection                    ║
-║  [2] 個人網頁  │ 🟢 AI Review 完成，等待你確認 PR                  ║
-║      切換: tmux select-window -t personal-site                     ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  最近活動  ⚠️ 尚未實作                                              ║
-║  14:20  ASE 檢測  │ 修改 EtherCatService.cs (新增 RetryBackoff)   ║
-║  14:18  ASE 檢測  │ 讀取 CLAUDE.md, AlarmManager.cs               ║
-║  13:45  個人網頁  │ Loop 完成 3 issues │ 已部署                    ║
-╚══════════════════════════════════════════════════════════════════════╝
+ Zpit v0.1                                            04/19 15:04  Windows Terminal
+
+
+▎ 專案  7                                             快捷鍵
+  ──────                                              ──────
+  › AI Inspection Cleaning Demo  ⚪ 未部署            [Enter] 啟動 Claude Code
+     machine │ wpf, ethercat, basler                  [c] 釐清需求
+                                                      [l] Loop 自動實作
+    ENR DUC  ⚪ 未部署                                [r] Review 變更
+     machine │ wpf, secsgem                           [f] 效率 Agent
+                                                      [s] 狀態總覽
+    DisplayProfileManager  ⚪ 未部署                  [o] 開啟專案資料夾
+     desktop │ wpf, nlog                              [i] 開啟 Issue Tracker
+                                                      [p] 開啟 PR
+    Zpit  🟢 已部署                                   [u] 清除部署檔案
+     terminal │ go, bubbletea                         [d] 重新部署所有 agent
+                                                      [m] Channel 通訊
+    Zplex  ⚪ 未部署                                   [g] 檢視 Git 狀態
+     desktop │ go, electron, xterm                    [G] 開啟 lazygit
+                                                      [U] 執行 claude update
+    Zacfuse  🟢 已部署                                [a] 新增專案
+     web │ astro, typescript, docs                    [e] 編輯設定
+                                                      [w] 桌面 Agent
+                                                      [x] 關閉終端
+                                                      [Tab] 切換面板
+  執行中終端  1                                       [?] 說明
+  ──────                                              [q] 離開
+  ›[1] Zpit │ 🟡 等待輸入 00:15
+      Q: Commit 2198be6 已 push 到 `origin/dev`，working tre
+
+
+  按 ? 查看說明，q 離開
 ```
 
-操作方式：
-- ↑↓ 選擇專案
+**版面規則：**
+- 左右比例 70/30；Hotkeys 最小 22 欄、左欄最小 18 欄，寬度不足時兩邊互相擠壓（不會堆疊到下方）
+- 左欄高度依權重分配（專案 3 / 終端 2 / Loop 2）；空的面板收合、剩餘空間留給專案
+- `▎` mauve bar 是 *panel 級* 指示器，只出現在 focused 面板的 chrome，body row 不帶 `▎`
+- 每個 panel 標題右側有 count badge（例 `專案 7`）、下方一小段 6 字的 rule（surface1 dim 色）
+- 堆疊的面板（Terminals、Loop）chrome 前有一列空白 gutter，與上方面板拉開視覺呼吸
+
+**操作方式：**
+- ↑↓ 選擇：當下 focused 面板的 cursor，同時觸發該面板 viewport 的 cursor-follow 捲動
+- PgUp / PgDn：只捲動 focused 面板，其他面板 YOffset 維持不變
+- 滑鼠滾輪：滾動滑鼠游標所在的面板（命中測試，不看 focus）
 - Enter：在新終端開啟 Claude Code（Windows Terminal 新 tab / tmux 新 window）
 - 快捷鍵 [c][l][r][s]：同樣在新終端啟動對應的 agent
+- [i]：開啟專案的 Issue Tracker 列表（Loop Slot 焦點時開該 slot 的 issue 頁）
+- [p]：開啟 PR 頁面 — 主畫面開專案 PR 列表；Loop Slot 焦點時以 `FindPRByBranch` 定位該 slot 的 PR，查不到則 fallback `/pulls?head=<branch>`
+- [G]：在新終端開啟 lazygit — 主畫面以專案根為工作目錄；Loop Slot 焦點時以 slot 的 worktree 為工作目錄
+- [U]：在新終端執行 `claude update`（Windows 用 `cmd /c "claude update & pause"` 保留畫面，tmux 用 `read -n1` 等待按鍵）
 - [u]：移除 Zpit 部署到專案的 agents/docs/hooks 檔案
+- [d]：清除現有部署後重新寫入 4 個 agents (clarifier/reviewer/task-runner/efficiency) + hooks + docs，**不啟動 Claude**（confirm 後執行）
+- 專案名稱旁的狀態標記：🟢 已部署（全部 10 個檔案齊全）、🟡 部分部署（部分檔案缺失或只部署過單一 agent）、⚪ 未部署
 - [f]：啟動效率 Agent（輕量模式，無 hooks、無 tracker、self-review）
-- Tab：三面板循環切換 — 專案列表 → 活躍終端（有終端時）→ Loop 狀態（有 slot 時）→ 專案列表
+- [w]：啟動 desktop agent（W for Window control）— 全域控制 OS（滑鼠/鍵盤/截圖/視窗管理），透過 `zpit serve-desktop-proxy` policy gate；cwd = `$HOME`，所有 TUI 連線共用一個實例（single-instance lock）；不需選專案；Linux 為 no-op 並從 hotkeys 隱藏（upstream `computer-use-mcp` 無 Linux backend）
+- Tab：循環切換 focus panel — 專案 → 活躍終端（有終端時）→ Loop（有 slot 時）→ 專案；Hotkeys 面板不納入 Tab cycle（純參考資訊，空間不足時自動收合 separator blank row、尾端補 `…`）
 - [x]：當焦點在活躍終端時，關閉選中的終端（force kill process，需確認）
-- 「活躍終端」區域：即時顯示正在運行的 Claude Code session 狀態，支援 cursor 選擇和 x 鍵關閉
-  （資料來源：Claude Code session log + JSONL 解析）
-- 「最近活動」區域：**尚未實作** — 設計上從 session log 解析 agent 的具體操作
 
 ---
 
@@ -166,7 +178,7 @@ TUI 本身透過 session log 即時顯示進度摘要。
 ║  待機台驗證 (1)                                                    ║
 ║    ASE-44  Motion 軸 homing 順序修正      已 merge，待機台測試     ║
 ║                                                                    ║
-║  操作: [y] 確認 issue → Todo  [p] 在瀏覽器開啟 issue               ║
+║  操作: [y] 確認 issue → Todo  [i] 在瀏覽器開啟 issue               ║
 ║                                                                    ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
@@ -259,3 +271,111 @@ TUI 本身透過 session log 即時顯示進度摘要。
 - `internal/git/ops.go` — git exec 封裝（FetchAll / PullFF / Branches / Graph）與輸出 parser
 - `internal/tui/gitstatus.go` — message handlers + tea.Cmd（GitStatusMsg / GitOpDoneMsg）
 - `internal/tui/view_gitstatus.go` — render 函式（branch table + graph viewport）
+
+---
+
+## 2.7 History (Session Browser) — `[h]` ✅ 已實作
+
+按 `[h]` 進入跨機器 session 同步介面，列出 `~/.claude/projects/` 底下所有 encoded 資料夾、提供匯出 zip bundle 與匯入 zip bundle 的 wizard。
+
+### 資料夾清單（folder list）
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  History — ~/.claude/projects/                       [Esc] 返回    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                    ║
+║  Encoded Folders — ~/.claude/projects/                             ║
+║  ────────────────────────────────────────────────────────────      ║
+║                                                                    ║
+║     [+] Import bundle...                                           ║
+║                                                                    ║
+║   › 🟢 D--Documents-MyProjects-zpit                                ║
+║         12 sessions  4.2 MB  04/26 14:30                           ║
+║                                                                    ║
+║     -home-jeff-projects-zacfuse                                    ║
+║         3 sessions  812 KB  04/24 09:12                            ║
+║                                                                    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Enter: open  [E]: export all  [i]: import  [Esc] back  [q] quit  ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+
+### Session 清單（session list — drilled in）
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  Sessions — D--Documents-MyProjects-zpit             [Esc] 返回    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                    ║
+║   › [x] 🧩 🟢 6f81a4c3-9e0d-...                                    ║
+║         812 KB  04/26 14:30                                        ║
+║                                                                    ║
+║     [ ] 🧩    a3e7b2c1-8f1d-...                                    ║
+║         412 KB  04/26 13:08                                        ║
+║                                                                    ║
+║     [ ]       2c0d4f8e-1a3b-...                                    ║
+║         48 KB   04/25 22:14                                        ║
+║                                                                    ║
+║     1 selected                                                     ║
+║                                                                    ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Space: select  [a]: toggle all  [e]: export  Enter: detail  [Esc] back ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+
+### 快捷鍵
+
+#### Folder list
+| Key | Action |
+|-----|--------|
+| `↑↓` | 上下選取資料夾或 `[+] Import bundle...` |
+| `Enter` | 進入該資料夾的 session 清單；row 0 觸發匯入 wizard |
+| `[E]` | 對焦中的資料夾匯出全部 sessions（pre-select all） |
+| `[i]` | 開啟匯入 wizard |
+| `Esc` | 返回主畫面 |
+
+#### Session list
+| Key | Action |
+|-----|--------|
+| `↑↓` | 上下選取 session |
+| `Space` | 切換當前 row 的選取（`[x]` / `[ ]`） |
+| `[a]` | toggle-all-on（任一未選）或 toggle-all-off |
+| `[e]` | 開啟匯出 confirm modal |
+| `Enter` | 嘗試開啟詳細檢視（v1 顯示 "coming in follow-up issue"） |
+| `Esc` | 返回 folder list |
+
+### 匯出流程（Export）
+
+1. 從 session list `[e]` 觸發 → 若任一選取的 session 仍 alive，先彈出 active-session warning（資訊性，不會 hard-block）。
+2. Export confirm modal：顯示總數、總大小、`[ ] Include memory/` 勾選框（預設 OFF）、輸出路徑（pre-fill `~/.zpit/exports/<folder>-<ts>.zip`）。
+3. 確認後 `Pack` 將 sessions、subagents 子樹、可選 memory 子樹、manifest 全部塞入 zip。
+4. 完成後 status bar 顯示 `Exported N session(s) to <path>`。
+
+### 匯入流程（Import）
+
+1. 從 folder list `[i]` 觸發 → bundle 路徑 textinput。
+2. Bundle 路徑 Enter → `LoadManifest` 讀 zip 內 `manifest.json` → 顯示 manifest preview（source OS、source path、session 數、memory 與否）。
+3. Manifest preview：每個 session 都有 checkbox（預設全勾），`Space` 切換、`[a]` toggle-all、Enter 進下一步。
+4. Destination path textinput → 必須是絕對路徑，Zpit 用 `watcher.EncodeCwd` 推導目標 encoded 資料夾。
+5. Final preview：「Will write to `~/.claude/projects/<dest-encoded>/`, N sessions, memory: yes|no」，Enter 確認。
+6. Pre-flight collision detection：每個會 collision 的 session 都跳出 3-button modal（**Overwrite** / **Skip this session** / **Cancel entire import**）；memory 目錄 collision 也走同樣流程。
+7. `Unpack` 串流每行 JSONL：JSON object 中 `"cwd"` 欄位等於 bundle `source_cwd` 才會被改寫成 destination cwd；其他內容（包含 chat content 中出現的 path-shaped string）絕不更動。Subagents 子樹 verbatim 複製。
+8. 完成後跳出 summary：`written N skipped M cancelled K, memory: written|skipped|not-included`。
+
+### 設計決策
+
+- **為何 zip 而非 tar.gz**：Windows 雙擊即可解壓；tar.gz 需 7-Zip 或 CLI。
+- **為何 path rewrite 在 import 時**：destination cwd 在匯出時未知；單一 bundle 可重複匯入到不同機器。
+- **為何 JSON-aware rewrite**：line-by-line `json.Unmarshal` → 修改 `cwd` 欄位 → re-marshal，確保只有 `cwd` 欄位被改寫，避免改到 chat 內容裡的 path 字串。
+- **為何 subagents 預設包含、memory 預設不包含**：subagents 是 session-bound、loop-engine session replay 必需；memory 是 project-scoped、可能含 user-private 內容（email、dated notes），需明確 opt-in。
+- **為何 active-session warning 是資訊性**：使用者隨時可決定強制匯出，TUI 不應 hard-block 工作流程。
+
+相關檔案：
+- `internal/sessionsync/manifest.go` — Manifest schema + JSON marshal/unmarshal + `DetectSourceOS`
+- `internal/sessionsync/scan.go` — `ScanFolders` / `ScanSessions` / `ProjectsRoot`
+- `internal/sessionsync/pack.go` — `Pack` zip writer + cwd auto-detection from session lines
+- `internal/sessionsync/unpack.go` — `Unpack` + cwd rewrite + collision-checked write + `LoadManifest` + `DetectCollisions`
+- `internal/tui/sessions.go` — cmd factories + msg handlers (entry/exit logs, active-session detection)
+- `internal/tui/view_sessions.go` — folder list / session list / modal rendering
+- `internal/tui/model.go` — `ViewHistory` constant、`[h]` 鍵 handler、wizard 步驟狀態機（步驟 0–5 import、步驟 0–3 export）

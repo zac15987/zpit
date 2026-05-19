@@ -164,7 +164,7 @@ Issue Spec 的每個 section 注入到明確的位置，coding agent 不需要�
 6. **Allowed File Scope** ← SCOPE（超出範圍必須停下問使用者）
 7. **Constraints** ← CONSTRAINTS
 8. **References** ← REFERENCES（可選）
-9. **Logging Policy** ← 依 profile 的 `log_policy` 生成文字
+9. **Logging Policy** ← 依 project 的 `log_policy` 生成文字
 10. **Task Decomposition** ← TASKS（可選，有 TASKS 時切換為任務導向工作流）
 11. **Your Workflow** — 工作流程步驟（讀 CLAUDE.md → 讀 tracker.md → 讀 guidelines → 實作 → 自檢 → commit → label 更新 → 開 PR）
 12. **When to Stop and Ask** — 需要停下問使用者的情境
@@ -174,8 +174,9 @@ Issue Spec 的每個 section 注入到明確的位置，coding agent 不需要�
 - 額外注入 **Task Decomposition** 和 **Execution Strategy** sections
 - Coding agent 作為 **orchestrator**，不自行實作——將每個 task 委派給 `task-runner` subagent（context 隔離）
 - 循序 task（無 `[P]`）：透過 Agent tool 依序委派給 `task-runner` subagent
-- 平行 task（有 `[P]`）：建立 Agent Team，每個 `[P]` task 分配一個 teammate（使用 `task-runner` subagent type）
-- 混合場景：按 dependency order 排列——循序用 subagent、平行群組用 Agent Team
+- 平行 task（有 `[P]`）：派發一個「平行 subagent batch」，每個 `[P]` task 分配一個 `task-runner` subagent（走 Claude Code 的一般 subagent 路徑 + `isolation: "worktree"`，而不是 Claude Code 的 Agent Team 機制）
+- 平行 subagent 各自擁有一個 child worktree（orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`，觸發 zpit 的 `WorktreeCreate` hook 從 orchestrator 的 HEAD 分叉出 `.zpit-children/<slug>`），在自己的 branch 上正常 commit。Agent tool 回傳值只含 `worktreePath`（Claude Code 不 propagate `worktreeBranch`，見 known-issues §3），所以 orchestrator 先用 `git -C <path> rev-parse --abbrev-ref HEAD` 查各 subagent 的分支名，再 cherry-pick 回父 branch。Cleanup 分兩個獨立 Bash call：`git worktree remove --force <path>` 與 `git branch -D <branch>`（絕不串 `&&`，避免 hook 擋下其中一個連累另一個；詳見 known-issues §4）。Cherry-pick 衝突（spec bug：兩個 `[P]` task 寫同檔）會被 `cherry-pick --abort` 當面擋下，不會靜默回寫。詳見 `docs/architecture/06-agents.md` §6.3
+- 混合場景：按 dependency order 排列——循序與平行 batch 交錯派發
 - Commit 格式：`[ISSUE-ID] T{N}: {描述}`
 - 每個 subagent 完成後 orchestrator 驗證 commit，失敗重試一次，仍失敗則停下通知（不開 PR）
 - 所有 tasks 完成後，orchestrator 執行完整 ACCEPTANCE_CRITERIA 自我檢查再開 PR

@@ -27,6 +27,9 @@ func resolveProfileAndShell(profile string) (string, string, []string) {
 
 func launchWindows(project config.ProjectConfig, cfg config.TerminalConfig, path string, extraArgs []string) (*LaunchResult, error) {
 	profile, shell, warnings := resolveProfileAndShell(cfg.WindowsTerminalProfile)
+	if w := ShellResolutionWarning(shell); w != "" {
+		warnings = append(warnings, w)
+	}
 	args := BuildWindowsArgs(project.Name, path, cfg.WindowsMode, profile, shell, extraArgs)
 
 	cmd := exec.Command("wt.exe", args...)
@@ -49,6 +52,9 @@ func launchTmux(_ config.ProjectConfig, _ config.TerminalConfig, _ string, _ []s
 
 func launchWindowsInDir(tabTitle string, cfg config.TerminalConfig, path string, extraArgs []string) (*LaunchResult, error) {
 	profile, shell, warnings := resolveProfileAndShell(cfg.WindowsTerminalProfile)
+	if w := ShellResolutionWarning(shell); w != "" {
+		warnings = append(warnings, w)
+	}
 	args := BuildWindowsArgs(tabTitle, path, cfg.WindowsMode, profile, shell, extraArgs)
 
 	cmd := exec.Command("wt.exe", args...)
@@ -66,5 +72,45 @@ func launchWindowsInDir(tabTitle string, cfg config.TerminalConfig, path string,
 }
 
 func launchTmuxInDir(_ string, _ config.TerminalConfig, _ string, _ []string) (*LaunchResult, error) {
+	return nil, fmt.Errorf("tmux not available on Windows")
+}
+
+func launchLazygitWindows(tabTitle string, cfg config.TerminalConfig, workDir string) (*LaunchResult, error) {
+	profile, _, warnings := resolveProfileAndShell(cfg.WindowsTerminalProfile)
+	args := BuildLazygitWindowsArgs(tabTitle, workDir, cfg.WindowsMode, profile)
+	cmd := exec.Command("wt.exe", args...)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching lazygit: %w", err)
+	}
+	return &LaunchResult{
+		Env:        platform.EnvWindowsTerminal,
+		Command:    "wt.exe",
+		Args:       args,
+		SwitchHint: fmt.Sprintf("Tab: %s", tabTitle),
+		Warnings:   warnings,
+	}, nil
+}
+
+func launchLazygitTmux(_ string, _ config.TerminalConfig, _ string) (*LaunchResult, error) {
+	return nil, fmt.Errorf("tmux not available on Windows")
+}
+
+func launchClaudeUpdateWindows(cfg config.TerminalConfig) (*LaunchResult, error) {
+	profile, _, warnings := resolveProfileAndShell(cfg.WindowsTerminalProfile)
+	args := BuildClaudeUpdateWindowsArgs(cfg.WindowsMode, profile)
+	cmd := exec.Command("wt.exe", args...)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching claude update: %w", err)
+	}
+	return &LaunchResult{
+		Env:        platform.EnvWindowsTerminal,
+		Command:    "wt.exe",
+		Args:       args,
+		SwitchHint: "Tab: claude update",
+		Warnings:   warnings,
+	}, nil
+}
+
+func launchClaudeUpdateTmux(_ config.TerminalConfig) (*LaunchResult, error) {
 	return nil, fmt.Errorf("tmux not available on Windows")
 }

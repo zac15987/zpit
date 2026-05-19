@@ -53,9 +53,17 @@ Issue 進入 In Progress
     ├─ 6. PR merge 後清理
     │     git worktree remove <worktree-path>
     │     git branch -d feat/ISSUE-ID-slug
+    │     git fetch origin <base>:<base>  （更新主目錄本地 base branch ref）
     │
     └─ 7. Issue → Done
 ```
+
+**Zpit 有兩層 worktree**（本節描述的是 **issue 層**）：
+
+- **Issue 層**（本節）：每個 Loop slot / issue 一個 worktree，由 `internal/worktree/Manager` 在 Go 端管理，掛在 `base_dir_*` 下。這是 coding agent / reviewer 的工作目錄。
+- **Parallel subagent 層**（Task Execution Model）：`[P]` 平行批次時，orchestrator 在 issue worktree 內建立 child worktree — 路徑 `<issue-wt>/.zpit-children/<slug>`，由 `WorktreeCreate` hook（`hooks/worktree-create.sh`）管理，不走 Go Manager。Batch 結束後 orchestrator 自己 `git worktree remove --force` + `git branch -D`。`.zpit-children/` 是 zpit gitignore rule，所以永遠不會進 PR。詳見 `06-agents.md §6.3`。
+
+兩層互不干涉：issue worktree 的 lifecycle（建→ agent 工作 → PR merge → 清理）在 Go 層；parallel-subagent worktree 的 lifecycle 在 coding agent 的 prompt 層（hook 建、orchestrator 清）。
 
 ---
 
@@ -133,6 +141,8 @@ TUI 按 [l]
 │  │    └─ label 未變 → 繼續輪詢                            │
 │  │                                                        │
 │  │ 9. 偵測 PR merged → 清理 worktree + branch             │
+│  │    + 同步本地 base branch（git fetch origin <base>:<base>）│
+│  │    失敗時 log warning，不中斷 issue 關閉流程             │
 │  │                                                        │
 │  │ 10. 回到步驟 1 抓下一個 issue                          │
 │  │                                                        │
@@ -158,20 +168,35 @@ SlotLaunchingReviewer   啟動 reviewer agent 中
        ↓
 SlotReviewing           reviewer 工作中（poll labels 等待 "ai-review" 或 "needs-changes"）
        ↓                           ↓
-SlotWaitingPRMerge      SlotCoding (needs-changes → 重跑，round++)
-       ↓
-SlotCleaningUp          清理 worktree + branch
-       ↓
-SlotDone                完成
+  (ai-review fork)     SlotCoding (needs-changes → 重跑，round++)
+       │
+       ├─ auto_merge=false → SlotWaitingPRMerge   （poll PR 狀態等人工 merge）
+       └─ auto_merge=true  → SlotAutoMerging      （呼叫 tracker merge API）
+                                  ↓
+                            SlotCleaningUp       清理 worktree + branch + 同步本地 base branch ref
+                                  ↓
+                            SlotDone             完成
 
 異常狀態:
-SlotNeedsHuman          超過 max_review_rounds，需人工介入
-SlotError               流程中發生錯誤
+SlotNeedsHuman          超過 max_review_rounds，或 auto-merge 永久失敗/transient 重試用盡
+SlotError               流程中發生錯誤（含 auto-merge 的 auth 錯誤）
 ```
 
 狀態轉換是 **label 驅動**（poll issue labels，非 PID 監控）：
 - Coding agent 設定 `review` label → reviewer 啟動
 - Reviewer 設定 `ai-review` (PASS) 或 `needs-changes` (auto-retry)
+
+**Polling chain 的心跳實作（tick-driven）：** 三個等待型狀態各自對應一條獨立的 `tea.Tick` 心跳鏈：
+
+| 狀態 | Poll 內容 | 下一個 tick 由誰排 |
+|---|---|---|
+| 任何 Active loop | 抓 todo issues | `handleLoopPollTick` |
+| `SlotCoding` / `SlotReviewing` | 抓 issue labels | `handleLoopLabelPollTick` |
+| `SlotWaitingPRMerge` | 抓 PR 狀態 | `handleLoopPRPollTick` |
+
+**關鍵不變量：心跳的 reschedule 只發生在 `model.go` 的 tick case（`loop_handler.go` 的 `handleLoop*Tick` 系列），不發生在 business handler（`handleLoopPoll` / `handleLoopLabelPoll` / `handleLoopPRStatus`）。** 每個 tick handler 在入口檢查 gate（loop `Active` + slot state 正確），通過就 `tea.Batch(pollCmd, scheduleNextTick)` 預先排好下一跳；不通過就 return nil，心跳自然停止。business handler 只負責 state transition，不得自行 reschedule。
+
+這個設計避免了「handler return nil 路徑漏寫 reschedule 導致整條 poll 鏈永久啞掉」的 bug（2026-04-18 log 觀察到）。新增狀態或 poll 鏈時：`loopSchedulePoll` / `loopSchedulePRPoll` / `loopScheduleLabelPoll` 只能在 **kickoff** 時機呼叫（loop 啟動、transition 進入等待狀態、resume），禁止在 business handler 的 mid-chain 呼叫。`internal/tui/loop_tick_test.go` 覆蓋這個不變量。
 
 `Slot` struct 追蹤每個 issue 在 pipeline 中的狀態：
 
@@ -190,6 +215,27 @@ type Slot struct {
     LaunchedAt   int64     // unix timestamp
 }
 ```
+
+---
+
+### Auto-Merge 分支
+
+當專案的 `auto_merge = true`（per-project，預設 false），reviewer 設 `ai-review` label 後不進入 `SlotWaitingPRMerge`，改進入 `SlotAutoMerging`：由 Go 端直接呼叫 tracker 的 merge API。
+
+**重試策略（transient error）：**
+- 最多 3 次嘗試，backoff 1s / 4s / 16s。
+- Transient 分類：HTTP 5xx / 408 / 429、`context.DeadlineExceeded`、`net.Error.Timeout() == true`。
+- 每次嘗試使用獨立的 30 秒 context timeout。
+
+**Short-circuit（立刻跳出不重試）：**
+- Permanent：HTTP 409（衝突）/ 405（不允許）/ 422（不可合併）或 PR 回傳 state=`closed` 未 merge → 轉入 `SlotNeedsHuman`，保留 worktree 和 branch 供人工處理。
+- Auth：HTTP 401 / 403 → 轉入 `SlotError`，這是一次性的 config 問題（token 失效或權限不足），重試沒意義。
+
+**Commit title：** `[<IssueID>] <IssueTitle>`（使用 slot.IssueTitle，不再另外呼叫 API）。
+
+**Merge method：** 由 `project.merge_method` 決定（`squash` | `merge` | `rebase`），空值預設 `squash`。
+
+**安全考量：** merge API 由 Go 程式直接呼叫，不經過 `git-guard.sh` 的 push whitelist。這是刻意設計 — Layer 5 安全閘門從「人工審查」變成「AI reviewer PASS 判斷」，使用者須評估 reviewer model 的品質是否值得信任才啟用。詳見 `09-safety.md`。
 
 ---
 

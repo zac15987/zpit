@@ -58,3 +58,55 @@ func TestBuildTrackerURL_GitHub(t *testing.T) {
 		t.Errorf("got %q, want %q", url, want)
 	}
 }
+
+func TestBuildPRListURL_Forgejo(t *testing.T) {
+	provider := config.ProviderEntry{Type: "forgejo_issues", URL: "https://git.example.com/"}
+	url := BuildPRListURL(provider, "org/repo")
+	want := "https://git.example.com/org/repo/pulls"
+	if url != want {
+		t.Errorf("got %q, want %q", url, want)
+	}
+}
+
+func TestBuildPRListURL_GitHub(t *testing.T) {
+	provider := config.ProviderEntry{Type: "github_issues"}
+	url := BuildPRListURL(provider, "user/repo")
+	want := "https://github.com/user/repo/pulls"
+	if url != want {
+		t.Errorf("got %q, want %q", url, want)
+	}
+}
+
+func TestBuildPRListURL_UnknownType(t *testing.T) {
+	provider := config.ProviderEntry{Type: "unknown"}
+	url := BuildPRListURL(provider, "org/repo")
+	if url != "" {
+		t.Errorf("expected empty string, got %q", url)
+	}
+}
+
+func TestBuildPRFilterURL_WithBranch(t *testing.T) {
+	provider := config.ProviderEntry{Type: "github_issues"}
+	url := BuildPRFilterURL(provider, "user/repo", "feat/10-foo")
+	want := "https://github.com/user/repo/pulls?state=all&head=feat/10-foo"
+	if url != want {
+		t.Errorf("got %q, want %q", url, want)
+	}
+}
+
+func TestBuildPRFilterURL_EmptyBranchFallsBackToList(t *testing.T) {
+	provider := config.ProviderEntry{Type: "github_issues"}
+	url := BuildPRFilterURL(provider, "user/repo", "")
+	want := "https://github.com/user/repo/pulls"
+	if url != want {
+		t.Errorf("got %q, want %q", url, want)
+	}
+}
+
+func TestBuildPRFilterURL_UnknownType(t *testing.T) {
+	provider := config.ProviderEntry{Type: "unknown"}
+	url := BuildPRFilterURL(provider, "org/repo", "feat/x")
+	if url != "" {
+		t.Errorf("expected empty string, got %q", url)
+	}
+}

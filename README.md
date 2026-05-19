@@ -8,52 +8,43 @@
 
 ### Main View
 
+Four independently scrollable dock panels — Projects, Active Terminals, Loop Engine (left column, stacked), Hotkeys (right column). Catppuccin Mocha palette with a single-column `▎` mauve bar marking the focused panel.
+
 ```
- Zpit v0.1                                        03/27 14:07  Windows Terminal
+ Zpit v0.1                                            04/19 15:04  Windows Terminal
 
 
-  Projects                                                Hotkeys
-  ────────────────────────────────                        ──────────────────────────
-
-   ⚙️ AI Inspection Cleaning Demo                         [Enter] Launch Claude Code
-     machine │ wpf, ethercat, basler                      [c] Clarify requirement
-                                                          [l] Loop auto-implement
-   ⚙️ ENR DUC                                             [r] Review changes
-     machine │ wpf, secsgem                               [f] Efficiency agent
-                                                          [s] Status overview
-   🖥️ DisplayProfileManager                               [o] Open project folder
-     desktop │ wpf, nlog                                  [p] Open Issue Tracker
-                                                          [u] Undeploy agents
- › 🖥️ Zpit                                                [m] Channel communication
-     desktop │ go, bubbletea
-                                                          [a] Add project
-                                                          [e] Edit config
-
-                                                          [x] Close Terminal
-                                                          [Tab] Switch Panel
-                                                          [?] Help
-                                                          [q] Quit
-
-
-  Active Terminals
-  ──────────────────────────────────────────────────
-  [1] AI Inspection Cleaning Demo │ 🟡 Waiting for input 04:15
-      Q: Issue B pushed: **[#25 — feat(manual-control): Safety Interlock + Soft Lim
-  [2] Zpit │ 🟡 Waiting for input 08:36
-      Q: Pushed to `origin/dev`. Commit `2094bea`.
-  [3] Zpit │ 🟢 Launched 00:09
-      Tab: Zpit
-
-
-  Loop Status
-  ──────────────────────────────────────────────────
-  AI Inspection Cleaning Demo (running)
-    🟢 #25 feat(manual-control): Safety Interlock...  coding
-
+▎ PROJECTS  7                                         HOTKEYS
+  ──────                                              ──────
+  › AI Inspection Cleaning Demo  ⚪ not deployed     [Enter] Launch Claude Code
+     machine │ wpf, ethercat, basler                  [c] Clarify requirement
+                                                      [l] Loop auto-implement
+    ENR DUC  ⚪ not deployed                          [r] Review changes
+     machine │ wpf, secsgem                           [f] Efficiency agent
+                                                      [s] Status overview
+    DisplayProfileManager  ⚪ not deployed            [o] Open project folder
+     desktop │ wpf, nlog                              [i] Open Issue Tracker
+                                                      [p] Open PR
+    Zpit  🟢 deployed                                 [u] Undeploy agents
+     terminal │ go, bubbletea                         [d] Redeploy all agents
+                                                      [m] Channel communication
+    Zplex  ⚪ not deployed                             [g] Git status
+     desktop │ go, electron, xterm                    [G] Open lazygit
+                                                      [U] Run claude update
+    Zacfuse  🟢 deployed                              [a] Add project
+     web │ astro, typescript, docs                    [e] Edit config
+                                                      [x] Close Terminal
+                                                      [Tab] Switch Panel
+  ACTIVE TERMINALS  1                                 [?] Help
+  ──────                                              [q] Quit
+  ›[1] Zpit │ 🟡 Waiting for input 00:15
+      Q: Commit 2198be6 pushed to `origin/dev`, working tre
 
 
   Press ? for help, q to quit
 ```
+
+Tab cycles focus between Projects → Active Terminals (when any) → Loop Engine (when any slot exists); Hotkeys stays docked to the right as read-only reference. `↑↓/PgUp/PgDn` scroll the focused panel only; mouse wheel scrolls whichever panel the cursor hovers. Below ~40 cols the left/right widths auto-shrink, but Hotkeys never drops below the other panels.
 
 ### Status View
 
@@ -69,7 +60,7 @@
 
 
 
-  [y] Confirm (pending→todo)  [p] Open in browser  [Esc] Back
+  [y] Confirm (pending→todo)  [i] Open in browser  [Esc] Back
 ```
 
 ## How It Works
@@ -92,6 +83,7 @@ You (TUI)                    Claude Code Agents
     ├─ [s] Status ────────────► shows issue list from tracker
     ├─ [r] Review ────────────► launches reviewer on demand
     ├─ [f] Efficiency ────────► lightweight agent (no hooks, no tracker, self-review)
+    ├─ [d] Redeploy ──────────► undeploy + re-write all agents/hooks/docs (no launch)
     └─ [Enter] ───────────────► launches Claude Code directly
 ```
 
@@ -99,7 +91,7 @@ You (TUI)                    Claude Code Agents
 
 - **Multi-project dashboard** — switch between projects with arrow keys, mouse scroll support
 - **Loop engine** — fully automated: poll todo issues → create worktree → coding agent → reviewer → PR merge → cleanup
-- **Task decomposition** — when an Issue Spec contains `## TASKS`, the coding agent delegates to `task-runner` subagents (sequential or parallel via Agent Teams)
+- **Task decomposition** — when an Issue Spec contains `## TASKS`, the coding agent delegates to `task-runner` subagents (sequential, or parallel batches with per-subagent `isolation: "worktree"`)
 - **Agent monitoring** — real-time status via session log parsing (Working / Waiting / Permission / Ended), auto-detects running sessions on startup, survives `/resume` session switches
 - **Notifications** — Windows Toast + sound when an agent needs your input or awaits tool permission
 - **Issue tracker integration** — Forgejo/Gitea and GitHub via REST API + MCP
@@ -108,8 +100,62 @@ You (TUI)                    Claude Code Agents
 - **5-layer safety system** — agent-guidelines.md, allowed tools, PreToolUse hooks, git worktree isolation, human PR review
 - **Per-issue branch control** — clarifier asks target branch, coding agent enforces it
 - **Auto-retry** — reviewer judges NEEDS CHANGES → coding agent auto-fixes → re-review (configurable rounds)
-- **i18n** — English and Traditional Chinese (zh-TW) via `locale.T()`
+- **i18n** — TUI chrome localized to English or Traditional Chinese (zh-TW) via `locale.T()`; all agent output (Issue Specs, commits, PR bodies, channel messages) is always English regardless of TUI locale, for token efficiency
+- **Per-role model selection** — `[agent_models]` lets you choose a model per agent role (defaults to Opus across all roles with 1M context, tuned for single-round coding→review accuracy); override any value in config
 - **SSH remote access** — `zpit serve` runs a headless SSH daemon (Wish), multiple clients share one dashboard with real-time state sync; `auto_serve` mode starts the server automatically when running `zpit`, enabling seamless mobile access without workflow interruption
+- **Desktop agent** — `[w]` launches a global Claude Code session that drives the OS (mouse, keyboard, screenshots, accessibility actions) through a policy-enforced MCP proxy. Backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp), our fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp). Single-instance, macOS + Windows only.
+
+## Session sync (cross-machine /resume)
+
+When you work across multiple machines (laptop at home, desktop at the office) and want to continue a long Claude Code conversation on the other machine, the session JSONL file is the unit of replay — but Claude Code's `~/.claude/projects/<encoded-cwd>/` directory uses an OS-specific encoded folder name and embeds the absolute project path inside every session line. A naive file copy is invisible to `claude --resume` on the other side.
+
+Zpit's **`[h] History`** view bridges this. From the main dock press `h` to open the Session Browser:
+
+- Top level: every encoded folder under `~/.claude/projects/`. Each row shows session count, total size, last-modified time, and a 🟢 marker when at least one session is currently alive on this machine.
+- Drill into a folder: every `*.jsonl` session with multi-select checkboxes. 🧩 marks sessions that have a sibling `<id>/subagents/` directory; 🟢 marks live sessions.
+
+### Export
+
+In the session list, select one or more sessions with `Space` (or `[a]` to toggle all). Press `[e]` to export. Zpit warns if any selected session is currently active (informational — you can still proceed) and writes a zip bundle containing:
+
+- One `<session-id>.jsonl` per selected session at the zip root.
+- One `<session-id>/subagents/` subtree per selected session that has subagents on disk (preserved verbatim).
+- A `manifest.json` describing the source OS and absolute project path so the importer can rewrite paths.
+- Optionally a `memory/` subtree (opt-in via the `[ ] Include memory/` checkbox at export time — off by default to avoid leaking project-private notes).
+
+Default output path: `~/.zpit/exports/<folder-name>-<YYYYMMDD-HHMMSS>.zip`.
+
+You can also press `[E]` (capital) on a folder row in the top-level view to export every session in that folder in one shot.
+
+### Import
+
+From the top-level folder list, press `[i]` (or select the `[+] Import bundle...` row + Enter) to open the import wizard. Steps:
+
+1. Bundle path entry — type the path to a `.zip` produced by the exporter above.
+2. Manifest preview — Zpit reads `manifest.json` and shows source OS, source path, session count, memory inclusion. Per-session checkboxes let you deselect individual sessions.
+3. Destination path — type the absolute path of the destination project on this machine.
+4. Final preview — Zpit shows the resolved `~/.claude/projects/<dest-encoded>/` and the action plan. Confirm to run.
+5. Run — Zpit rewrites `cwd` fields in each session JSONL line to the destination path (only the JSON `cwd` field, never literal path text in chat content), copies subagents verbatim, and optionally writes `memory/` if the bundle included it.
+
+If the destination already has a session with the same ID, you get a 3-button collision modal: **Overwrite**, **Skip this session**, or **Cancel entire import**. The same prompt applies to the `memory/` directory.
+
+After import, `claude --resume <session-id>` on this machine sees the new file.
+
+### Bundle format
+
+The zip bundle contains:
+
+```
+<bundle.zip>
+├── manifest.json                     # format_version, source_os, source_cwd,
+│                                     # source_encoded_cwd, sessions[], exported_at,
+│                                     # include_memory
+├── <session-id>.jsonl                # one per session (lines streamed)
+├── <session-id>/subagents/...        # one per session with subagents (verbatim)
+└── memory/...                        # only when include_memory=true
+```
+
+`source_cwd` is sourced from any session line's `cwd` field when available; only when no line has one does the exporter fall back to a lossy reverse-derivation of the encoded folder name.
 
 ## Requirements
 
@@ -164,10 +210,21 @@ base_dir_windows = "D:/worktrees"
 base_dir_wsl = "/mnt/d/worktrees"
 max_per_project = 5
 poll_seconds = 10           # todo issue polling interval
-pr_poll_seconds = 10        # PR merge polling interval
+pr_poll_seconds = 10        # PR merge polling interval (only used when auto_merge = false)
 max_review_rounds = 3       # auto-retry rounds before needs-human
 # dir_format = "{project_id}/{issue_id}--{slug}"
 # auto_cleanup = false
+
+# Per-role model selection — passed to Claude Code via --model at launch.
+# Aliases (opus/sonnet/haiku) resolve per provider; append [1m] to opt
+# into the 1M-context tier. Pin to a full ID (e.g. claude-opus-4-7[1m])
+# if you need cross-provider consistency.
+[agent_models]
+clarifier = "opus[1m]"      # requirement clarification — deepest reasoning (1M context)
+coding = "opus[1m]"         # feature implementation (1M context)
+reviewer = "opus[1m]"       # PR review (1M context)
+task_runner = "opus[1m]"    # advisory — subagents inherit the coding session's model
+efficiency = "opus[1m]"     # efficiency-review agent (manual [f]) — deep reasoning
 
 # Tracker providers — token read from env var, never stored in config
 [providers.tracker.my-forgejo]
@@ -181,25 +238,22 @@ token_env = "FORGEJO_TOKEN"
 # url = "https://your-forgejo.example.com"
 # token_env = "FORGEJO_TOKEN"
 
-# Profiles control logging strictness for agents
-[profiles.machine]
-log_policy = "strict"       # strict | standard | minimal
-
 # Projects
 [[projects]]
 name = "My Project"
 id = "my-project"
-profile = "machine"
+profile = "machine"         # display tag: machine | desktop | web | android | terminal (for TUI icon)
 hook_mode = "strict"        # strict | standard | relaxed
+log_policy = "standard"     # strict | standard | minimal — agent logging strictness
 tracker = "my-forgejo"
 # tracker_project = "My_Project"  # tracker project name if different from repo
 # git = "my-forgejo"              # git provider for PR operations
 repo = "org/repo"
 base_branch = "dev"
-# shared_core = false
-# log_level = "standard"
 channel_enabled = false     # enable cross-agent channel communication
 channel_listen = []         # subscribe to other projects' events, e.g. ["_global", "other-proj"]
+# auto_merge = false      # when true, Zpit calls the tracker merge API after ai-review PASS (opt-in)
+# merge_method = "squash"  # squash | merge | rebase (used when auto_merge = true)
 tags = ["go"]
 
 [projects.path]
@@ -227,12 +281,17 @@ wsl = "/mnt/d/Projects/my-project"
 | `f` | Efficiency — lightweight agent (no hooks, no tracker, self-review) |
 | `s` | Status — view issue list from tracker |
 | `o` | Open project folder |
-| `p` | Open issue tracker in browser |
+| `i` | Open issue tracker in browser |
+| `p` | Open pull request in browser (in Loop Slot focus: the slot's PR; falls back to `/pulls?head=<branch>` if not yet open) |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
+| `d` | Redeploy — undeploy then re-write all 4 agents + hooks + docs (no Claude launch) |
 | `m` | Channel — view cross-agent communication events |
 | `g` | Git Status — view branches (local + remote-only) and commit graph; [f] fetch, [p] pull (--ff-only) |
+| `G` | Open lazygit in new terminal (project root; in Loop Slot focus: slot's worktree) |
+| `U` | Run `claude update` in new terminal (stays open to show result) |
 | `a` | Add project (coming soon) |
 | `e` | Edit config — sub-menu: toggle channel, edit channel_listen, open in $EDITOR |
+| `w` | Window — launch desktop agent (macOS + Windows only; single instance across all clients) |
 | `x` | Close Terminal — force-close selected terminal (when Terminals panel focused) |
 | `Tab` | Switch focus between panels (Projects, Terminals, Loop Slots) |
 | `?` | Help |
@@ -262,7 +321,7 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 | 2 | `--allowedTools` per agent role | Medium — Claude Code enforced |
 | 3 | PreToolUse hooks | Hard — enforced even with `--bypass-all-permissions` |
 | 4 | Git worktree isolation | Physical — agents can't touch main repo |
-| 5 | Human PR review | Final gate — nothing merges without you |
+| 5 | Final merge gate (conditional) | When `auto_merge = false` (default): human PR review is the final gate. When `auto_merge = true`: the AI reviewer's `ai-review` PASS label replaces the human gate and triggers the tracker's merge API. Only enable `auto_merge` when you trust the reviewer model quality on your repo. |
 
 **PreToolUse hooks:**
 - `path-guard.sh` — confines Write/Edit to worktree directory
@@ -326,6 +385,18 @@ go run . connect         # SSH client shortcut
 
 Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 
+## Desktop Agent
+
+Press `[w]` from the main view to launch the desktop agent — a standalone Claude Code session that controls the operating system (mouse, keyboard, screenshots, window/app management, accessibility actions). Unlike project-scoped agents, it is global (cwd = `$HOME` / `%USERPROFILE%`) and limited to one active instance across all connected TUI clients.
+
+The desktop agent is backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) — our fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) by [James Karanja Maina / zavora.ai](https://zavora.ai). The fork adds Windows AUMID launch support in `open_application`, a stdio-entrypoint fix for Windows backslash paths, and tracks the upstream `@modelcontextprotocol/sdk` Zod 4 bump. Many thanks to the upstream authors — none of this would exist without their original work.
+
+Safety is enforced by `zpit serve-desktop-proxy`, a Go MCP proxy that sits between Claude Code and the `npx zpit-desktop-mcp` subprocess. Every JSON-RPC `tools/call` frame is intercepted, evaluated against `~/.zpit/desktop-policy.toml` (auto-created on first run), and either forwarded or rejected with a structured error. Hard-blocked tools include `run_script`, `filesystem`, `process_kill`, `registry`, `notification`, and all virtual-desktop tools; `deny_keys` blocks OS-level escape hatches like `win+r`, `ctrl+alt+del`, and `alt+f4`. The conventional 5-layer hook stack does **not** apply to the desktop agent — the proxy is the safety layer.
+
+Platform support: macOS and Windows. On Linux, `[w]` is a no-op (the upstream Rust NAPI module has no Linux backend).
+
+See [docs/architecture/desktop-agent.md](docs/architecture/desktop-agent.md) for the full design rationale (why proxy over hooks, tool-by-tool allowlist justification, default `deny_keys` per platform).
+
 ## Architecture
 
 See [docs/architecture/](docs/architecture/) for the full architecture documents (split by topic, with an [index](docs/architecture/README.md)).
@@ -352,6 +423,15 @@ Zpit is built on top of the following open source libraries:
 
 All Charmbracelet libraries (`bubbletea`, `bubbles`, `lipgloss`, `huh`, `wish`, `ssh`) are copyright © Charmbracelet, Inc., licensed under the MIT License.
 `fsnotify` and `golang.org/x/*` are BSD-3-Clause; their copyright notices are retained as required.
+
+### Desktop agent — upstream credit
+
+The [`[w]` desktop agent](#desktop-agent) is backed by [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp), our fork of [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) (forked at v6.1.0). The original `computer-use-mcp` package — including the Rust NAPI native backend, the MCP server scaffolding, and the full macOS + Windows toolset — is the work of [James Karanja Maina](mailto:james@zavora.ai) / [zavora.ai](https://zavora.ai), released under the MIT License. Zpit's fork adds Windows AUMID launch support, the stdio-entrypoint backslash fix, and the SDK Zod 4 bump; everything else is upstream. Sincere thanks to the zavora.ai team for making this layer of zpit possible.
+
+| Package | Purpose | License |
+|---------|---------|---------|
+| [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) (zpit fork) | Desktop-control MCP server for the `[w]` agent | MIT |
+| [`@zavora-ai/computer-use-mcp`](https://github.com/zavora-ai/computer-use-mcp) (upstream) | Original MCP server + Rust NAPI native backend | MIT |
 
 ## License
 

@@ -11,15 +11,21 @@ type KeyMap struct {
 	Enter   key.Binding
 	Clarify key.Binding
 	Loop    key.Binding
-	Review     key.Binding
-	Efficiency key.Binding
+	Review        key.Binding
+	Efficiency    key.Binding
+	DesktopAgent  key.Binding
 	Status     key.Binding
 	Open    key.Binding
-	Tracker    key.Binding
+	Tracker      key.Binding
+	OpenPR       key.Binding
+	Lazygit      key.Binding
+	ClaudeUpdate key.Binding
 	Add        key.Binding
 	EditConfig key.Binding
 	Channel    key.Binding
+	History    key.Binding
 	Undeploy   key.Binding
+	Redeploy   key.Binding
 	Help       key.Binding
 	Quit        key.Binding
 	Back        key.Binding
@@ -51,15 +57,21 @@ func DefaultKeyMap() KeyMap {
 		Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "launch Claude Code")),
 		Clarify: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "clarify")),
 		Loop:    key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "loop")),
-		Review:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review")),
-		Efficiency: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "efficiency")),
+		Review:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review")),
+		Efficiency:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "efficiency")),
+		DesktopAgent: key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "desktop agent")),
 		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "status")),
 		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open folder")),
-		Tracker:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "tracker")),
+		Tracker:      key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "tracker")),
+		OpenPR:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "open PR")),
+		Lazygit:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "lazygit")),
+		ClaudeUpdate: key.NewBinding(key.WithKeys("U"), key.WithHelp("U", "claude update")),
 		Add:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add project")),
 		EditConfig: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit config")),
 		Channel:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "channel")),
+		History:    key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "history")),
 		Undeploy:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undeploy")),
+		Redeploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "redeploy")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "back")),

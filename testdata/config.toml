@@ -38,6 +38,20 @@ max_per_project = 5
 poll_seconds = 10
 pr_poll_seconds = 10
 
+# Per-role model selection.
+# - clarifier/coding/reviewer/efficiency: passed to Claude Code via --model at launch.
+# - task_runner: injected into task-runner.md frontmatter at deploy time
+#   (task-runner subagents can run on a different model from the coding orchestrator).
+# Aliases (opus/sonnet/haiku) resolve per provider; [1m] enables the 1M-context tier.
+# Pin to a full ID (e.g. claude-opus-4-7[1m]) if you need cross-provider consistency.
+[agent_models]
+clarifier = "opus[1m]"
+coding = "opus[1m]"
+reviewer = "opus[1m]"
+task_runner = "sonnet"
+efficiency = "opus[1m]"
+desktop = "sonnet[1m]"
+
 [providers.tracker.forgejo-leyu]
 type = "forgejo_issues"
 url = "http://leyu88.synology.me:3000"
@@ -57,22 +71,6 @@ type = "github"
 token_env = "GITHUB_TOKEN"
 
 # ──────────────────────────────────────────────
-# Profiles
-# ──────────────────────────────────────────────
-
-[profiles.machine]
-log_policy = "strict"
-
-[profiles.desktop]
-log_policy = "standard"
-
-[profiles.web]
-log_policy = "minimal"
-
-[profiles.android]
-log_policy = "standard"
-
-# ──────────────────────────────────────────────
 # Projects
 # ──────────────────────────────────────────────
 
@@ -85,9 +83,10 @@ tracker = "forgejo-leyu"
 tracker_project = "AI_Inspection_Cleaning_Demo"
 git = "forgejo-leyu"
 repo = "Leyu-LGBT/AI_Inspection_Cleaning_Demo"
-shared_core = true
-log_level = "strict"
+log_policy = "strict"  # strict | standard | minimal
 base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
 channel_enabled = true
 channel_listen = ["_global"]
 tags = ["wpf", "ethercat", "basler"]
@@ -105,9 +104,10 @@ tracker = "forgejo-leyu"
 tracker_project = "ENR_DUC"
 git = "forgejo-leyu"
 repo = "Leyu-LGBT/ENR_DUC"
-shared_core = true
-log_level = "strict"
+log_policy = "strict"
 base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
 channel_enabled = false
 tags = ["wpf", "secsgem"]
 
@@ -124,9 +124,10 @@ tracker = "github-personal"
 tracker_project = "DisplayProfileManager"
 git = "github"
 repo = "zac15987/DisplayProfileManager"
-shared_core = false
-log_level = "standard"
+log_policy = "standard"
 base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
 channel_enabled = false
 tags = ["wpf", "nlog"]
 
@@ -137,15 +138,16 @@ wsl = "/mnt/d/Documents/MyProjects/DisplayProfileManager"
 [[projects]]
 name = "Zpit"
 id = "zpit"
-profile = "desktop"
+profile = "terminal"
 hook_mode = "relaxed"
 tracker = "github-personal"
 tracker_project = "zpit"
 git = "github"
 repo = "zac15987/zpit"
-shared_core = false
-log_level = "minimal"
+log_policy = "standard"
 base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
 channel_enabled = true
 # channel_listen: subscribe to other projects' SSE streams for cross-project communication.
 # "_global" receives global broadcasts; specific project IDs (e.g. "ase-inspection") receive that project's events.
@@ -167,9 +169,10 @@ tracker = "github-personal"
 tracker_project = "zplex"
 git = "github"
 repo = "zac15987/zplex"
-shared_core = false
-log_level = "standard"
+log_policy = "standard"
 base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
 channel_enabled = false
 channel_listen = ["_global"]
 tags = ["go", "electron", "xterm"]
@@ -177,3 +180,45 @@ tags = ["go", "electron", "xterm"]
 [projects.path]
 windows = "D:/Documents/MyProjects/zplex"
 wsl = "/mnt/d/Documents/MyProjects/zplex"
+
+[[projects]]
+name = "Zacfuse"
+id = "zacfuse"
+profile = "web"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "zacfuse"
+git = "github"
+repo = "zac15987/zacfuse"
+log_policy = "standard"
+base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
+channel_enabled = false
+channel_listen = ["_global"]
+tags = ["astro", "typescript", "docs"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zacfuse"
+wsl = "/mnt/d/Documents/MyProjects/zacfuse"
+
+[[projects]]
+name = "Zac Doc"
+id = "zac-doc"
+profile = "web"
+hook_mode = "standard"
+tracker = "github-personal"
+tracker_project = "zac-doc"
+git = "github"
+repo = "zac15987/zac-doc"
+log_policy = "standard"
+base_branch = "dev"
+auto_merge = false
+merge_method = "squash"
+channel_enabled = false
+channel_listen = ["_global"]
+tags = ["docusaurus", "javascript", "docs"]
+
+[projects.path]
+windows = "D:/Documents/MyProjects/zac-doc"
+wsl = "/mnt/d/Documents/MyProjects/zac-doc"

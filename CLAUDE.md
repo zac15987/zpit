@@ -44,6 +44,7 @@ internal/
 ├── notify/              # Notification dispatch: cooldown logic, Windows Toast, sound alerts
 ├── platform/            # Environment detection (Windows Terminal / WSL / tmux), ResolvePath()
 ├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
+├── sessionsync/         # Session bundle pack/unpack + cross-OS cwd rewrite (zip + manifest)
 ├── ssh/                 # Wish SSH server: StartServerAsync(), ServerHandle, StartServer(), auth config
 ├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
@@ -52,7 +53,7 @@ internal/
 └── tui/                 # Bubble Tea TUI — see "TUI Message Flow" below
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
     ├── channel.go       # Channel EventBus subscription and event reading
-    ├── confirm.go       # Confirm dialogs, executePendingOp, undeploy
+    ├── confirm.go       # Confirm dialogs, executePendingOp, undeploy, redeploy
     ├── editconfig.go    # Edit config sub-menu: channel toggle, listen edit, $EDITOR launch
     ├── keymap.go        # Key bindings definition (Help, Channel, etc.)
     ├── launch.go        # Terminal launch cmds, slot operations, deploy helpers
@@ -80,7 +81,7 @@ Agents, hooks, and docs are embedded in the binary and deployed at runtime to ta
 main.go (go:embed vars)
   → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts, logWriter)
     → stored in AppState fields
-      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
+      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) or redeploy ([d]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
@@ -99,7 +100,9 @@ The TUI follows Bubble Tea's Elm architecture with a consistent pattern across a
 
 Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler writes agent file → `LoopAgentWrittenMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
 
-**Focus panel system**: The main view (`ViewProjects`) has three focusable panels controlled by `FocusedPanel` enum (`FocusProjects` → `FocusTerminals` → `FocusLoopSlots`). Tab cycles through panels that have content (terminals panel skipped if no active terminals, loop panel skipped if no loop slots). Each panel has its own cursor (`cursor` for projects, `termCursor` for terminals, `loopCursor` for loop slots). The `x` key kills the selected terminal when `FocusTerminals` is active (with confirm dialog, force-kills the process). `FocusedPanel` is per-Model (per-connection UI state), not shared in AppState.
+**Tick-driven poll heartbeat**: The three periodic poll chains (todo poll, PR poll, label poll) use `tea.Tick` with reschedule logic owned by the *tick* handlers (`handleLoopPollTick` / `handleLoopPRPollTick` / `handleLoopLabelPollTick` in `loop_handler.go`), not the business handlers (`handleLoopPoll` / `handleLoopPRStatus` / `handleLoopLabelPoll`). Each tick handler checks a gate (loop `Active` + slot in the expected state) and returns `tea.Batch(pollCmd, scheduleNextTick)` up-front, so any nil/error path in the poll cmd or business handler cannot silently break the chain. Business handlers must NOT call `loopSchedule{Poll,PRPoll,LabelPoll}` mid-chain — those functions are reserved for **kickoff** (loop start, state transitions into a new polling state, resume). Adding a new `return m, m.loopSchedule*Poll(...)` inside a business handler would create two competing tick chains; the regression tests in `loop_tick_test.go` guard this invariant.
+
+**Focus panel system + Dock layout**: The main view (`ViewProjects`) uses a lazygit-style dock — left column stacks Projects / Active Terminals / Loop Engine; right column is the Hotkeys reference panel. Each panel owns its own `viewport.Model` (`projectsVP` / `terminalsVP` / `loopVP` / `hotkeysVP` on `Model`) so scrolling is independent; only the focused panel reacts to `↑↓/PgUp/PgDn`, and mouse-wheel dispatches to whichever panel the cursor hovers via `hitTestDockPanel`. Three panels are focusable via `FocusedPanel` enum (`FocusProjects` → `FocusTerminals` → `FocusLoopSlots`); Tab cycles through those with content (terminals skipped if no active terminals, loop skipped if no loop slots) and Hotkeys stays docked but non-focusable. Each focusable panel has its own cursor (`cursor` for projects, `termCursor`, `loopCursor`); terminals/loop rebuild `termLineStarts` / `loopLineStarts` during sync to drive variable-stride cursor-follow. The `x` key kills the selected terminal when `FocusTerminals` is active (with confirm dialog, force-kills the process). Visual treatment: Catppuccin Mocha palette (see `styles.go`), single-column `▎` mauve bar on the focused panel's chrome only — it is *not* rendered on body rows. Panels stacked below the first in a column get a 1-row gutter (`panelChromeRows(stacked)` returns 3 vs 2). Layout sizing lives in `computePanelRects` (70/30 ideal split, min widths `dockMinLeftWidth`/`dockMinRightWidth`, weight-based height split); `TestComputePanelRects` is the regression guard. `FocusedPanel` is per-Model (per-connection UI state), not shared in AppState.
 
 ### Session Log Monitoring
 
@@ -111,6 +114,20 @@ The TUI monitors Claude Code sessions via JSONL log files:
 4. State detection: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
 5. Permission detection: `notify-permission.sh` hook writes signal file to `~/.zpit/signals/`, TUI polls every 2s
 6. Liveness check every 5s; `/resume` detection re-reads `{pid}.json` for session ID changes
+
+### Session Sync ([h] History)
+
+The `[h]` History view (`internal/tui/view_sessions.go` + `sessions.go` + `internal/sessionsync/`) lets users move Claude Code conversations between machines so `claude --resume <session-id>` works on the destination.
+
+**Bundle format** (`sessionsync.Manifest`): a zip with `manifest.json` at the root + one `<session-id>.jsonl` per session + optional `<session-id>/subagents/` subtrees + optional `memory/` subtree. Manifest captures `format_version`, `source_os`, `source_cwd`, `source_encoded_cwd`, `sessions[]`, `exported_at`, `include_memory`.
+
+**Cross-OS path rewrite**: each session JSONL is re-streamed at import time. Lines that parse as JSON objects with a `"cwd"` string field equal to the bundle's `source_cwd` are re-marshalled with the new destination cwd; every other line passes through verbatim. Path-shaped strings inside `text` / `message.content` are NEVER rewritten — the rewrite only touches the JSON `cwd` field.
+
+**`[h]` view (`internal/tui/view_sessions.go`)**: full-screen view with two states — folder list (every directory under `~/.claude/projects/`) and drilled-in session list (multi-select with `Space` / `[a]`, export via `[e]`, import via `[i]` or `[+] Import bundle...`). Modal stack handles active-session warning, export confirm, import wizard (path → preview → dest → final → run → summary), and per-session collision prompts.
+
+**Active-session detection**: reads `~/.claude/sessions/*.json` and matches by SessionID + alive PID via `watcher.IsClaudeProcess`. Used to flag the 🟢 marker in the session list and warn at export time when a selected session is mid-conversation.
+
+**Memory bundling is opt-in** (default off) — memory may contain user-private notes (email, dated reminders) that are not strictly required for `/resume` continuity.
 
 ### AppState + Multi-Client Architecture
 
@@ -143,7 +160,7 @@ The `[e]` key opens a sub-menu for config editing:
 - `[2]` Edit channel_listen — multi-select list of other projects + `_global`
 - `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
 
-**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_level`.
+**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, `agent_models.*` (picked up on the next agent launch — already-running sessions keep their original model), per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_policy`.
 
 **Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
 
@@ -195,6 +212,34 @@ Agent A (Project X)            Agent B (Project Y)
 
 **Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server. Env var `ZPIT_AGENT_NAME` passes the generated agent name to MCP server. Env var `ZPIT_AGENT_TYPE` passes the agent type (e.g. `clarifier`, `coding`, `reviewer`, `efficiency`, `claude`) to MCP server for SSE registration.
 
+### Desktop Agent
+
+A standalone Claude Code session that controls the OS via `zpit-desktop-mcp` (zpit's fork of `@zavora-ai/computer-use-mcp`, carrying Windows AUMID launch + entrypoint fixes — repo at `github.com/zac15987/computer-use-mcp`). Unlike project-scoped agents, it is global (no `project.Path`; cwd is `$HOME`/`%USERPROFILE%`) and limited to one active instance at a time.
+
+**Policy file**: `~/.zpit/desktop-policy.toml` — auto-created on first `zpit serve-desktop-proxy` invocation. Contains `deny_keys` (blocked keyboard shortcuts) and `allow_bundles` (named shortcut groups the user pre-approves).
+
+**Proxy architecture**:
+
+```
+Claude Code (desktop agent) ─── stdio ──> zpit serve-desktop-proxy (Go)
+                                                     │
+                                                     ├── policy gate (allow/deny per call)
+                                                     └── stdio ──> npx zpit-desktop-mcp (Node subprocess)
+                                                                              │
+                                                                              └── OS APIs (CGEvent / UIA / AX)
+```
+
+The proxy intercepts every JSON-RPC `tools/call` frame. Calls not on the tool allowlist are rejected before reaching the upstream process. For allowed tools, parameter-level policy is applied (`deny_keys`, `allow_bundles`, focus-strategy override). Hard-blocked tools include `run_script`, `filesystem`, `process_kill`, `registry`, `notification`, `scrape`, `snapshot`, all virtual-desktop tools, and `resize_window`. See `docs/architecture/desktop-agent.md` for the full allowlist justification and default `deny_keys` table.
+
+**Single-instance lock**: `AppState.activeDesktopAgent` enforces at most one desktop agent across all connected TUI clients. A second `[w]` invocation is rejected with a status toast; the lock is cleared when the agent process exits.
+
+**Launch hotkey**: `[w]` (W for Window control; `[g]` was unavailable due to GitStatus). Launched from the main view (`ViewProjects`) without requiring a project selection. On `runtime.GOOS == "linux"`, `[w]` is a no-op (status toast shown) because `computer-use-mcp` declares `os: ["darwin", "win32"]` in its `package.json`. The hotkey is also omitted from the hotkeys panel on Linux.
+
+**Deliberate convention deviations**:
+- Single-instance enforcement — every other agent type can be launched in parallel; the desktop agent cannot.
+- Global scope — no `project.Path`; no per-project hooks deployed; cwd is the user home directory.
+- No hook deployment — path-guard, bash-firewall, and git-guard are meaningless when the agent has SendInput over the whole desktop. The proxy policy is the safety layer.
+
 ### TrackerClient
 
 Dual-backend REST API abstraction (`internal/tracker/`):
@@ -217,25 +262,33 @@ State transitions are **label-driven** (poll issue labels, not PID monitoring). 
 - Coding agent sets `review` → reviewer starts
 - Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
 
-States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
+States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → (fork on `auto_merge`) → `SlotAutoMerging` | `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
 
-### Task Execution Model (Subagent + Agent Teams)
+**`auto_merge` fork** (at the `ai-review` transition):
+- `auto_merge = false` (default) → `SlotWaitingPRMerge` → polls PR status every `pr_poll_seconds` until human merges on GitHub/Forgejo.
+- `auto_merge = true` → `SlotAutoMerging` → Zpit calls the tracker's merge API (one-shot with 3 retries on transient errors, backoff 1s/4s/16s). On permanent failure or transient-exhausted, slot escalates to `SlotNeedsHuman`; on auth error, to `SlotError`. On success, proceeds to `SlotCleaningUp`.
+
+### Task Execution Model (Sequential + Parallel Subagents)
 
 When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrator** — it delegates each task to a `task-runner` subagent instead of implementing tasks itself. This provides context isolation between tasks.
 
+Note on terminology: zpit uses **regular Claude Code subagents** (the `subagent_type: "task-runner"` path, with `isolation: "worktree"` for `[P]` tasks). This is distinct from Claude Code's *Agent Team* feature (the `team_name + name` teammate path in `AgentTool.tsx`) — we do not use Agent Teams. Earlier versions of this doc called the parallel path "Agent Team" which was misleading; the current terminology is "parallel subagent batch".
+
 **Execution strategy:**
 - **Sequential tasks** (no `[P]`): Delegated one at a time to `task-runner` subagent via the Agent tool. Each subagent runs in its own context window, implements the task, and commits.
-- **Parallel tasks** (`[P]` marked): Consecutive `[P]` tasks form a parallel batch. When all dependencies for the batch are satisfied, the orchestrator creates an Agent Team with one teammate per task (each using `task-runner` subagent type). Teammates work in parallel. **Marking rule:** adjacent tasks sharing the same dependency set and touching different files must ALL be `[P]`; omitting `[P]` on any one breaks the batch.
-- **Mixed**: Groups execute in dependency order — sequential tasks use subagent, parallel groups use Agent Team.
+- **Parallel tasks** (`[P]` marked): Consecutive `[P]` tasks form a parallel batch. When all dependencies for the batch are satisfied, the orchestrator dispatches a **parallel subagent batch** — one `task-runner` subagent per task, each spawned with `isolation: "worktree"` so they work in their own child worktrees. **Marking rule:** adjacent tasks sharing the same dependency set and touching different files must ALL be `[P]`; omitting `[P]` on any one breaks the batch.
+- **Mixed**: Groups execute in dependency order — sequential tasks and parallel batches interleave as the dependency graph demands.
 - **No tasks**: `buildStandardWorkflow()` generates the same prompt as before (no delegation).
 
 **Prompt generation** (`internal/prompt/coding.go`):
 - `groupTasks()` partitions tasks into sequential singletons and parallel batches
-- `buildSubagentDelegation()` generates Agent tool delegation instructions
-- `buildTeamDelegation()` generates Agent Team instructions (only when `[P]` tasks exist)
-- Task Execution Order section sequences the groups correctly
+- `buildSubagentDelegation()` generates Agent tool delegation instructions for sequential tasks
+- `buildParallelSubagentDelegation()` generates parallel-batch instructions + worktree-isolation hand-off (only when `[P]` tasks exist) — the orchestrator calls the Agent tool with `isolation: "worktree"` per subagent so Claude Code forks a child worktree via the `WorktreeCreate` hook
+- Task Execution Order section sequences the groups correctly and emits the post-batch integration block for each `[P]` group: (1) `git -C <path> rev-parse --abbrev-ref HEAD` per subagent to discover branch names (CC doesn't propagate `worktreeBranch` — see known-issues §3), (2) `git cherry-pick` in task-ID order, (3) cleanup as TWO SEPARATE Bash calls — `git worktree remove --force <path>` then `git branch -D <branch>` (never chained with `&&`, so a hook block on one cannot nuke the other — see known-issues §4)
 
-**task-runner subagent** (`agents/task-runner.md`): Restricted tools (`Read, Write, Edit, Bash, Glob, Grep`), reads CLAUDE.md + agent-guidelines on startup, commits with `[ISSUE-ID] T{N}: {description}` format, stays within assigned file scope.
+**task-runner subagent** (`agents/task-runner.md`): Restricted tools (`Read, Write, Edit, Bash, Glob, Grep`), reads CLAUDE.md + agent-guidelines on startup, commits with `[ISSUE-ID] T{N}: {description}` format, stays within assigned file scope. The `model:` field in its frontmatter is injected at deploy time from `cfg.AgentModels.TaskRunner` (see `injectFrontmatterModel()` in `launch.go`), so task-runner subagents can run on a different model from the orchestrator.
+
+**Per-Subagent Worktree Model** (replaces the historical Parallel Commit Protocol). For `[P]` batches, the orchestrator calls the Agent tool with `isolation: "worktree"` per subagent. Claude Code fires zpit's `WorktreeCreate` hook (`hooks/worktree-create.sh`), which forks a child worktree from the orchestrator's *current HEAD* under `<parent>/.zpit-children/<slug>` (bypassing Claude Code's built-in `origin/<defaultBranch>` fork — that would miss any sequential task commits landed earlier in the loop), creates the branch `<parent-branch>-<slug>`, and copies `.claude/` + `.mcp.json` into the child so hooks and agent docs are available there. The subagent commits normally in its child worktree — no shared index, no shared ref-lock, no race. The Agent tool returns `{worktreePath}` per subagent; `worktreeBranch` is NOT set on the hook-based path (Claude Code limitation — see known-issues §3). After all subagents return, the orchestrator (a) discovers each branch via `git -C <worktreePath> rev-parse --abbrev-ref HEAD`, (b) cherry-picks them onto the parent branch in task-ID order, (c) cleans up as **TWO SEPARATE Bash calls** — `git worktree remove --force` (always `--force` from the start because the copied `.claude/` makes plain remove fail) and `git branch -D` (never chained with `&&`; if one is hook-blocked the other must still run). Cherry-pick conflicts surface as `cherry-pick --abort` → NeedsHuman instead of silent file reverts. Sequential tasks skip all of this (no race; commit directly in parent worktree). See `docs/known-issues.md` §2 for the three Parallel Commit Protocol iterations (v1 `mkdir`-lock, v2 isolated `GIT_INDEX_FILE`, v3 orchestrator resync) this model replaces, and §3/§4/§5 for the bugs that surfaced during the migration's smoke tests. Claude Code's `isolation` is a runtime Agent-tool parameter, not a subagent-frontmatter key, so the orchestrator prompt drives activation; the `model:` injected into `task-runner.md` frontmatter sets the default subagent model but does not affect `isolation`.
 
 ### Hook-Based Safety System (5 Layers)
 
@@ -247,7 +300,11 @@ When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrat
    - `git-guard.sh` — push whitelist (only `feat/*`), blocks merge/rebase/branch-delete
    - `notify-permission.sh` — not safety; writes signal file for TUI permission detection
 4. **Git worktree isolation** (physical)
-5. **Human PR review** (final gate)
+5. **Final merge gate** — conditional:
+   - When `auto_merge = false` (default), Human PR review is the final gate; nothing merges without you.
+   - When `auto_merge = true`, the AI Reviewer PASS label (`ai-review`) replaces the human gate and triggers the tracker's merge API (via Go code, not via a git-guard-covered push).
+
+   Only enable `auto_merge` when you trust the reviewer model's quality on your repo — it removes the last line of defense before code lands on `dev`.
 
 Hook strictness per-project via `hook_mode`: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
 
@@ -261,16 +318,27 @@ Logs: `~/.zpit/logs/zpit-YYYY-MM-DD.log` — daily rotation, 30-day retention.
 
 See `testdata/config.toml` for a working example and `README.md` for full config reference.
 
+**`[agent_models]`**: global per-role model selection. Accepts short aliases (`opus` / `sonnet` / `haiku` — provider-dependent; Anthropic API resolves to latest, Bedrock/Vertex/Foundry one version behind) or full model IDs (pin exact version, cross-provider-consistent — e.g. `claude-opus-4-7[1m]`).
+
+Wiring differs by role:
+- **`clarifier` / `coding` / `reviewer` / `efficiency`**: passed to Claude Code via `--model <id>` at launch (the orchestrator's own model). Wired in `launch.go` (manual `[c]`/`[r]`/`[f]`/enter/`[d]`) and `loop_cmds.go` (`loopLaunchCoderCmd`, `loopWriteAndLaunchReviewerCmd`).
+- **`task_runner`**: injected into `task-runner.md` frontmatter at deploy time via `injectFrontmatterModel()` in `launch.go`; Claude Code's Agent tool reads the frontmatter `model:` field as the subagent default (source: `src/tools/AgentTool/AgentTool.tsx` line 86 — explicit param > agent frontmatter > parent inheritance). This lets the task-runner subagent use a different model from the coding orchestrator — the intended pattern is orchestrator on Opus (judgment-heavy: AC self-check, cherry-pick coordination), subagents on Sonnet (mechanical, scope-isolated; parallel `[P]` batches multiply the savings). Set to empty string to skip injection and fall back to parent inheritance.
+
+Defaults: `coding` / `reviewer` / `clarifier` / `efficiency` = `opus[1m]`; `task_runner` = `sonnet`; `desktop` = `sonnet[1m]` (UI automation is mostly mechanical — Sonnet handles it; bump to `opus[1m]` for tougher visual reasoning). History: setting all five judgment roles to Sonnet previously produced ~90% two-round coding→review cycles — the round-two cost erased the per-token savings. Splitting by role (Opus for judgment, Sonnet for scoped execution) avoids that regression.
+
 ## Conventions
 
 - **Branch naming**: `feat/ISSUE-ID-slug` — Loop always uses `feat/` prefix; PR title classification (feat/fix) decided by agent
 - **Per-issue branch control**: Issue Spec `## BRANCH` specifies PR target branch (optional, falls back to project `base_branch`)
 - **Git model**: `main` ← `dev` ← feature branches
-- **Commit messages**: `[ISSUE-ID] short description`
+- **Commit messages**: `[ISSUE-ID] short description` is **only** for commits produced by the zpit agent workflow (Loop coding/reviewer slots, task-runner subagents). Manual/ad-hoc commits made outside the loop — including any commit you (Claude) make while assisting the user directly — must NOT carry an `[NNN]` prefix; use a plain conventional-commit style (`feat:`, `fix:`, `docs:`, `refactor:`, etc.) without the bracket. The `[ISSUE-ID]` tag is a workflow signal that links a commit back to a tracker issue handled by the Loop, not a generic prefix.
 - **Issue status flow**: pending_confirm → todo → in_progress → ai_review → waiting_review → needs_verify → done
 - **Loop label flow**: todo → wip → review → ai-review (PASS) / needs-changes (auto-retry)
 - **Hook exit codes**: 0 = allow, 2 = block (stderr fed back to Claude), never use exit 1
 - **Agent docs**: `docs/agent-guidelines.md` (behavioral rules), `docs/code-construction-principles.md` (quality baseline)
 - **Logging**: Use `m.state.logger` for all state transitions and lifecycle events (not `setStatus`, which is TUI-only). Include identifiers (key, PID, state, issue ID, role, round). In goroutine closures, capture `logger := m.state.logger` before use. Do not log ticks or renders.
 - **i18n**: All user-facing strings in TUI views must go through `locale.T()`. Never hardcode display text — define a key in `internal/locale/keys.go`, add translations in `en.go` and `zh_tw.go`.
+- **Agent language strategy**: TUI chrome is localized via `locale.T()`. Coding / reviewer / revision / efficiency / task-runner agents are **English-only** — `locale.ResponseInstruction()` is prepended via prompt builders or injected into agent markdown via `injectLangInstruction()`. The rule is non-negotiable: users may input in any language, but those agents reply, write commit messages, PR bodies, and channel messages in English. This is a token-efficiency choice (CJK tokenizes roughly 2× denser than English) — coding and reviewer dominate token usage. **Clarifier is the exception**: it is conversational and low-token, so it uses `locale.ClarifierResponseInstruction()` (via `injectClarifierLangInstruction()`) — dialogue + channel messages follow the configured locale, but the **Issue Spec it pushes to the Tracker (title, all section bodies, tracker labels) must still be English** so downstream agents have a canonical artifact language. If you add a new agent launch path, call `injectLangInstruction()` (strict English) on its markdown before writing; use `injectClarifierLangInstruction()` only for the clarifier path.
+- **TUI icons**: Profile icons (`machine`/`desktop`/`web`/`android`/`terminal` in `internal/tui/view_projects.go`) use Nerd Font glyphs (requires a patched font such as CascadiaCode NF, bundled with Windows Terminal). All other TUI icons — session/loop status circles, channel artifact/message markers, worktree branch marker, etc. — stay as Unicode emoji so the TUI degrades gracefully in terminals without Nerd Fonts. When adding a new profile type, add a matching Nerd Font glyph to the `profileIcons` map; for any other TUI icon, use an emoji.
 - **Concurrency**: All mutations to AppState mutable fields (`activeTerminals`, `loops`, `channelEvents`, `channelSubs`, `lastLivenessCheck`, `lastPermissionCheck`, `lastSessionScan`) must hold `m.state.Lock()`; reads must hold `m.state.RLock()`. Call `m.state.NotifyAll()` after mutations. Never hold `mu` when calling cmd methods that acquire their own `RLock` — use action-defer pattern.
+- **Config template parity**: When editing `internal/config/config.go` (struct fields, default-template string, or the auto-generated `~/.zpit/config.toml` template), also update `testdata/config.toml` so the fixture stays a working example. The in-code template and `testdata/config.toml` are two independent copies — neither is generated from the other, so drift is easy and silent. Rule of thumb: any change to the default template inside `config.go` needs a matching edit in `testdata/config.toml` (same field, same default value, same comment intent). `config_test.go` exercises the fixture, so out-of-date `testdata/config.toml` may produce green tests that don't reflect the shipping default.

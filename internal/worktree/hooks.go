@@ -19,6 +19,7 @@ type HookScripts struct {
 	ExitWrapper      []byte // zpit-exit.cmd — clean exit for Windows non-agent launches (cmd)
 	ExitWrapperPS1   []byte // zpit-exit.ps1 — clean exit for Windows non-agent launches (pwsh/powershell)
 	NotifyPermission []byte // Notification hook — writes permission signal for Zpit TUI
+	WorktreeCreate   []byte // WorktreeCreate hook — forks child worktree from orchestrator HEAD for [P] parallel subagents
 }
 
 // Hook configuration JSON for each mode.
@@ -58,6 +59,18 @@ const settingsStrict = `{
           }
         ]
       }
+    ],
+    "WorktreeCreate": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/worktree-create.sh",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }`
@@ -93,6 +106,18 @@ const settingsStandard = `{
           }
         ]
       }
+    ],
+    "WorktreeCreate": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/worktree-create.sh",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }`
@@ -116,6 +141,18 @@ const settingsRelaxed = `{
           {
             "type": "command",
             "command": ".claude/hooks/notify-permission.sh"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/worktree-create.sh",
+            "timeout": 30
           }
         ]
       }
@@ -146,13 +183,31 @@ var ZpitDeployedFiles = []string{".mcp.json"}
 
 // zpitIgnoreRules are .gitignore patterns for Zpit auto-deployed files.
 // Derived from ZpitDeployedDirs and ZpitDeployedFiles to stay in sync.
+//
+// Policy: everything under .claude/ that zpit writes is gitignored,
+// including settings.json itself. That file is merged by mergeSettingsHooks
+// on every agent launch, and committing it creates a latent fresh-clone
+// bug because the hook commands it references
+// (.claude/hooks/*.sh) live in gitignored directories and don't exist
+// until zpit has deployed at least once. Team-shared user config (plugin
+// enablement, custom CC keys) should live in a hand-maintained file
+// outside zpit's deployment scope, e.g. a project-root CLAUDE.md note.
+// Per-machine user config goes in .claude/settings.local.json — that file
+// is Claude Code's conventional local-override slot and is gitignored by
+// Claude Code's own init/defaults on most projects; zpit does not add it
+// here to avoid polluting user-owned .gitignore on every launch.
 var zpitIgnoreRules = func() []string {
 	var rules []string
 	for _, d := range ZpitDeployedDirs {
 		rules = append(rules, ".claude/"+d+"/")
 	}
-	rules = append(rules, ".claude/settings.local.json")
+	rules = append(rules, ".claude/settings.json")
 	rules = append(rules, ZpitDeployedFiles...)
+	// .zpit-children/ holds ephemeral per-subagent worktrees created by the
+	// WorktreeCreate hook during [P] batches. Cleaned up by the orchestrator
+	// post-cherry-pick but always gitignored so in-flight or abandoned
+	// children never leak into a PR.
+	rules = append(rules, ".zpit-children/")
 	return rules
 }()
 
@@ -198,16 +253,6 @@ func ensureFileRules(filePath string, rules []string) {
 // EnsureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
 func EnsureGitignore(projectPath string) {
 	ensureFileRules(filepath.Join(projectPath, ".gitignore"), zpitIgnoreRules)
-}
-
-// zpitGitattributesRules are .gitattributes rules for Zpit-managed files.
-var zpitGitattributesRules = []string{
-	".claude/settings.json text eol=lf",
-}
-
-// EnsureGitattributes appends missing Zpit gitattributes rules to a project's .gitattributes.
-func EnsureGitattributes(projectPath string) {
-	ensureFileRules(filepath.Join(projectPath, ".gitattributes"), zpitGitattributesRules)
 }
 
 // DeployHooksToProject writes hook scripts to .claude/hooks/ and merges hook config
@@ -267,14 +312,15 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 		return fmt.Errorf("creating hooks dir: %w", err)
 	}
 	files := map[string][]byte{
-		"path-guard.sh":         scripts.PathGuard,
-		"bash-firewall.sh":      scripts.BashFirewall,
-		"git-guard.sh":          scripts.GitGuard,
-		"zpit-env.cmd":          scripts.EnvWrapper,
-		"zpit-env.ps1":          scripts.EnvWrapperPS1,
-		"zpit-exit.cmd":         scripts.ExitWrapper,
-		"zpit-exit.ps1":         scripts.ExitWrapperPS1,
-		"notify-permission.sh":  scripts.NotifyPermission,
+		"path-guard.sh":        scripts.PathGuard,
+		"bash-firewall.sh":     scripts.BashFirewall,
+		"git-guard.sh":         scripts.GitGuard,
+		"zpit-env.cmd":         scripts.EnvWrapper,
+		"zpit-env.ps1":         scripts.EnvWrapperPS1,
+		"zpit-exit.cmd":        scripts.ExitWrapper,
+		"zpit-exit.ps1":        scripts.ExitWrapperPS1,
+		"notify-permission.sh": scripts.NotifyPermission,
+		"worktree-create.sh":   scripts.WorktreeCreate,
 	}
 	for name, content := range files {
 		p := filepath.Join(hooksDir, name)

@@ -72,7 +72,7 @@ func (m Model) renderStatusFooter() string {
 	var b strings.Builder
 	hotkeys := []struct{ key, desc string }{
 		{"y", locale.T(locale.KeyConfirmPending)},
-		{"p", locale.T(locale.KeyOpenInBrowser)},
+		{"i", locale.T(locale.KeyOpenInBrowser)},
 		{"Esc", locale.T(locale.KeyBack)},
 	}
 	for _, h := range hotkeys {

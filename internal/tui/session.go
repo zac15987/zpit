@@ -129,6 +129,21 @@ func (m Model) handleExistingSessions(msg existingSessionsMsg) (tea.Model, tea.C
 			m.state.logger.Printf("  skip: PID=%d already tracked", entry.PID)
 			continue
 		}
+		// Desktop agent fill-in: the entry already exists in activeTerminals with
+		// SessionPID==0 (created by handleDesktopAgentLaunched). Periodic scan
+		// finds the spawned claude.exe and back-fills PID/SessionID so the
+		// liveness sweep can later detect terminal close.
+		if strings.HasPrefix(entry.ProjectID, "desktop:") {
+			if at, ok := m.state.activeTerminals[entry.ProjectID]; ok && at.SessionPID == 0 {
+				m.state.logger.Printf("  desktop fill-in: key=%s PID=%d sessionID=%s", entry.ProjectID, entry.PID, entry.SessionID)
+				at.SessionPID = entry.PID
+				at.SessionID = entry.SessionID
+				at.StateChangedAt = time.Now()
+				currentPIDs[entry.PID] = true
+				cmds = append(cmds, waitForLogCmd(entry.ProjectID, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.state.logger))
+				continue
+			}
+		}
 		if pendingWorkDirs[entry.WorkDir] {
 			m.state.logger.Printf("  skip: PID=%d workDir has pending discovery", entry.PID)
 			continue
@@ -538,6 +553,26 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 	var cmds []tea.Cmd
 	changed := false
 
+	// Capture desktop agent identity BEFORE the cleanup loop. The cleanup pass
+	// below may delete the desktop terminal entry when it has been StateEnded
+	// for longer than endedDisplayDuration; once deleted, the tracking key is
+	// gone and the AC-8 exit log would render with empty agent name and PID 0
+	// (the bug AC-12(j) catches). Snapshotting here preserves the values for
+	// the post-loop clear block.
+	var desktopAgentKey, desktopAgentName string
+	var desktopAgentPID int
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		for key, at := range m.state.activeTerminals {
+			if at == da && strings.HasPrefix(key, "desktop:") {
+				desktopAgentKey = key
+				desktopAgentName = strings.TrimPrefix(key, "desktop:")
+				desktopAgentPID = at.SessionPID
+				break
+			}
+		}
+	}
+
 	for projectID, at := range m.state.activeTerminals {
 		// Clean up ended sessions after display duration.
 		if at.State == watcher.StateEnded {
@@ -593,6 +628,43 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 			}
 		} else if claudeHome != "" {
 			m.state.logger.Printf("liveness: key=%s skip resume check (sessionID=%q workDir=%q)", projectID, at.SessionID, at.WorkDir)
+		}
+	}
+
+	// Desktop agent exit detection (AC-8):
+	// If activeDesktopAgent is set and its tracking entry has been marked StateEnded
+	// (or the entry was removed by the cleanup loop above), clear activeDesktopAgent
+	// and dispatch the exit message. The agent identity (key/name/PID) was captured
+	// before the loop ran, so the log line is correct even when the entry was deleted.
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		// Re-check the live tracking state after the cleanup loop.
+		_, stillTracked := m.state.activeTerminals[desktopAgentKey]
+
+		shouldClear := false
+		switch {
+		case desktopAgentKey == "":
+			// activeDesktopAgent was set but no matching entry existed even at the start
+			// of this pass — treat as stale and clear (with whatever info we have, which
+			// is empty in this edge case).
+			shouldClear = true
+		case !stillTracked:
+			// Cleanup loop removed the entry — captured info is still valid.
+			shouldClear = true
+		case da.State == watcher.StateEnded:
+			// Entry still present but marked ended — first liveness pass after PID death.
+			shouldClear = true
+		}
+
+		if shouldClear {
+			m.state.logger.Printf("desktop agent %s (PID %d) exited", desktopAgentName, desktopAgentPID)
+			m.state.activeDesktopAgent = nil
+			changed = true
+			agentNameCopy := desktopAgentName
+			pidCopy := desktopAgentPID
+			cmds = append(cmds, func() tea.Msg {
+				return DesktopAgentExitedMsg{AgentName: agentNameCopy, PID: pidCopy}
+			})
 		}
 	}
 
@@ -716,6 +788,7 @@ func (m *Model) checkNewSessions() tea.Cmd {
 	}
 	seen := make(map[string]bool)
 	var projects []projectInfo
+	var desktopWorkDir, desktopKey string
 	m.state.RLock()
 	for _, p := range m.state.projects {
 		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
@@ -727,6 +800,21 @@ func (m *Model) checkNewSessions() tea.Cmd {
 		}
 		seen[path] = true
 		projects = append(projects, projectInfo{id: p.ID, path: path})
+	}
+	// Desktop agent's cwd ($HOME) is not in m.state.projects, so the per-project
+	// scan above never finds its session. Capture the desktop entry's WorkDir
+	// + tracking key while we still pre-resolve the entry that is missing a PID.
+	if m.state.activeDesktopAgent != nil {
+		da := m.state.activeDesktopAgent
+		if da.SessionPID == 0 && da.WorkDir != "" {
+			for key, at := range m.state.activeTerminals {
+				if at == da && strings.HasPrefix(key, "desktop:") {
+					desktopKey = key
+					desktopWorkDir = da.WorkDir
+					break
+				}
+			}
+		}
 	}
 	logger := m.state.logger
 	m.state.RUnlock()
@@ -783,6 +871,27 @@ func (m *Model) checkNewSessions() tea.Cmd {
 						WorkDir:        wt.Path,
 						LogPath:        logPath,
 						WorktreeBranch: wt.Branch,
+					})
+				}
+			}
+		}
+		// Desktop agent: scan its cwd ($HOME) and emit entries with the
+		// "desktop:" tracking key so handleExistingSessions fills in the existing
+		// entry rather than creating a new one.
+		if desktopWorkDir != "" {
+			deskSessions, err := watcher.FindActiveSessions(claudeHome, desktopWorkDir)
+			if err == nil {
+				for _, s := range deskSessions {
+					if trackedPIDs[s.PID] {
+						continue
+					}
+					logPath := watcher.LogFilePath(claudeHome, desktopWorkDir, s.SessionID)
+					entries = append(entries, existingSessionEntry{
+						ProjectID: desktopKey,
+						PID:       s.PID,
+						SessionID: s.SessionID,
+						WorkDir:   desktopWorkDir,
+						LogPath:   logPath,
 					})
 				}
 			}

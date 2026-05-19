@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,6 +23,7 @@ import (
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
+	"github.com/zac15987/zpit/internal/sessionsync"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/watcher"
 )
@@ -36,6 +39,7 @@ const (
 	ViewChannel
 	ViewEditConfig
 	ViewGitStatus
+	ViewHistory
 )
 
 // EditConfigSub represents the sub-view within the edit config screen.
@@ -128,6 +132,50 @@ type Model struct {
 	editConfigListenCursor int                   // cursor for channel_listen list
 	editConfigListenItems  []editConfigListenItem // items in multi-select
 
+	// History (Session Browser) view state
+	historyFolders             []sessionsync.FolderInfo
+	historySessions            []sessionsync.SessionInfo
+	historyActiveIDs           []string         // session IDs alive in current drilled folder
+	historyActivePIDsByFolder  map[string]bool  // folder name → has-active-PID flag
+	historyFolderCursor        int              // 0 = "[+] Import bundle..." pseudo-row
+	historySessionCursor       int              // index into historySessions
+	historySelected            map[string]bool  // session ID → selected
+	historyDrilledFolder       string           // empty when in folder list; folder name when in session list
+	historyExportIncludeMemory bool
+	historyExportOutputPath    string
+	historyExportStep          int              // 0=hidden, 1=active warning, 2=confirm modal, 3=running
+	historyActivePending       []string         // active session IDs detected in current export selection
+	historyExportAllPending    bool             // set by [E] in folder list, consumed when sessions scan completes
+	historyExportFlowActive    bool             // user is in the middle of an export wizard
+	historyImportBundlePath    string
+	historyImportManifest      *sessionsync.Manifest
+	historyImportSelection     map[string]bool
+	historyImportDestPath      string
+	historyImportSessionCursor int
+	historyImportStep          int              // 0=path entry, 1=preview, 2=dest entry, 3=final preview, 4=running, 5=summary
+	// Destination autocomplete suggestions for import wizard step 2.
+	// Populated from m.state.projects via platform.ResolvePath when entering
+	// step 2. The cursor selects between the freeform textinput (-1) and one
+	// of the suggestion entries (0..len-1). Free-form input is always accepted.
+	historyImportDestSuggestions      []string
+	historyImportDestSuggestionCursor int
+	historyImportFlowActive    bool             // user is in the middle of an import wizard
+	historyCollisionQueue      []string         // pending session-collision IDs
+	historyCollisionMemory     bool             // memory dir collision pending
+	historyCollisionDecisions  map[string]sessionsync.CollisionDecision
+	historyMemoryDecision      sessionsync.CollisionDecision
+	historyImportResult        *sessionsync.UnpackResult
+	// historyButtonFocus is the index of the currently-focused button in the
+	// active History modal (active warning, export confirm, import final,
+	// collision). 0 = first/affirmative button. Reset on every modal entry.
+	// Arrow keys (←/→) cycle focus; Enter activates the focused button.
+	historyButtonFocus int
+
+	// textinput widgets for History import/export path entry
+	historyImportPathInput textinput.Model
+	historyExportPathInput textinput.Model
+	historyImportDestInput textinput.Model
+
 	// Error overlay (dismissible with Esc/Enter)
 	errorOverlay string
 
@@ -145,8 +193,22 @@ type Model struct {
 	termCursor     int
 	focusProjectID string
 
-	// Viewport for scrollable content
+	// Viewport for scrollable content (used by ViewStatus/Channel/EditConfig/GitStatus).
 	viewport viewport.Model
+
+	// Dock layout viewports (ViewProjects only). Each panel is independently scrollable.
+	projectsVP  viewport.Model
+	terminalsVP viewport.Model
+	loopVP      viewport.Model
+	hotkeysVP   viewport.Model
+
+	// Per-panel cumulative line offsets, rebuilt each sync; used by
+	// ensureCursorInPanel for variable-stride cursors (terminals/loop).
+	termLineStarts []int
+	loopLineStarts []int
+
+	// Last computed dock rects — used by mouse-wheel hit-testing.
+	lastDockRects dockRects
 
 	// Subscriber for cross-client state refresh broadcast
 	subscriberID int
@@ -159,10 +221,18 @@ type Model struct {
 // When isRemote is true, pressing q only closes this session without stopping
 // shared watchers or deactivating loops.
 func NewModelWithState(appState *AppState, isRemote bool) Model {
-	vp := viewport.New(0, 0)
-	vp.MouseWheelEnabled = true
-	vp.MouseWheelDelta = 3
-	vp.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
+	mkVP := func() viewport.Model {
+		v := viewport.New(0, 0)
+		v.MouseWheelEnabled = true
+		v.MouseWheelDelta = 3
+		v.KeyMap = viewport.KeyMap{} // disable all keyboard bindings — we handle keys ourselves
+		return v
+	}
+	vp := mkVP()
+	projectsVP := mkVP()
+	terminalsVP := mkVP()
+	loopVP := mkVP()
+	hotkeysVP := mkVP()
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 	sp.Style = lipgloss.NewStyle().Foreground(colorWorking)
@@ -176,6 +246,10 @@ func NewModelWithState(appState *AppState, isRemote bool) Model {
 		currentView:  ViewProjects,
 		spinner:      sp,
 		viewport:     vp,
+		projectsVP:   projectsVP,
+		terminalsVP:  terminalsVP,
+		loopVP:       loopVP,
+		hotkeysVP:    hotkeysVP,
 		subscriberID: id,
 		subscriberCh: ch,
 	}
@@ -188,7 +262,7 @@ func NewModel(appState *AppState) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tickCmd(), m.waitForStateRefresh()}
+	cmds := []tea.Cmd{tickCmd(), m.waitForStateRefresh(), tea.SetWindowTitle("Zpit")}
 
 	// SSH remote sessions skip server-init (session scan, .gitignore, provider check).
 	// These are run once at zpit serve startup via RunServerInit.
@@ -233,7 +307,14 @@ func (m *Model) syncViewportContent() {
 	case ViewProjects:
 		header = m.renderProjectsHeader()
 		footer = m.renderProjectsFooter()
-		m.viewport.SetContent(m.renderProjectsScrollable())
+		contentH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+		if contentH < 1 {
+			contentH = 1
+		}
+		m.layoutDockPanels(m.width, contentH)
+		// For ViewProjects, width/height are applied per-panel in layoutDockPanels;
+		// the legacy m.viewport stays idle. Return before the shared width/height block.
+		return
 	case ViewStatus:
 		header = m.renderStatusHeader()
 		footer = m.renderStatusFooter()
@@ -250,6 +331,10 @@ func (m *Model) syncViewportContent() {
 		header = m.renderGitStatusHeader()
 		footer = m.renderGitStatusFooter()
 		m.viewport.SetContent(m.renderGitStatusScrollable())
+	case ViewHistory:
+		header = m.renderHistoryHeader()
+		footer = m.renderHistoryFooter()
+		m.viewport.SetContent(m.renderHistoryScrollable())
 	}
 	h := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if h < 1 {
@@ -259,13 +344,63 @@ func (m *Model) syncViewportContent() {
 	m.viewport.Height = h
 }
 
-// ensureCursorVisible adjusts the viewport offset so the given line is on screen.
+// ensureCursorVisible adjusts the legacy viewport offset so the given line is on screen.
+// Used by views that still share m.viewport (Status/Channel/EditConfig/GitStatus).
 func (m *Model) ensureCursorVisible(cursorLine int) {
-	if cursorLine < m.viewport.YOffset {
-		m.viewport.SetYOffset(cursorLine)
-	} else if cursorLine >= m.viewport.YOffset+m.viewport.Height {
-		m.viewport.SetYOffset(cursorLine - m.viewport.Height + 1)
+	m.ensureCursorInPanel(&m.viewport, cursorLine)
+}
+
+// ensureCursorInPanel adjusts a specific panel viewport's YOffset so cursorLine is visible.
+// Used by dock panels (projectsVP, terminalsVP, loopVP) with per-panel cursor tracking.
+func (m *Model) ensureCursorInPanel(vp *viewport.Model, cursorLine int) {
+	if cursorLine < vp.YOffset {
+		vp.SetYOffset(cursorLine)
+	} else if cursorLine >= vp.YOffset+vp.Height {
+		vp.SetYOffset(cursorLine - vp.Height + 1)
 	}
+}
+
+// focusedVP returns a pointer to the viewport owned by the currently focused dock panel.
+// Falls back to projectsVP for unknown focus states.
+func (m *Model) focusedVP() *viewport.Model {
+	switch m.focusedPanel {
+	case FocusTerminals:
+		return &m.terminalsVP
+	case FocusLoopSlots:
+		return &m.loopVP
+	default:
+		return &m.projectsVP
+	}
+}
+
+// hitTestDockPanel returns a pointer to the viewport under the given terminal
+// coordinates (in screen space), or nil if the point lies outside any dock panel.
+// Rect coordinates are content-relative; this offsets the mouse Y by the rendered
+// header height so the test uses the same frame as m.lastDockRects.
+func (m *Model) hitTestDockPanel(x, y int) *viewport.Model {
+	headerH := lipgloss.Height(m.renderProjectsHeader())
+	ry := y - headerH
+	if ry < 0 {
+		return nil
+	}
+	inside := func(r panelRect) bool {
+		if r.w == 0 || r.h == 0 {
+			return false
+		}
+		return x >= r.x && x < r.x+r.w && ry >= r.y && ry < r.y+r.h
+	}
+	r := m.lastDockRects
+	switch {
+	case inside(r.projects):
+		return &m.projectsVP
+	case inside(r.terminals):
+		return &m.terminalsVP
+	case inside(r.loop):
+		return &m.loopVP
+	case inside(r.hotkeys):
+		return &m.hotkeysVP
+	}
+	return nil
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -315,6 +450,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		var cmd tea.Cmd
+		if m.currentView == ViewProjects {
+			if vp := m.hitTestDockPanel(msg.X, msg.Y); vp != nil {
+				*vp, cmd = vp.Update(msg)
+				return m, cmd
+			}
+			// No hit → fall through to projectsVP as a sensible default.
+			m.projectsVP, cmd = m.projectsVP.Update(msg)
+			return m, cmd
+		}
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
@@ -387,26 +531,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLoopAgentLaunched(msg)
 	case LoopPRStatusMsg:
 		return m.handleLoopPRStatus(msg)
+	case LoopAutoMergeMsg:
+		return m.handleLoopAutoMerge(msg)
 	case LoopCleanupMsg:
 		return m.handleLoopCleanup(msg)
 	case LoopOpenPRsMsg:
 		return m.handleLoopOpenPRs(msg)
 	case loopPollTickMsg:
-		m.state.RLock()
-		ls, ok := m.state.loops[msg.ProjectID]
-		active := ok && ls.Active
-		m.state.RUnlock()
-		if active {
-			return m, m.loopPollCmd(msg.ProjectID)
-		}
-		return m, nil
+		return m.handleLoopPollTick(msg)
 	case loopPRPollTickMsg:
-		// loopPollPRCmd acquires its own RLock internally.
-		return m, m.loopPollPRCmd(msg.ProjectID, msg.IssueID)
+		return m.handleLoopPRPollTick(msg)
 	case LoopLabelPollMsg:
 		return m.handleLoopLabelPoll(msg)
 	case loopLabelPollTickMsg:
-		return m, m.loopPollLabelsCmd(msg.ProjectID, msg.IssueID)
+		return m.handleLoopLabelPollTick(msg)
 
 	// Channel event messages
 	case ChannelEventMsg:
@@ -417,6 +555,42 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.logger.Printf("channel: subscribe error project=%s err=%v", msg.ProjectID, msg.Err)
 		}
 		return m, nil
+
+	// Desktop agent messages
+	case DesktopAgentLaunchedMsg:
+		return m.handleDesktopAgentLaunched(msg)
+	case DesktopAgentBlockedMsg:
+		return m.handleDesktopAgentBlocked(msg)
+	case DesktopAgentExitedMsg:
+		return m.handleDesktopAgentExited(msg)
+
+	// History (Session Browser) messages
+	case HistoryFoldersScannedMsg:
+		return m.handleHistoryFoldersScanned(msg)
+	case HistorySessionsScannedMsg:
+		model, cmd := m.handleHistorySessionsScanned(msg)
+		if mdl, ok := model.(Model); ok && mdl.historyExportAllPending {
+			// Pre-select all sessions and immediately enter export flow.
+			if mdl.historySelected == nil {
+				mdl.historySelected = make(map[string]bool)
+			}
+			for _, s := range mdl.historySessions {
+				mdl.historySelected[s.SessionID] = true
+			}
+			mdl.historyExportAllPending = false
+			return mdl.beginExportFlow()
+		}
+		return model, cmd
+	case ExportCompletedMsg:
+		return m.handleExportCompleted(msg)
+	case ImportCompletedMsg:
+		return m.handleImportCompleted(msg)
+	case manifestLoadedMsg:
+		return m.handleManifestLoaded(msg)
+	case sessionCollisionsMsg:
+		// T10 takes over collision dispatch fully (sessions.go's handler is a stub
+		// that calls startImportRun which itself is a no-op stub — both are superseded here).
+		return m.handleSessionCollisionsT10(msg)
 
 	// Git status messages
 	case GitDataLoadedMsg:
@@ -470,8 +644,22 @@ func (m Model) View() string {
 		bg = m.viewEditConfig()
 	case ViewGitStatus:
 		bg = m.viewGitStatus()
+	case ViewHistory:
+		bg = m.viewHistory()
 	default:
 		bg = "Unknown view"
+	}
+	if m.currentView == ViewHistory {
+		var modal string
+		if m.historyImportFlowActive && m.historyImportStep == 0 {
+			modal = m.renderHistoryStep0Modal()
+		} else {
+			modal = m.renderHistoryModal()
+		}
+		if modal != "" {
+			fg := confirmOverlayStyle.Render(modal)
+			return overlay.Composite(fg, bg, overlay.Center, overlay.Center, 0, 0)
+		}
 	}
 	if m.errorOverlay != "" {
 		fg := errorOverlayStyle.Render(m.errorOverlay)
@@ -494,7 +682,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global keys
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		if m.currentView != ViewProjects {
+		// AC-1: in ViewHistory's folder-list and session-list (no modal up,
+		// no wizard active), [q] quits zpit — matching the footer hint
+		// "[q] quit" and the AC's "pressing q quits zpit" wording. When a
+		// History modal/wizard is active (textinput focused, etc.) [q] still
+		// routes back to the dock so the user can recover without losing the
+		// process. Other non-Projects views keep the universal "q goes back
+		// to dock" convention.
+		quitsHere := m.currentView == ViewProjects ||
+			(m.currentView == ViewHistory && !m.historyHasActiveModal())
+		if !quitsHere {
 			m.currentView = ViewProjects
 			return m, nil
 		}
@@ -547,6 +744,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditConfigKey(msg)
 	case ViewGitStatus:
 		return m.handleGitStatusKey(msg)
+	case ViewHistory:
+		return m.handleHistoryKey(msg)
 	}
 	return m, nil
 }
@@ -572,19 +771,19 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
-		m.ensureCursorVisible(m.cursor * 3) // each project = 3 lines (name + detail + blank)
+		m.ensureCursorInPanel(&m.projectsVP, m.cursor*3) // each project = 3 lines (name + detail + blank)
 
 	case key.Matches(msg, m.keys.Down):
 		if m.cursor < len(m.state.projects)-1 {
 			m.cursor++
 		}
-		m.ensureCursorVisible(m.cursor * 3)
+		m.ensureCursorInPanel(&m.projectsVP, m.cursor*3)
 
 	case key.Matches(msg, m.keys.PageUp):
-		m.viewport.PageUp()
+		m.projectsVP.PageUp()
 
 	case key.Matches(msg, m.keys.PageDown):
-		m.viewport.PageDown()
+		m.projectsVP.PageDown()
 
 	case key.Matches(msg, m.keys.Enter):
 		if m.selectedProject() == nil {
@@ -607,10 +806,33 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p == nil {
 			return m, nil
 		}
-		if !m.checkConfig("[p]", *p, valTrackerURL) {
+		if !m.checkConfig("[i]", *p, valTrackerURL) {
 			return m, nil
 		}
 		return m, m.openTrackerCmd()
+
+	case key.Matches(msg, m.keys.OpenPR):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[p]", *p, valTrackerURL) {
+			return m, nil
+		}
+		return m, m.openPRCmd()
+
+	case key.Matches(msg, m.keys.Lazygit):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[G]", *p, valPath) {
+			return m, nil
+		}
+		return m, m.launchLazygitCmd()
+
+	case key.Matches(msg, m.keys.ClaudeUpdate):
+		return m, m.launchClaudeUpdateCmd()
 
 	case key.Matches(msg, m.keys.Clarify):
 		p := m.selectedProject()
@@ -691,6 +913,9 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.launchEfficiencyCmd()
 
+	case key.Matches(msg, m.keys.DesktopAgent):
+		return m, m.launchDesktopAgentCmd()
+
 	case key.Matches(msg, m.keys.Undeploy):
 		p := m.selectedProject()
 		if p == nil {
@@ -700,6 +925,17 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.showUndeployConfirm(*p)
+		return m, m.initConfirmForm()
+
+	case key.Matches(msg, m.keys.Redeploy):
+		p := m.selectedProject()
+		if p == nil {
+			return m, nil
+		}
+		if !m.checkConfig("[d]", *p, valPath) {
+			return m, nil
+		}
+		m.showRedeployConfirm()
 		return m, m.initConfirmForm()
 
 	case key.Matches(msg, m.keys.Status):
@@ -730,6 +966,22 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.channelProjectID = p.ID
 		m.viewport.GotoTop()
 		return m, nil
+
+	case key.Matches(msg, m.keys.History):
+		m.focusedPanel = FocusProjects
+		m.currentView = ViewHistory
+		m.historyDrilledFolder = ""
+		m.historyFolderCursor = 0
+		m.historySessionCursor = 0
+		m.historyExportStep = 0
+		m.historyImportStep = 0
+		m.historyImportFlowActive = false
+		m.historyExportFlowActive = false
+		if m.historyActivePIDsByFolder == nil {
+			m.historyActivePIDsByFolder = make(map[string]bool)
+		}
+		m.viewport.GotoTop()
+		return m, m.scanHistoryFoldersCmd()
 
 	case key.Matches(msg, m.keys.GitStatus):
 		p := m.selectedProject()
@@ -818,7 +1070,7 @@ func (m Model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if project == nil {
 			return m, nil
 		}
-		if !m.checkConfig("[p]", *project, valTrackerURL) {
+		if !m.checkConfig("[i]", *project, valTrackerURL) {
 			return m, nil
 		}
 		return m, m.openIssueURLCmd()
@@ -1038,4 +1290,762 @@ func (m Model) findProject(id string) *config.ProjectConfig {
 	return nil
 }
 
+// === History (Session Browser) handlers and helpers ===
 
+// initHistoryInputs lazily initialises the three textinput models the History
+// view uses. Called once when entering the import or export flow. All three
+// cap their visible Width at 50 cols so long paths (routine on Windows) don't
+// push the confirmOverlayStyle border off the right edge of the terminal —
+// the underlying value can still be longer; the textinput scrolls horizontally.
+func (m *Model) initHistoryInputs() {
+	if m.historyImportPathInput.Placeholder == "" {
+		ti := textinput.New()
+		ti.Placeholder = "/path/to/bundle.zip"
+		ti.CharLimit = 1024
+		ti.Width = 50
+		m.historyImportPathInput = ti
+	}
+	if m.historyExportPathInput.Placeholder == "" {
+		ti := textinput.New()
+		ti.Placeholder = "/path/to/output.zip"
+		ti.CharLimit = 1024
+		ti.Width = 50
+		m.historyExportPathInput = ti
+	}
+	if m.historyImportDestInput.Placeholder == "" {
+		ti := textinput.New()
+		ti.Placeholder = "/abs/path/to/project"
+		ti.CharLimit = 1024
+		ti.Width = 50
+		m.historyImportDestInput = ti
+	}
+}
+
+// historyHasActiveModal returns true when the History view has any modal,
+// wizard step, or textinput-driven flow currently up. Used by the global [q]
+// handler so that pressing 'q' inside a path input does not quit zpit by
+// mistake (AC-1: 'q' quits from the folder/session list, not from a modal).
+func (m Model) historyHasActiveModal() bool {
+	if m.historyImportStep != 0 || m.historyImportFlowActive {
+		return true
+	}
+	if m.historyExportStep != 0 || m.historyExportFlowActive {
+		return true
+	}
+	if len(m.historyCollisionQueue) > 0 || m.historyCollisionMemory {
+		return true
+	}
+	return false
+}
+
+// collectImportDestSuggestions snapshots configured project paths from
+// AppState and resolves each one to the OS-appropriate absolute path via
+// platform.ResolvePath. Empty paths are skipped, and duplicates are removed
+// while preserving project order. The returned slice is safe to retain on the
+// Model after the function returns (the AppState lock is released).
+func (m Model) collectImportDestSuggestions() []string {
+	m.state.RLock()
+	defer m.state.RUnlock()
+	seen := make(map[string]bool, len(m.state.projects))
+	out := make([]string, 0, len(m.state.projects))
+	for _, p := range m.state.projects {
+		path := platform.ResolvePath(p.Path.Windows, p.Path.WSL)
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
+}
+
+// renderHistoryStep0Modal returns the bundle-path-entry modal body for import
+// step 0. view_sessions.go's renderHistoryModal returns "" for step 0; this
+// method covers the gap so the user can type the bundle path into a textinput.
+func (m Model) renderHistoryStep0Modal() string {
+	title := selectedStyle.Render(locale.T(locale.KeyHistoryImportPathLabel))
+	return strings.Join([]string{
+		title,
+		"",
+		"  " + m.historyImportPathInput.View(),
+		"",
+		"  Press Enter to load manifest, Esc to cancel",
+	}, "\n")
+}
+
+// handleHistoryKey dispatches keys for the History (Session Browser) view.
+// Modal dispatch takes precedence: when any modal is active, keys go to the
+// modal handler; otherwise they go to the folder-list or session-list handler.
+func (m Model) handleHistoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.historyImportStep != 0 || m.historyImportFlowActive ||
+		m.historyExportStep != 0 ||
+		len(m.historyCollisionQueue) > 0 || m.historyCollisionMemory {
+		return m.handleHistoryModalKey(msg)
+	}
+	if m.historyDrilledFolder == "" {
+		return m.handleHistoryFolderListKey(msg)
+	}
+	return m.handleHistorySessionListKey(msg)
+}
+
+// handleHistoryFolderListKey handles keys when the user is browsing the
+// top-level folder list (Encoded Folders view).
+func (m Model) handleHistoryFolderListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rowCount := len(m.historyFolders) + 1 // +1 for the import pseudo-row
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.currentView = ViewProjects
+		m.viewport.GotoTop()
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.historyFolderCursor > 0 {
+			m.historyFolderCursor--
+		}
+	case key.Matches(msg, m.keys.Down):
+		if m.historyFolderCursor < rowCount-1 {
+			m.historyFolderCursor++
+		}
+	case key.Matches(msg, m.keys.Enter):
+		if m.historyFolderCursor == 0 {
+			return m.beginImportFlow()
+		}
+		idx := m.historyFolderCursor - 1
+		if idx < 0 || idx >= len(m.historyFolders) {
+			return m, nil
+		}
+		folder := m.historyFolders[idx]
+		m.viewport.GotoTop()
+		return m, m.scanHistorySessionsCmd(folder.Name)
+	default:
+		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'E':
+				// [E] export-all on the focused folder: drill in, scan, then auto-select all.
+				if m.historyFolderCursor == 0 {
+					return m, nil
+				}
+				idx := m.historyFolderCursor - 1
+				if idx < 0 || idx >= len(m.historyFolders) {
+					return m, nil
+				}
+				folder := m.historyFolders[idx]
+				m.historyExportAllPending = true
+				m.viewport.GotoTop()
+				return m, m.scanHistorySessionsCmd(folder.Name)
+			case 'i':
+				return m.beginImportFlow()
+			}
+		}
+	}
+	return m, nil
+}
+
+// handleHistorySessionListKey handles keys in the drilled-in session list.
+func (m Model) handleHistorySessionListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Back):
+		m.historyDrilledFolder = ""
+		m.historyActiveIDs = nil
+		m.historySessionCursor = 0
+		m.viewport.GotoTop()
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.historySessionCursor > 0 {
+			m.historySessionCursor--
+		}
+	case key.Matches(msg, m.keys.Down):
+		if m.historySessionCursor < len(m.historySessions)-1 {
+			m.historySessionCursor++
+		}
+	case key.Matches(msg, m.keys.Space):
+		if m.historySessionCursor < 0 || m.historySessionCursor >= len(m.historySessions) {
+			return m, nil
+		}
+		id := m.historySessions[m.historySessionCursor].SessionID
+		if m.historySelected == nil {
+			m.historySelected = make(map[string]bool)
+		}
+		m.historySelected[id] = !m.historySelected[id]
+	case key.Matches(msg, m.keys.Enter):
+		m.setStatus(locale.T(locale.KeyHistoryDetailNotImplemented))
+		return m, nil
+	default:
+		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'a':
+				// Toggle all-on if any unselected; otherwise toggle all-off.
+				anyUnselected := false
+				for _, s := range m.historySessions {
+					if !m.historySelected[s.SessionID] {
+						anyUnselected = true
+						break
+					}
+				}
+				if m.historySelected == nil {
+					m.historySelected = make(map[string]bool)
+				}
+				if anyUnselected {
+					for _, s := range m.historySessions {
+						m.historySelected[s.SessionID] = true
+					}
+				} else {
+					for _, s := range m.historySessions {
+						m.historySelected[s.SessionID] = false
+					}
+				}
+			case 'e':
+				return m.beginExportFlow()
+			}
+		}
+	}
+	return m, nil
+}
+
+// handleHistoryModalKey routes keys based on which modal is currently up.
+func (m Model) handleHistoryModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Collision modals take precedence.
+	if len(m.historyCollisionQueue) > 0 {
+		return m.handleSessionCollisionModalKey(msg)
+	}
+	if m.historyCollisionMemory {
+		return m.handleMemoryCollisionModalKey(msg)
+	}
+	// Export wizard.
+	if m.historyExportStep > 0 {
+		return m.handleExportModalKey(msg)
+	}
+	// Import wizard (any active step or flow flag).
+	if m.historyImportFlowActive || m.historyImportStep > 0 {
+		return m.handleImportModalKey(msg)
+	}
+	return m, nil
+}
+
+// handleSessionCollisionModalKey handles keys for a per-session collision prompt.
+// Buttons: 0=Overwrite, 1=Skip, 2=Cancel All. ←/→ cycle focus, Enter activates.
+// Letter shortcuts [o]/[s]/[c] still work, plus Esc = Cancel All.
+func (m Model) handleSessionCollisionModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if len(m.historyCollisionQueue) == 0 {
+		return m, nil
+	}
+	front := m.historyCollisionQueue[0]
+	if m.historyCollisionDecisions == nil {
+		m.historyCollisionDecisions = make(map[string]sessionsync.CollisionDecision)
+	}
+	advance := func() (tea.Model, tea.Cmd) {
+		m.historyCollisionQueue = m.historyCollisionQueue[1:]
+		// Reset to safe default (Skip) for the next collision prompt.
+		m.historyButtonFocus = 1
+		if len(m.historyCollisionQueue) == 0 && !m.historyCollisionMemory {
+			return m.runImportPass2()
+		}
+		return m, nil
+	}
+	if msg.Type == tea.KeyLeft {
+		m.historyButtonFocus = (m.historyButtonFocus + 2) % 3
+		return m, nil
+	}
+	if msg.Type == tea.KeyRight {
+		m.historyButtonFocus = (m.historyButtonFocus + 1) % 3
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Enter) {
+		switch m.historyButtonFocus {
+		case 0:
+			m.historyCollisionDecisions[front] = sessionsync.DecisionOverwrite
+			return advance()
+		case 1:
+			m.historyCollisionDecisions[front] = sessionsync.DecisionSkip
+			return advance()
+		case 2:
+			m.historyCollisionDecisions[front] = sessionsync.DecisionCancelAll
+			return m.runImportPass2()
+		}
+	}
+	if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+		switch msg.Runes[0] {
+		case 'o', 'O':
+			m.historyCollisionDecisions[front] = sessionsync.DecisionOverwrite
+			return advance()
+		case 's', 'S':
+			m.historyCollisionDecisions[front] = sessionsync.DecisionSkip
+			return advance()
+		case 'c', 'C':
+			m.historyCollisionDecisions[front] = sessionsync.DecisionCancelAll
+			return m.runImportPass2()
+		}
+	}
+	if key.Matches(msg, m.keys.Back) {
+		m.historyCollisionDecisions[front] = sessionsync.DecisionCancelAll
+		return m.runImportPass2()
+	}
+	return m, nil
+}
+
+// handleMemoryCollisionModalKey handles keys for the memory-directory collision prompt.
+// Buttons: 0=Overwrite, 1=Skip, 2=Cancel All. ←/→ cycle focus, Enter activates.
+// Letter shortcuts [o]/[s]/[c] still work, plus Esc = Cancel All.
+func (m Model) handleMemoryCollisionModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyLeft {
+		m.historyButtonFocus = (m.historyButtonFocus + 2) % 3
+		return m, nil
+	}
+	if msg.Type == tea.KeyRight {
+		m.historyButtonFocus = (m.historyButtonFocus + 1) % 3
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Enter) {
+		switch m.historyButtonFocus {
+		case 0:
+			m.historyMemoryDecision = sessionsync.DecisionOverwrite
+		case 1:
+			m.historyMemoryDecision = sessionsync.DecisionSkip
+		case 2:
+			m.historyMemoryDecision = sessionsync.DecisionCancelAll
+		}
+		m.historyCollisionMemory = false
+		return m.runImportPass2()
+	}
+	if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+		switch msg.Runes[0] {
+		case 'o', 'O':
+			m.historyMemoryDecision = sessionsync.DecisionOverwrite
+			m.historyCollisionMemory = false
+			return m.runImportPass2()
+		case 's', 'S':
+			m.historyMemoryDecision = sessionsync.DecisionSkip
+			m.historyCollisionMemory = false
+			return m.runImportPass2()
+		case 'c', 'C':
+			m.historyMemoryDecision = sessionsync.DecisionCancelAll
+			m.historyCollisionMemory = false
+			return m.runImportPass2()
+		}
+	}
+	if key.Matches(msg, m.keys.Back) {
+		m.historyMemoryDecision = sessionsync.DecisionCancelAll
+		m.historyCollisionMemory = false
+		return m.runImportPass2()
+	}
+	return m, nil
+}
+
+// handleExportModalKey handles keys for export-wizard modals (steps 1 and 2).
+func (m Model) handleExportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Back) {
+		m.historyExportStep = 0
+		m.historyExportFlowActive = false
+		m.historyActivePending = nil
+		return m, nil
+	}
+	switch m.historyExportStep {
+	case 1:
+		// Active-session warning: ←/→ cycle 2 buttons; Enter activates focused;
+		// Esc cancels (handled above). Buttons: 0=continue, 1=cancel.
+		if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			m.historyButtonFocus = (m.historyButtonFocus + 1) % 2
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Enter) {
+			if m.historyButtonFocus == 1 {
+				// Cancel button focused — same as Esc.
+				m.historyExportStep = 0
+				m.historyExportFlowActive = false
+				m.historyActivePending = nil
+				return m, nil
+			}
+			m.historyExportStep = 2
+			m.historyButtonFocus = 0
+		}
+	case 2:
+		// Confirm modal: Tab toggles focus between memory checkbox and path input;
+		// Space toggles memory when checkbox is focused; ←/→ cycle action buttons
+		// (when path input not focused — keep cursor movement when typing); Enter
+		// activates the focused action button. Buttons: 0=export, 1=cancel.
+		if key.Matches(msg, m.keys.FocusSwitch) {
+			if m.historyExportPathInput.Focused() {
+				m.historyExportPathInput.Blur()
+			} else {
+				m.historyExportPathInput.Focus()
+			}
+			return m, nil
+		}
+		if m.historyExportPathInput.Focused() {
+			// Path input is focused — Enter commits the value and runs the
+			// focused button's action; ←/→ are textinput cursor movement.
+			if key.Matches(msg, m.keys.Enter) {
+				if v := strings.TrimSpace(m.historyExportPathInput.Value()); v != "" {
+					m.historyExportOutputPath = v
+				}
+				if m.historyButtonFocus == 1 {
+					m.historyExportStep = 0
+					m.historyExportFlowActive = false
+					m.historyExportPathInput.Blur()
+					return m, nil
+				}
+				return m.runExport()
+			}
+			var cmd tea.Cmd
+			m.historyExportPathInput, cmd = m.historyExportPathInput.Update(msg)
+			return m, cmd
+		}
+		if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			m.historyButtonFocus = (m.historyButtonFocus + 1) % 2
+			return m, nil
+		}
+		// Path input not focused — Space toggles checkbox, Enter activates focused button.
+		if key.Matches(msg, m.keys.Space) {
+			m.historyExportIncludeMemory = !m.historyExportIncludeMemory
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Enter) {
+			if m.historyButtonFocus == 1 {
+				m.historyExportStep = 0
+				m.historyExportFlowActive = false
+				return m, nil
+			}
+			return m.runExport()
+		}
+	}
+	return m, nil
+}
+
+// runExport fires the export command using the currently selected sessions and
+// the resolved output path. Called from both the confirm-modal Enter handler
+// and the path-input-focused Enter handler.
+func (m Model) runExport() (tea.Model, tea.Cmd) {
+	ids := make([]string, 0, len(m.historySelected))
+	for _, s := range m.historySessions {
+		if m.historySelected[s.SessionID] {
+			ids = append(ids, s.SessionID)
+		}
+	}
+	outPath := m.historyExportOutputPath
+	include := m.historyExportIncludeMemory
+	folder := m.historyDrilledFolder
+	m.historyExportStep = 3 // running
+	m.historyExportPathInput.Blur()
+	return m, m.exportSessionsCmd(folder, ids, include, outPath)
+}
+
+// handleImportModalKey handles keys for all import-wizard modal steps (0–5).
+func (m Model) handleImportModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Back) {
+		// Cancel (or dismiss if at step 5 summary) the wizard.
+		m.historyImportStep = 0
+		m.historyImportFlowActive = false
+		m.historyImportPathInput.Blur()
+		m.historyImportDestInput.Blur()
+		// Clear summary state on any cancellation path.
+		m.historyImportManifest = nil
+		m.historyImportSelection = nil
+		m.historyImportResult = nil
+		m.historyCollisionDecisions = nil
+		return m, nil
+	}
+	switch m.historyImportStep {
+	case 0:
+		// Bundle path entry (textinput).
+		if key.Matches(msg, m.keys.Enter) {
+			path := strings.TrimSpace(m.historyImportPathInput.Value())
+			if path == "" {
+				return m, nil
+			}
+			m.historyImportBundlePath = path
+			m.historyImportPathInput.Blur()
+			return m, m.loadHistoryManifestCmd(path)
+		}
+		var cmd tea.Cmd
+		m.historyImportPathInput, cmd = m.historyImportPathInput.Update(msg)
+		return m, cmd
+	case 1:
+		// Preview: Up/Down navigates, Space toggles, [a] toggles all, Enter advances.
+		if key.Matches(msg, m.keys.Up) {
+			if m.historyImportSessionCursor > 0 {
+				m.historyImportSessionCursor--
+			}
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Down) {
+			if m.historyImportManifest != nil &&
+				m.historyImportSessionCursor < len(m.historyImportManifest.Sessions)-1 {
+				m.historyImportSessionCursor++
+			}
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Space) {
+			if m.historyImportManifest != nil &&
+				m.historyImportSessionCursor < len(m.historyImportManifest.Sessions) {
+				id := m.historyImportManifest.Sessions[m.historyImportSessionCursor]
+				if m.historyImportSelection == nil {
+					m.historyImportSelection = make(map[string]bool)
+				}
+				m.historyImportSelection[id] = !m.historyImportSelection[id]
+			}
+			return m, nil
+		}
+		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'a' {
+			if m.historyImportManifest != nil {
+				anyUnselected := false
+				for _, id := range m.historyImportManifest.Sessions {
+					if !m.historyImportSelection[id] {
+						anyUnselected = true
+						break
+					}
+				}
+				if m.historyImportSelection == nil {
+					m.historyImportSelection = make(map[string]bool)
+				}
+				for _, id := range m.historyImportManifest.Sessions {
+					m.historyImportSelection[id] = anyUnselected
+				}
+			}
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Enter) {
+			m.historyImportStep = 2
+			m.historyImportDestInput.SetValue("")
+			m.historyImportDestInput.Focus()
+			m.historyImportDestSuggestions = m.collectImportDestSuggestions()
+			m.historyImportDestSuggestionCursor = -1
+			return m, textinput.Blink
+		}
+	case 2:
+		// Destination path entry: textinput + autocomplete suggestion list.
+		// Cursor -1 = textinput focused (typing); 0..N-1 = a suggestion focused.
+		// Up/Down navigates between input and suggestions. Enter on a suggestion
+		// fills the input with that path; Enter on the input commits the typed
+		// path. Free-form absolute paths are always accepted (AC-8).
+		//
+		// IMPORTANT: gate navigation on msg.Type == tea.KeyUp/KeyDown rather than
+		// key.Matches(m.keys.Up/Down). The Up/Down bindings include 'k'/'j' aliases
+		// (see keymap.go) — using key.Matches here would intercept literal 'j'/'k'
+		// runes typed into the focused textinput, breaking paths like /home/jeff/...
+		// or C:\Users\jack\... (regression from round 1; see PR #103 review round 1).
+		// When the cursor is already on a suggestion (input blurred), allow the
+		// j/k aliases for vim-like navigation as well.
+		isUp := msg.Type == tea.KeyUp || (m.historyImportDestSuggestionCursor != -1 && key.Matches(msg, m.keys.Up))
+		isDown := msg.Type == tea.KeyDown || (m.historyImportDestSuggestionCursor != -1 && key.Matches(msg, m.keys.Down))
+		if isUp {
+			if m.historyImportDestSuggestionCursor > -1 {
+				m.historyImportDestSuggestionCursor--
+				if m.historyImportDestSuggestionCursor == -1 {
+					m.historyImportDestInput.Focus()
+					return m, textinput.Blink
+				}
+				m.historyImportDestInput.Blur()
+			}
+			return m, nil
+		}
+		if isDown {
+			if m.historyImportDestSuggestionCursor < len(m.historyImportDestSuggestions)-1 {
+				m.historyImportDestSuggestionCursor++
+				m.historyImportDestInput.Blur()
+			}
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Enter) {
+			// Enter on a suggestion: copy it into the input and advance.
+			if m.historyImportDestSuggestionCursor >= 0 &&
+				m.historyImportDestSuggestionCursor < len(m.historyImportDestSuggestions) {
+				path := m.historyImportDestSuggestions[m.historyImportDestSuggestionCursor]
+				if !filepath.IsAbs(path) {
+					m.setStatus(locale.T(locale.KeyHistoryDestMustBeAbs))
+					return m, nil
+				}
+				m.historyImportDestInput.SetValue(path)
+				m.historyImportDestPath = path
+				m.historyImportDestInput.Blur()
+				m.historyImportStep = 3
+				m.historyButtonFocus = 0
+				return m, nil
+			}
+			// Enter on freeform input: validate the typed value.
+			path := strings.TrimSpace(m.historyImportDestInput.Value())
+			if path == "" || !filepath.IsAbs(path) {
+				m.setStatus(locale.T(locale.KeyHistoryDestMustBeAbs))
+				return m, nil
+			}
+			m.historyImportDestPath = path
+			m.historyImportDestInput.Blur()
+			m.historyImportStep = 3
+			m.historyButtonFocus = 0
+			return m, nil
+		}
+		// Other keys go to the textinput only when it is focused.
+		if m.historyImportDestSuggestionCursor == -1 {
+			var cmd tea.Cmd
+			m.historyImportDestInput, cmd = m.historyImportDestInput.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	case 3:
+		// Final preview: ←/→ cycle 2 buttons (0=import, 1=cancel); Enter activates
+		// the focused button. Cancel resets the wizard.
+		if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			m.historyButtonFocus = (m.historyButtonFocus + 1) % 2
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Enter) {
+			if m.historyButtonFocus == 1 {
+				m.historyImportStep = 0
+				m.historyImportFlowActive = false
+				m.historyImportManifest = nil
+				m.historyImportSelection = nil
+				m.historyImportResult = nil
+				m.historyCollisionDecisions = nil
+				return m, nil
+			}
+			destEncoded := watcher.EncodeCwd(m.historyImportDestPath)
+			claudeHome, err := watcher.ClaudeHome()
+			if err != nil {
+				m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryClaudeHomeError), err))
+				return m, nil
+			}
+			destDir := filepath.Join(claudeHome, "projects", destEncoded)
+			ids := make([]string, 0, len(m.historyImportSelection))
+			if m.historyImportManifest != nil {
+				for _, id := range m.historyImportManifest.Sessions {
+					if m.historyImportSelection[id] {
+						ids = append(ids, id)
+					}
+				}
+			}
+			include := m.historyImportManifest != nil && m.historyImportManifest.IncludeMemory
+			m.historyImportStep = 4 // running (pre-collision check)
+			return m, m.detectImportCollisionsCmd(destDir, ids, include)
+		}
+	case 4:
+		// Running — ignore most keys; nothing to handle.
+	case 5:
+		// Summary: Enter or Esc dismisses.
+		if key.Matches(msg, m.keys.Enter) || key.Matches(msg, m.keys.Back) {
+			m.historyImportStep = 0
+			m.historyImportFlowActive = false
+			m.historyImportManifest = nil
+			m.historyImportSelection = nil
+			m.historyImportResult = nil
+			m.historyCollisionDecisions = nil
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+// beginExportFlow opens the export wizard. Detects active sessions in the current
+// selection; if any, opens the active-warning modal first (step 1), otherwise
+// jumps directly to the export confirm modal (step 2).
+func (m Model) beginExportFlow() (tea.Model, tea.Cmd) {
+	selectedIDs := make([]string, 0, len(m.historySelected))
+	for _, s := range m.historySessions {
+		if m.historySelected[s.SessionID] {
+			selectedIDs = append(selectedIDs, s.SessionID)
+		}
+	}
+	if len(selectedIDs) == 0 {
+		m.setStatus(locale.T(locale.KeyHistoryNoSelection))
+		return m, nil
+	}
+	activeSet := make(map[string]bool, len(m.historyActiveIDs))
+	for _, id := range m.historyActiveIDs {
+		activeSet[id] = true
+	}
+	var pending []string
+	for _, id := range selectedIDs {
+		if activeSet[id] {
+			pending = append(pending, id)
+		}
+	}
+	m.historyActivePending = pending
+	// Pre-fill output path if not already set.
+	if m.historyExportOutputPath == "" {
+		if path, err := defaultExportOutputPath(m.historyDrilledFolder); err == nil {
+			m.historyExportOutputPath = path
+		}
+	}
+	m.initHistoryInputs()
+	// Seed the export path textinput with the resolved default so the user can
+	// edit it in the confirm modal before pressing Enter (AC-4).
+	m.historyExportPathInput.SetValue(m.historyExportOutputPath)
+	m.historyExportPathInput.Blur() // start with checkbox focused; Tab focuses path input
+	m.historyExportFlowActive = true
+	// Default the action button to the affirmative (Continue / Export).
+	m.historyButtonFocus = 0
+	if len(pending) > 0 {
+		m.historyExportStep = 1
+	} else {
+		m.historyExportStep = 2
+	}
+	return m, nil
+}
+
+// beginImportFlow opens the import wizard at step 0 (bundle path entry).
+func (m Model) beginImportFlow() (tea.Model, tea.Cmd) {
+	m.initHistoryInputs()
+	m.historyImportFlowActive = true
+	m.historyImportStep = 0
+	m.historyImportPathInput.SetValue("")
+	m.historyImportPathInput.Focus()
+	if m.historyImportSelection == nil {
+		m.historyImportSelection = make(map[string]bool)
+	}
+	if m.historyCollisionDecisions == nil {
+		m.historyCollisionDecisions = make(map[string]sessionsync.CollisionDecision)
+	}
+	return m, textinput.Blink
+}
+
+// handleSessionCollisionsT10 takes over collision dispatch from sessions.go's stub.
+// When there are no collisions, it immediately proceeds to the import run.
+// When collisions exist, it stores them in the model for the collision modal loop.
+func (m Model) handleSessionCollisionsT10(msg sessionCollisionsMsg) (tea.Model, tea.Cmd) {
+	m.historyCollisionQueue = msg.SessionCollisions
+	m.historyCollisionMemory = msg.MemoryCollision
+	if len(msg.SessionCollisions) == 0 && !msg.MemoryCollision {
+		return m.runImportPass2()
+	}
+	// Default the collision button focus to "Skip" — the safest choice when a
+	// destination file already exists. User can tab to Overwrite or Cancel All
+	// before pressing Enter.
+	m.historyButtonFocus = 1
+	// Collision prompts exist; the modal loop (handleSessionCollisionModalKey /
+	// handleMemoryCollisionModalKey) will resolve them one at a time before
+	// calling runImportPass2.
+	return m, nil
+}
+
+// runImportPass2 executes the actual Unpack with pre-resolved collision decisions.
+// Called after all collision prompts have been answered (or CancelAll was chosen).
+func (m Model) runImportPass2() (tea.Model, tea.Cmd) {
+	if m.historyImportManifest == nil {
+		return m, nil
+	}
+	destEncoded := watcher.EncodeCwd(m.historyImportDestPath)
+	claudeHome, err := watcher.ClaudeHome()
+	if err != nil {
+		m.setStatus(fmt.Sprintf(locale.T(locale.KeyHistoryClaudeHomeError), err))
+		return m, nil
+	}
+	destDir := filepath.Join(claudeHome, "projects", destEncoded)
+	// Deep-copy maps so the closure doesn't capture mutable Model references.
+	selection := make(map[string]bool, len(m.historyImportSelection))
+	for k, v := range m.historyImportSelection {
+		selection[k] = v
+	}
+	decisions := make(map[string]sessionsync.CollisionDecision, len(m.historyCollisionDecisions))
+	for k, v := range m.historyCollisionDecisions {
+		decisions[k] = v
+	}
+	memDecision := m.historyMemoryDecision
+	bundlePath := m.historyImportBundlePath
+	destCwd := m.historyImportDestPath
+	// Set step 4 (running) before dispatching the cmd.
+	m.historyImportStep = 4
+	m.historyCollisionQueue = nil
+	m.historyCollisionMemory = false
+	return m, m.importBundleCmd(bundlePath, destDir, destCwd, selection, decisions, memDecision)
+}

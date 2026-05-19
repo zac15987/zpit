@@ -26,9 +26,13 @@
 │    → 但 file system 層面 agent 仍可用絕對路徑逃逸            │
 │    → 所以需要 Layer 3 的路徑守衛配合                         │
 │                                                             │
-│  Layer 5: PR 人工審查（最終防線）                             │
-│    → 所有改動必須你 approve 才進 develop                     │
-│    → 再多 agent 失誤，只要不 merge 就不會造成永久傷害        │
+│  Layer 5: 最終 merge 閘門（條件式）                          │
+│    → auto_merge=false（預設）：人工 PR review，所有改動     │
+│      必須你 approve 才進 dev                                 │
+│    → auto_merge=true：AI reviewer 的 ai-review PASS 取代    │
+│      人工閘門，Zpit 直接呼叫 tracker merge API              │
+│    → 啟用 auto_merge 前需評估 reviewer model 對此專案的       │
+│      品質是否值得信任                                          │
 │                                                             │
 │  類比：工控安全                                              │
 │  Layer 1 = 操作 SOP → Layer 3 = 軟體安全限位                │
@@ -88,7 +92,7 @@ Hook 腳本檢查 `ZPIT_AGENT` 環境變數 — 若不存在，直接 `exit 0`�
     └── zpit-exit.ps1      ← Windows PowerShell exit wrapper（自動關閉 WT 分頁）
 ```
 
-Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[r]`/`[l]`）時自動部署。
+Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[r]`/`[l]`）或 redeploy（`[d]`）時自動部署。
 
 **部署機制（`internal/worktree/hooks.go`）：**
 - Hook 配置以 Go 常數定義（`settingsStrict`、`settingsStandard`、`settingsRelaxed`）
@@ -232,7 +236,7 @@ echo $?   # 應該是 2
 - Agent 永遠在 worktree + feature branch 上工作，絕不直接操作主 repo
 - 每個 agent 的 Claude Code 工作目錄是 worktree 路徑，不是主 repo
 - Git 危險操作由 git-guard.sh 硬性攔截
-- PR 必須你手動 approve 才能 merge
+- PR merge 策略由 per-project `auto_merge` 決定（預設 false 需人工 approve；true 時由 AI reviewer PASS 驅動 tracker merge API，不走 agent 的 push/push hook 路徑）
 - PR merge 後自動清理 worktree + branch
 
 ## 9.8 Loop 安全
@@ -240,3 +244,56 @@ echo $?   # 應該是 2
 - Agent 在可見終端中運行，使用者可隨時切過去介入（天然安全閥）
 - `max_per_project` 限制每個專案同時 worktree 數量
 - agent 等待回應超過 `re_remind_minutes`（預設 2 分鐘）→ TUI 再次發送提醒通知
+
+---
+
+## 9.9 Auto-Merge 的安全 trade-off
+
+當 `auto_merge = true` 時，Layer 5 的最後一道人工關卡被 AI reviewer 的 PASS 判斷取代。這是**刻意的信任轉移**，不是漏洞 — 只有你自己決定這條 trade-off 值得時才應該開啟。
+
+**技術事實：**
+- merge API 由 Go 程式呼叫，不是 agent 的 `git push`，所以 **不經過 `git-guard.sh`**。這是正確的 — git-guard 防的是 agent 意外 push 到 main/master/develop/dev，而 auto-merge 是 Zpit 程式主動行為，不屬於 agent 行為。
+- merge 失敗時（permanent/transient exhausted）slot 進入 `SlotNeedsHuman`，worktree 和 branch 都保留供你處理。Auth 錯誤進入 `SlotError`。
+- 重試只針對 transient 錯誤（5xx / 408 / 429 / 網路 timeout），permanent 錯誤（409 / 405 / 422）立刻跳出不重試。
+
+**建議：**
+- 公用 fork / 公司專案：`auto_merge = false`（預設）。
+- 個人實驗專案、私人 repo：可考慮 `auto_merge = true`，但先觀察 reviewer 品質（例如連續 10 個 issue 的 review 都合理再開啟）。
+- **絕對不要**在不信任的專案上啟用，或者在 reviewer model 經常誤判的情境下啟用。
+
+---
+
+## 9.10 Desktop Agent 安全模型（5 層 stack 的例外）
+
+`[w]` 啟動的 desktop agent **不適用** 9.1 描繪的 5 層安全 stack。這不是疏漏 — 是 threat model 不同：
+
+| 為什麼不適用 | 說明 |
+|---|---|
+| Layer 1（agent-guidelines.md）| desktop agent 跑在 `$HOME` / `%USERPROFILE%`，不在任何專案 `.claude/docs/`；agent-guidelines 不部署 |
+| Layer 2（`--allowedTools`）| 工具名稱層級過濾不夠細 — 沒辦法擋住 `key text="win+r"` 卻放行 `key text="enter"`；需要 parameter-level enforcement |
+| Layer 3（PreToolUse hooks）| Write/Edit/Bash hook 對 `SendInput` 模擬鍵鼠毫無意義 — agent 不寫檔，是直接灌按鍵到整個桌面 |
+| Layer 4（worktree 隔離）| 沒有 worktree — agent 全域操作 |
+| Layer 5（PR merge 閘門）| 沒有 PR — 不產生 commit |
+
+**取代方案：`zpit serve-desktop-proxy` Go MCP proxy 是唯一的 safety layer。**
+
+Proxy 攔截每個 JSON-RPC `tools/call` frame，依 `~/.zpit/desktop-policy.toml` 的 profile 決定 forward 或 reject。三層 enforcement：
+
+1. **Tool allowlist**：不在 allowlist 上的 tool 名直接被 reject（不論參數）。`run_script` / `filesystem` / `process_kill` / `registry` / `notification` / `scrape` / 所有 virtual-desktop tools 全部硬擋。
+2. **Parameter policy**：`deny_keys` 對 `key` tool 做 substring match（例：`win+r` / `ctrl+alt+del` / `alt+f4`）；`allow_bundles` 是使用者預核可的群組例外。
+3. **Single-instance lock**：`AppState.activeDesktopAgent` 互斥欄位，所有連線 TUI 共用一個 desktop agent，第二次 `[w]` 會被 reject。
+
+**Profile 預設（`standard`，5 個之一）**：48 tools allowed、10 denied、7 deny_keys、`allow_run_script = false`。其他選項見 `desktop-agent.md` profile 表。
+
+**OS-level 最後一道：** macOS Accessibility 權限 / Windows UIAutomation 註冊，必須由你手動授權，proxy 也無法 bypass。
+
+**為什麼不用 hook 而選 Go proxy：**
+- MCP tool 參數是巢狀 JSON，shell 解析腳手架脆且難維護
+- Go proxy 能回 structured error 讓 agent 自己 reason 失敗原因，shell hook 只能回 exit code + stderr
+- proxy 同時跑 single-instance lock，hook 做不到
+
+完整選型論證、tool-by-tool allowlist justification、deny_keys 平台表，見 [desktop-agent.md](desktop-agent.md)。
+
+**ZPIT_AGENT 環境變數對 desktop agent 無作用** — 它本來就是「給 hook 看的開關」，desktop agent 不部署 hook，所以不設這個 env 也不影響 proxy 行為。
+
+**release 心智模型**：別把 desktop agent 想成「另一個 zpit agent」— 它是「另一個 safety domain」。專案內 agent 的 5 層 stack 防的是「agent 寫壞 code / push 錯地方」；desktop agent 的 proxy policy 防的是「agent 按錯鍵 / 開錯 app / 執行 shell」。兩條防線並行，但不互相支援。

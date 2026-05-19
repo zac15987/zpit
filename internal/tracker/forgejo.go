@@ -35,6 +35,7 @@ type forgejoPR struct {
 	Merged  bool         `json:"merged"`
 	HTMLURL string       `json:"html_url"`
 	Head    forgejoPRRef `json:"head"`
+	Base    forgejoPRRef `json:"base"`
 }
 
 type forgejoPRRef struct {
@@ -167,14 +168,38 @@ func (c *ForgejoClient) ListOpenPRs(ctx context.Context, repo string) ([]PRInfo,
 	var result []PRInfo
 	for _, pr := range prs {
 		result = append(result, PRInfo{
-			ID:     fmt.Sprintf("%d", pr.Number),
-			Title:  pr.Title,
-			Branch: pr.Head.Ref,
-			State:  pr.State,
-			URL:    pr.HTMLURL,
+			ID:         fmt.Sprintf("%d", pr.Number),
+			Title:      pr.Title,
+			Branch:     pr.Head.Ref,
+			BaseBranch: pr.Base.Ref,
+			State:      pr.State,
+			URL:        pr.HTMLURL,
 		})
 	}
 	return result, nil
+}
+
+func (c *ForgejoClient) MergePR(ctx context.Context, repo string, prID string, method string, commitTitle string) (*PRStatus, error) {
+	switch method {
+	case "squash", "merge", "rebase":
+	default:
+		return nil, fmt.Errorf("invalid merge method: %q (want squash|merge|rebase)", method)
+	}
+	owner, name := splitRepo(repo)
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%s/merge", owner, name, prID)
+	body := struct {
+		Do              string `json:"Do"`
+		MergeTitleField string `json:"MergeTitleField,omitempty"`
+	}{Do: method, MergeTitleField: commitTitle}
+
+	// Forgejo returns HTTP 200 with empty body on success. Per AC-6 we do
+	// NOT re-fetch to populate URL — the merged-state signal is sufficient
+	// for the loop engine, and avoiding a second API call keeps the hot
+	// path lean. Callers that need the PR URL can fetch it separately.
+	if err := c.doJSON(ctx, http.MethodPost, path, body, nil); err != nil {
+		return nil, fmt.Errorf("merge PR: %w", err)
+	}
+	return &PRStatus{ID: prID, State: "merged"}, nil
 }
 
 // forgejoIssueToIssue converts the API response to a canonical Issue.

@@ -33,15 +33,21 @@ func BuildRevisionPrompt(p RevisionParams) string {
 	b.WriteString(p.Spec.Approach)
 
 	b.WriteString("\n\n## Acceptance Criteria\n\n")
+	b.WriteString("<acceptance_criteria>\n")
 	b.WriteString(strings.Join(p.Spec.AcceptanceCriteria, "\n"))
+	b.WriteString("\n</acceptance_criteria>")
 
 	b.WriteString("\n\n## Allowed File Scope\n\n")
+	b.WriteString("<scope>\n")
 	b.WriteString(formatScope(p.Spec.Scope))
+	b.WriteString("</scope>\n")
 	b.WriteString("\nDo not touch files outside this scope. If you find that you must modify files outside the scope to complete the task,\n")
 	b.WriteString("stop immediately, explain the reason, and wait for the user's decision.")
 
 	b.WriteString("\n\n## Constraints (must not violate)\n\n")
+	b.WriteString("<constraints>\n")
 	b.WriteString(p.Spec.Constraints)
+	b.WriteString("\n</constraints>")
 
 	fmt.Fprintf(&b, "\n\n## Logging Policy\n\n%s", logPolicyText(p.LogPolicy))
 
@@ -63,15 +69,39 @@ func BuildRevisionPrompt(p RevisionParams) string {
 6. Fix the code for each issue
 7. During fixes, ensure all changes comply with CLAUDE.md conventions and the code quality baseline
 8. After fixing, re-read each modified file to verify your changes are consistent and no unintended edits remain
-9. After completion, self-check against each ACCEPTANCE_CRITERIA item
-10. Use git add + git commit to commit changes
+9. **Self-check against reviewer feedback and ACCEPTANCE_CRITERIA** (mandatory pre-commit gate) — walk through each item one at a time, do NOT batch this into a single "looks good" pass:
+   a. For each reviewer MUST FIX (🔴) item: quote the reviewer's wording verbatim, then point to the concrete file:line or test name that addresses it
+   b. Re-read each originally-FAILED AC that the MUST FIX items map to — verify the fix now satisfies the AC wording, not just the reviewer's literal request
+   c. Treat words like **exactly**, **without**, **only**, **must not**, **never** in both the AC and the reviewer's feedback as strict constraints — no interpretation, no "close enough"
+   d. For log-format ACs, write out the actual log string your code produces and compare **character by character** against the AC spec — an extra field or wrong order counts as FAIL
+   e. **Cross-product trace for branching dispatch** (trigger: the reviewer flag, or your fix, touches a routing rule, event handler, dispatcher, state-machine transition, filter / interceptor, override resolution, or any logic that branches on incoming input). Action: list the cross-product of (every relevant context/state axis) × (every relevant input/action axis), then for each cell state the expected behaviour after the fix and the file:line that produces it. Verifying the obvious case is NOT sufficient — a regression class survives if a sibling cell is unverified. Past failure mode: the revision fix verified the obvious dispatch path but did not enumerate the cross-product, so a sibling rule on the same dispatch surface silently consumed an input that should have flowed to the new fix; the regression surfaced only at the next review round
+   f. Regression check — scan the ACs you did NOT touch in this revision; for each, confirm you haven't broken it (especially if the fix spans files that other ACs also reference)
+   g. If any reviewer item cannot be traced to a concrete fix, or if regressions are detected, STOP — do not commit, do not push. Post a PR comment describing the gap and ask for guidance.
+%s10. Use git add + git commit to commit changes
 11. Commit message format: [%s] fix: {brief description of fix}
-12. Write a Revision Summary to both the PR comment AND the issue comment, covering:
-   - Which reviewer issues were addressed (reference by item number or quote)
-   - How each was fixed (brief: file changed, what changed)
-   - Any reviewer issues intentionally NOT addressed, with reason
-13. Before starting fixes, update issue label: remove "needs-changes", add "wip"
-14. After fixes are complete, update issue label: remove "wip", add "review"
+12. **Push the commit to the remote PR branch**: run ` + "`git push`" + ` in the worktree. The PR branch's upstream was set when the initial coding session opened the PR via ` + "`gh pr create`" + `, so plain ` + "`git push`" + ` is enough. If push is rejected because the upstream is unset (rare — only if the PR branch was recreated), use ` + "`git push -u origin <current-branch>`" + `. **Skipping this step is a silent failure mode**: your commits stay local, the reviewer fetches the remote PR and sees the old code, and the loop advances on stale state.
+13. Write a Revision Summary to both the PR comment AND the issue comment, using this four-section structure (omit any subsection that has zero entries):
+
+   ### Must-fix items addressed
+   For each `+"`🔴 MUST FIX`"+` item from the previous review:
+   - Quote the reviewer's wording verbatim
+   - Name the fix location (file:line)
+   - One-sentence description of what changed
+
+   ### Non-blocking items addressed in this revision
+   Only list `+"`🟡`"+` items you chose to fix beyond what was required. Same format as Must-fix.
+
+   ### Deliberately deferred items
+   List each non-`+"`🔴`"+` item you chose NOT to fix. The rationale MUST be one of:
+   (a) a specific regression risk (e.g. "cosmetic refactor risks `+"`/clr`"+` boundary issues"),
+   (b) requires coordination with an external party / team,
+   (c) recommend follow-up issue: <description>.
+   "Nit" / "minor" / "low priority" alone is NOT an acceptable rationale — give the underlying reason. `+"`🔴`"+` items must NOT appear in this section. If you believe an item was miscategorized as `+"`🔴`"+`, say so in the revision summary and argue for reclassification rather than silently deferring.
+
+   ### Build-fit exceptions
+   List any package version API renames, SDK auto-include adjustments (e.g. `+"`<Compile Remove=\"X/**\" />`"+`), or build-target switches introduced during the revision. These are NOT counted against any AC that specifies "exactly N deviations" (see the issue's deviation-contract clauses). If no build-fit exceptions were introduced, omit this subsection entirely.
+14. Before starting fixes, update issue label: remove "needs-changes", add "wip"
+15. After fixes are complete, update issue label: remove "wip", add "review"
 
 Note: This PR's target branch is `+"`%s`"+`. If you find the PR targets the wrong branch,
 stop immediately and notify the user; do not continue working.
@@ -92,7 +122,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, p.IssueID, p.BaseBranch)
+`, acSelfCheckExample("revision"), p.IssueID, p.BaseBranch)
 
 	return b.String()
 }

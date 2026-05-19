@@ -29,8 +29,8 @@
 - [x] Issue Spec 格式驗證模組（ValidateIssueSpec + ParseIssueSpec）
 - [x] Clarifier agent 定義（agents/clarifier.md，go:embed 嵌入）
 - [x] TUI [c] clarify：開新終端啟動 claude --agent clarifier（未部署時 huh confirm 自動部署）
-- [x] TUI [s] status：唯讀 issue 列表（透過 TrackerClient 拉取）+ [y] 確認 + [p] 開瀏覽器
-- [x] TUI [p] open tracker：主畫面開瀏覽器到 issue list
+- [x] TUI [s] status：唯讀 issue 列表（透過 TrackerClient 拉取）+ [y] 確認 + [i] 開瀏覽器
+- [x] TUI [i] open tracker：主畫面開瀏覽器到 issue list
 - [x] 「待確認」→「Todo」確認流程（[y] 透過 TrackerClient 改 label）
 
 ## M4a: Worktree + Prompt 模板 + Profile ✅
@@ -126,17 +126,66 @@
 - [x] `zpit-exit.cmd` / `zpit-exit.ps1` exit wrappers for auto-closing WT tabs
 - [x] WindowSizeMsg on confirm dialog init for immediate button rendering
 
----
+## M4f: Redeploy 快捷鍵 + 部署狀態標記
 
-## M5: 完整體驗（規劃中）
+> 已完成
 
-- [ ] 機台 push 回來後自動觸發 review
-- [ ] 最近活動 feed（從 session log 解析）
-- [ ] shared-core 跨專案影響偵測
-- [ ] 開機自啟動設定（Windows startup / WSL .bashrc）
-- [ ] Cross-compile: 同一份 code 編譯 Windows + Linux binary
-- [ ] TUI log area（主畫面底部可捲動事件 log，顯示最近 N 筆）
+- [x] `[d]` Redeploy hotkey：一鍵 undeploy + 重新部署 4 個 agents（clarifier/reviewer/task-runner/efficiency）+ hooks + docs，不啟動 Claude；confirm 對話框保護
+- [x] `deployAllCmd()` in `internal/tui/launch.go` — 沿用 `undeployFiles` + `DeployHooksToProject` + `deployDocs`，無 `.mcp.json` 寫入
+- [x] 專案列表狀態標記：🟢 已部署（10 個檔案齊全）/ 🟡 部分部署 / ⚪ 未部署
+- [x] `deployStatus()` in `view_projects.go` — 每次渲染 `os.Stat` 10 個檔案，不快取
+- [x] `showRedeployConfirm()` 沿用 huh confirm dialog pattern
+- [x] i18n：7 個新 locale key（KeyRedeploy、KeyRedeployConfirm/Button/Done、KeyDeployStatus{Full,Partial,None}）
 
-## Refine: 體驗優化
+## M4g: Dock 版面 + Catppuccin Mocha
 
-- [ ] 專案 CLAUDE.md 模板（TUI 按鍵觸發 claude /init，已有則跳過）
+> 已完成
+
+- [x] `ViewProjects` 從單一共用 viewport 改為四面板 dock：專案 / 活躍終端 / Loop（左欄堆疊）+ 快捷鍵（右欄固定）；每個面板各自擁有 `viewport.Model`，可獨立上下捲動
+- [x] 版面演算法 `computePanelRects`：70/30 欄寬 + `dockMinLeftWidth`/`dockMinRightWidth` clamp；左欄高度依權重分配（專案 3 / 終端 2 / Loop 2），空面板自動收合；不再有 `<100 cols` 單欄 fallback — 任何寬度 Hotkeys 永遠 dock 右邊
+- [x] 標題 chrome：`▎` mauve 焦點 bar（單欄寬，只出現在 focused 面板的標題列）+ 大寫 title + count badge + 6 字 rule；堆疊面板前加一列 gutter blank 分隔
+- [x] 256-color ANSI → Catppuccin Mocha 24-bit 色盤；`colorAccent/Text/Muted/...` 語意 alias 保留，call sites 不動
+- [x] 滑鼠滾輪 `hitTestDockPanel`：依游標位置分派到命中面板的 viewport，未命中回退 projectsVP
+- [x] `renderTerminalsBody` / `renderLoopBody` 建 `termLineStarts` / `loopLineStarts` 供可變 stride cursor-follow 使用
+- [x] `TestComputePanelRects` 8 個 case 覆蓋 wide/narrow/empty/clamp 邊界
+- [x] 後續 refactor：`panelInnerSize` + `applyPanelContent` 抽出 4 個 sync 函式的重複 prologue/epilogue；`dockPanel` struct 把 `renderOne`/`renderPanelChrome` 參數從 7/6 降到 1；magic number 全改為具名常數
+
+## M4h: Session sync (cross-machine /resume)
+
+> 已完成 — Issue #102
+
+- [x] T1: `internal/sessionsync/manifest.go` — Manifest schema (`format_version`, `source_os`, `source_cwd`, `source_encoded_cwd`, `sessions[]`, `exported_at`, `include_memory`) + `MarshalManifest` / `UnmarshalManifest` / `DetectSourceOS` + JSON round-trip 測試
+- [x] T2: `internal/sessionsync/scan.go` — `ProjectsRoot` / `ScanFolders` / `ScanSessions`（含 `HasSubagents` 偵測）+ 8 case 測試
+- [x] T3: `internal/sessionsync/pack.go` — `Pack` zip writer，自動從 session line 抽 `cwd` 寫入 manifest，subagents + 可選 memory 子樹打包；session JSONL 以 `bufio.Scanner` 64MB buffer 串流 + 9 case 測試
+- [x] T4: `internal/sessionsync/unpack.go` — `Unpack` + cwd rewrite（line-by-line JSON-aware：只改 `cwd` 欄位）+ `LoadManifest` + `DetectCollisions` + collision-resolver callback (Overwrite/Skip/CancelAll) + 11 case 測試（含 cross-OS round-trip 過 `watcher.ParseLine`）
+- [x] T5: `internal/locale/keys.go` + `en.go` + `zh_tw.go` — 42 個新 KeyHistory* locale key 與英中翻譯
+- [x] T6: `internal/tui/msg.go` — 七個新 `tea.Msg` 型別（HistoryFoldersScannedMsg、HistorySessionsScannedMsg、ExportStartedMsg、ExportCompletedMsg、ImportStartedMsg、ImportProgressMsg、ImportCompletedMsg、CollisionPromptMsg）
+- [x] T7: `internal/tui/keymap.go` — `History` 鍵綁定到 `h`
+- [x] T8: `internal/tui/sessions.go` — cmd factories（scan folders / scan sessions / detect active PIDs / export / load manifest / detect collisions / import）+ msg handlers，AC-16 log format 全 character-by-character 驗證
+- [x] T9: `internal/tui/view_sessions.go` — folder list / session list / 8 種 modal 渲染（active warning / export confirm / import preview / dest entry / final preview / running / summary / collision），全部走 `locale.T()`
+- [x] T10: `internal/tui/model.go` — `ViewHistory` View constant、`[h]` 鍵 handler、31 個 per-Model history 欄位、textinput widgets（bundle path / output path / dest path）、import wizard 步驟機（0 path → 1 preview → 2 dest → 3 final → 4 running → 5 summary）、export wizard 步驟機（0 hidden → 1 active warning → 2 confirm → 3 running）、collision queue dispatch
+- [x] T11: `internal/tui/view_projects.go` — Hotkey 面板加入 `[h] History`，與 `[m] Channel` 同組（cross-session features）
+- [x] T12: README.md + CLAUDE.md 加入 Session sync 說明、Package Structure 加入 `sessionsync/`
+- [x] T13: `docs/architecture/02-tui-design.md` 加入 2.7 History 子節 + `docs/architecture/11-milestone.md` 加入 M4h 區塊
+
+## M5: Desktop Agent
+
+> 已完成
+
+開出一條與 5 層 hook stack 平行的新 safety domain — desktop agent 不在 worktree、不寫檔，靠 Go MCP proxy 做 per-call policy gate 而非 `PreToolUse` hook。
+
+- [x] `agents/desktop.md` agent 定義（`name: desktop`、`model: opus[1m]`），go:embed 嵌入 binary
+- [x] `zpit serve-desktop-proxy` 子命令 — Go stdio MCP proxy，攔截每個 `tools/call` frame，evaluate against policy，forward 或 reject
+- [x] `zpit-desktop-mcp` upstream fork（github.com/zac15987/computer-use-mcp，fork 自 `@zavora-ai/computer-use-mcp@6.1.0`） — Windows AUMID launch、Win32 `.exe` launch + PID 回傳、stdio-entrypoint backslash fix、`@modelcontextprotocol/sdk` Zod 4 bump
+- [x] `~/.zpit/desktop-policy.toml` policy file — 首次 `serve-desktop-proxy` 啟動時自動建立
+- [x] 5 個 profile presets（`internal/desktop/policy.go`）：`read-only` / `strict` / `standard`（預設）/ `none-script` / `trusted`，profile 欄位 + 明確欄位 override 機制
+- [x] Tool allowlist：硬擋 `run_script` / `filesystem` / `process_kill` / `registry` / `notification` / `scrape` / `multi_edit` / `multi_select` / `snapshot` / 所有 virtual-desktop tools / `resize_window`
+- [x] `deny_keys` 平台預設：Windows 擋 `win+r` / `ctrl+shift+esc` / `ctrl+alt+del` / `alt+f4`；macOS 擋 `cmd+q` / `cmd+option+esc` / `cmd+ctrl+q`
+- [x] `allow_bundles` 例外群組機制：使用者預核可的 shortcut 群組，匹配時繞過 `deny_keys`
+- [x] `keyboard_focus_strategy` 設定：可要求 pointer action 前先 `focus_check`，降低 type-into-wrong-window 風險
+- [x] `[w]` hotkey（W for Window control；`[g]` 已給 GitStatus）— 從 `ViewProjects` 啟動，不需選專案
+- [x] Single-instance lock：`AppState.activeDesktopAgent` mutex 欄位，跨所有 SSH 連線 TUI 共用一個 desktop agent；第二次 `[w]` 用 status toast reject
+- [x] Linux `[w]` no-op：`runtime.GOOS == "linux"` 直接 status toast 並從 hotkeys panel 隱藏（upstream `computer-use-mcp` 宣告 `os: ["darwin", "win32"]`，Rust NAPI module 沒有 Linux backend）
+- [x] 全域 scope：cwd = `$HOME` / `%USERPROFILE%`，無 `project.Path`、無 per-project hook 部署
+- [x] `docs/architecture/desktop-agent.md` — 完整選型論證（proxy vs hooks vs allowedTools vs raw `.mcp.json`）、security model、profile 表、tool-by-tool allowlist justification、deny_keys 平台表、未來 Phase 2 擴充點、upstream credit
+- [x] README.md + CLAUDE.md + `docs/architecture/README.md`（index #13）+ 09-safety.md（9.10 例外章節）+ 06-agents.md（6.5 desktop agent 章節）+ 02-tui-design.md（mockup 加 `[w]`）同步更新

@@ -53,15 +53,24 @@ disallowedTools: Edit
 - 逐條比對 ACCEPTANCE_CRITERIA：✅ / ❌ / ⚠️
 - 檢查 SCOPE 越界和 CONSTRAINTS 合規
 - 驗證 PR target branch 是否匹配預期的 base branch
-- 依 `code-construction-principles.md` 抽樣檢查 code 品質
+- 依 `code-construction-principles.md` 抽樣檢查 code 品質（**所有違反一律標 🔴**）
 - 產出 Review Report（嚴重度標記：🔴 MUST FIX / 🟡 SUGGEST / 🟢 NICE）
 - 將 report 寫到 PR comment 和 issue comment
 - 設定判定 label：ai-review (PASS) 或 needs-changes (NEEDS CHANGES)
 
+**嚴重度分級（重要）：**
+- 🔴 MUST FIX：AC 未達、CONSTRAINTS 違反、**正確性 bug（功能壞掉、dead code、懸空引用、`void x` 類噪音抑制）**、code-construction-principles 違反、任何需要後續 PR 才能清掉的技術債
+- 🟡 SUGGEST：**僅限真正的風格/品味偏好**（等價重構、命名替代、可選抽取）。若為正確性問題一律升為 🔴，不得以「non-blocking / minor / nit」為由放行
+- 🟢 NICE：做得好的地方
+
 **判定規則：**
+- 任何 🔴 MUST FIX → NEEDS CHANGES（無論 AC 是否全 ✅）
 - 任何 AC ❌ → NEEDS CHANGES
-- 全部 AC ✅ 但有建議 → PASS with suggestions
 - SCOPE/CONSTRAINTS 違反 → NEEDS CHANGES（無論 AC 狀態）
+- 全部 AC ✅、無 🔴、僅有 🟡 → PASS with suggestions
+- 全部 AC ✅、無 🔴、無 🟡 → PASS
+
+**設計動機**：原版把 AC 當作唯一正確性判準，導致 `.blink` CSS 未定義、`void TAB_ANCHORS` dead code 這類真實 bug 因「AC 沒寫」被降級為 🟡 放行，累積成技術債。新規則把「正確性」從 AC 解耦，reviewer 遇到明顯壞掉的行為必須 🔴，AC 沉默不構成放行許可。
 
 完整模板見 `agents/reviewer.md`。
 
@@ -87,15 +96,33 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 
 **使用方式：**
 - 循序 task：主 coding agent 透過 Agent tool 的 `subagent_type: "task-runner"` 逐一委派
-- 平行 task（`[P]`）：主 coding agent 建立 Agent Team，每個 teammate 使用 `task-runner` subagent type
+- 平行 task（`[P]`）：主 coding agent 派發一個**平行 subagent batch**，每個 `[P]` task 分配一個 `task-runner` subagent（走 Claude Code 的一般 subagent 路徑 + `isolation: "worktree"`，**不是** Claude Code 的 Agent Team / teammate 機制）
 
-完整模板見 `agents/task-runner.md`。
+**Per-Subagent Worktree Model（取代歷代 Parallel Commit Protocol v1/v2/v3）：**
+
+每個 `[P]` 平行 subagent 跑在自己的 child worktree、自己的 branch 上，所以 staging index 與 `refs/heads/<branch>.lock` 的 race 從架構層面被消除（v1/v2/v3 修復的歷史脈絡見 `docs/known-issues.md` §2）。
+
+流程：
+
+1. **Orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`**（這是 Claude Code 的 runtime parameter，不是 subagent frontmatter）。
+2. Claude Code 觸發 zpit 的 `WorktreeCreate` hook（`hooks/worktree-create.sh`），hook 讀取 stdin JSON 的 `cwd` 與 `name`，執行 `git -C <cwd> worktree add -B <parent-branch>-<slug> <cwd>/.zpit-children/<slug> HEAD`（關鍵：fork 自 orchestrator 的 HEAD，而非 Claude Code 內建的 `origin/<defaultBranch>`，否則會錯過先前循序 task 的 commit），然後 `cp -r .claude/` + `.mcp.json` 進 child，把 worktree path 印到 stdout 交還 Claude Code。
+3. 平行 subagent 在 child worktree 以 `git add -- <files> && git commit` 正常 commit，沒有任何 index 隔離、沒有 `mkdir` lock、沒有跨 shell 的 env 問題。
+4. Agent tool 回傳 `{worktreePath}` 給 orchestrator。**注意：`worktreeBranch` 永遠是 `undefined`** — Claude Code 的 `WorktreeCreate`-hook 路徑只會 propagate path，不會 propagate branch（根因追在 known-issues §3）。
+5. Orchestrator 在 cleanup 之前，先用一個 Bash call 查各 subagent 的分支名：`for path in <paths>; do git -C "$path" rev-parse --abbrev-ref HEAD; done`。這是權威來源 — 不靠字串推導，不依賴命名慣例。
+6. 拿到分支名後，orchestrator 在父 worktree 跑一次性 `git cherry-pick <branch1> <branch2> ...`（task-ID 順序）。Cherry-pick 衝突（spec bug：兩個 `[P]` task 寫同檔）會被 `git cherry-pick --abort` 當面擋下 → 停機等使用者，**不會**靜默半 merge。
+7. Cleanup 分為**兩個獨立的 Bash call**（絕不以 `&&` 串聯 — hook 擋下其中一個不能連累另一個）：
+   - Call 1：`for path in <paths>; do git worktree remove --force "$path"; done` — `--force` 從一開始就帶，因為 child 裡有 `cp -r` 進去的 `.claude/` 是 untracked，無 `--force` 會 fail。
+   - Call 2：`for branch in <branches>; do git branch -D "$branch"; done` — 若這個被 hook 擋下或失敗，必須單獨重試；不能跳過（會留 `*-agent-<hex>` orphan 分支污染本地 branch list，這是 known-issues §4 紀錄的實際發生過的 bug）。
+
+循序 task 不走此流程（不呼叫 `isolation: "worktree"`），直接在父 worktree commit。平行 subagent 的行為規範見 `agents/task-runner.md`（`Parallel Commit Protocol` 段已移除）。
+
+已知 bug 與對應 workaround 見 `docs/known-issues.md`：§3（Claude Code `WorktreeCreate` hook 不回 `worktreeBranch`）、§4（`git-guard.sh` 早期 block `git branch -D`）、§5（pre-202a0f3 部署殘跡：`.gitattributes` 與 `.claude/settings.local.json` 的 .gitignore 條目）。
 
 ---
 
 ## 6.4 Efficiency Agent (.claude/agents/efficiency.md)
 
-**Deployment:** go:embed 嵌入 Zpit binary，透過 `[f]` 快捷鍵部署。使用 `deployAndLaunchAgentLite`（不部署 hooks、不設定 ZPIT_AGENT=1）。
+**Deployment:** go:embed 嵌入 Zpit binary，透過 `[f]` 快捷鍵部署（或 `[d]` 批次 redeploy 時一併寫入）。使用 `deployAndLaunchAgentLite`（不部署 hooks、不設定 ZPIT_AGENT=1）。
 
 ```yaml
 name: efficiency
@@ -124,7 +151,61 @@ description: Lightweight fast-track agent for rapid iteration
 
 ---
 
-## 6.5 go:embed 部署流程
+## 6.5 Desktop Agent (.claude/agents/desktop.md)
+
+**Deployment:** go:embed 嵌入 Zpit binary。透過 `[w]` 快捷鍵啟動，但**不部署 agent .md 到專案** — 因為 desktop agent 是全域 scope（cwd = `$HOME` / `%USERPROFILE%`），沒有 `project.Path`，也沒有 per-project `.claude/` 目錄。Agent 定義由 Claude Code 直接從 zpit 寫到 `~/.claude/agents/desktop.md`（或 launch 時透過 `--agent` 指定），policy 由 `~/.zpit/desktop-policy.toml` 控制。
+
+```yaml
+name: desktop
+description: Desktop-control agent — drives the user's desktop through the zpit desktop-proxy MCP server
+model: opus[1m]
+```
+
+**核心行為：**
+- 透過 `mcp__desktop-proxy__*` MCP 工具操作 OS（滑鼠/鍵盤/截圖/視窗/accessibility action）
+- 啟動時讀取 `~/.zpit/desktop-policy.toml`，依 active profile 規劃可達/不可達動作，預先告知使用者
+- Plan-before-act：先列計畫，使用者確認後才執行
+- Reply 語言跟隨使用者輸入（**不**強制英文 — 不產 commit / PR / Issue Spec，沒有 artifact 語言一致性需求）
+- 不主動讀寫專案檔案（沒有專案）；如需檔案存取，請使用者手動引導
+- 工具找不到時用 `ToolSearch` 拉 schema（deferred tool 機制）
+
+**部署語義差異（vs. 其他 agent）：**
+
+| 項目 | clarifier/reviewer | efficiency | desktop |
+|------|-------------------|------------|---------|
+| 工作目錄 | 專案 root | 專案 root | `$HOME` / `%USERPROFILE%` |
+| Hooks (`.claude/hooks/*.sh`) | ✅ 全部 | ❌ 不部署 | ❌ 不部署（hook 對 SendInput 無意義） |
+| ZPIT_AGENT=1 | ✅ 設定 | ❌ 不設定 | ❌ 不設定 |
+| Tracker 整合 | ✅ | ❌ | ❌ |
+| Worktree | Loop 模式 ✅ | ❌ | ❌ |
+| 安全層 | 5 層 stack | Layer 1+2 | **Go MCP proxy（唯一）** |
+| 多實例 | ✅ 並行 | ✅ 並行 | ❌ **single-instance lock** |
+| 平台 | 全部 | 全部 | macOS + Windows（Linux no-op） |
+
+**Proxy 架構（取代 hook stack）：**
+
+```
+Claude Code (desktop agent) ─ stdio ─> zpit serve-desktop-proxy (Go)
+                                                  │
+                                                  ├── policy gate（per-call allow/deny）
+                                                  └── stdio ─> npx zpit-desktop-mcp (Node)
+```
+
+每個 JSON-RPC `tools/call` frame 被 proxy 攔下，依 5 個 profile (`read-only` / `strict` / `standard` / `none-script` / `trusted`) 之一 evaluate：
+
+1. **Tool allowlist** — 不在 list 上的 tool 直接 reject（硬擋 `run_script` / `filesystem` / `process_kill` / `registry` / `notification` / `scrape` / 所有 virtual-desktop tools / `resize_window`）
+2. **Parameter policy** — `deny_keys` 對 `key` tool 做 substring match（預設擋 Windows `win+r` / `ctrl+alt+del` / `alt+f4`；macOS `cmd+q` / `cmd+option+esc` / `cmd+ctrl+q`）；`allow_bundles` 是預核可例外群組
+3. **Single-instance lock** — `AppState.activeDesktopAgent` mutex 跨所有 TUI 連線共用，第二次 `[w]` 用 status toast reject
+
+**Upstream：** [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) 是 zpit 的 fork（自 [`@zavora-ai/computer-use-mcp@6.1.0`](https://github.com/zavora-ai/computer-use-mcp) 分叉），加 Windows AUMID launch、Win32 `.exe` launch + PID 回傳、stdio-entrypoint backslash fix、SDK Zod 4 bump。
+
+**為什麼是 proxy 不是 hook：** MCP tool 參數是巢狀 JSON，shell hook 解析脆；Go proxy 能回 structured error 讓 agent reason 失敗原因，並同時跑 single-instance lock。完整選型論證、tool-by-tool allowlist justification、deny_keys 平台表、未來 Phase 2 擴充點，見 [desktop-agent.md](desktop-agent.md)。
+
+完整模板見 `agents/desktop.md`；安全模型詳述見 `09-safety.md` §9.10。
+
+---
+
+## 6.6 go:embed 部署流程
 
 Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 
@@ -132,7 +213,7 @@ Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 main.go (go:embed vars)
   → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts, logWriter)
     → stored in AppState fields
-      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) — [f] uses deployAndLaunchAgentLite (no hooks)
+      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) or redeploy ([d]) — [f] uses deployAndLaunchAgentLite (no hooks)
         → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
         → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
       → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
@@ -142,23 +223,52 @@ main.go (go:embed vars)
 
 ---
 
-## 6.6 Internationalization (i18n)
+## 6.7 Internationalization (i18n)
 
-所有 agent template (.md) 和 prompt builder (.go) 以**英文**撰寫。回應語言由 config 控制：
+**三軌策略**：TUI chrome 可在地化、coding/reviewer 強制英文、clarifier 對話跟隨 locale 但 artifact 仍英文。
 
-```toml
-language = "zh-TW"  # or "en" (default)
-```
+- **TUI 字串**（在地化）：`internal/locale/` package，`T(key)` 查找。`language = "en" | "zh-TW"`（config.toml），翻譯在 `en.go` 和 `zh_tw.go`。新增語言需新的 `locale/{lang}.go` + `SetLanguage()` 的新 case。
+- **Agent 輸出 — 嚴格英文軌**（coding / reviewer / revision / efficiency / task-runner）：`locale.ResponseInstruction()` 永遠回傳 non-negotiable 英文規則 — 不因 `language` 切換而改變。規則涵蓋：agent 回話、commit message、PR 描述、channel 訊息、tracker labels。使用者可以用任何語言輸入，agent 仍以英文作答。
+- **Agent 輸出 — Clarifier 例外軌**：`locale.ClarifierResponseInstruction()` 依 `currentLang` 切換。`en` 時等同嚴格英文規則；`zh-TW` 時改為：對話、狀態更新、channel 訊息使用繁體中文，但 **Issue Spec（title + 所有 sections）和 tracker labels 仍強制英文**，避免下游 coding/reviewer/task-runner 拿到非英文 artifact。其他未知 locale 退回嚴格英文。
+- **Agent .md 檔案**：語言指示在 deploy time 由 `injectLangInstruction()`（嚴格軌：`reviewer.md` / `efficiency.md` / `task-runner.md`）或 `injectClarifierLangInstruction()`（例外軌：`clarifier.md`）注入（YAML frontmatter 之後）。兩者共用同一個 `injectLangInstructionWith()` 核心，只差傳入的 instruction 字串。
+- **Prompt builder**：`BuildCodingPrompt` / `BuildReviewerPrompt` / `BuildRevisionPrompt` 在輸出開頭呼叫 `ResponseInstruction()`（嚴格軌）。
+- **Domain term 例外**：專有名詞若無精確英文對應，Issue Spec 允許保留原文於括號，例如 `stocktake (盤點)`；clarifier 的對話則可直接使用原文。clarifier.md 的 Issue Format 和 Meeting Protocol sections 都有明列此規則。
 
-- **TUI 字串**：`internal/locale/` package，`T(key)` 查找。翻譯在 `en.go` 和 `zh_tw.go`。
-- **Agent prompts**：`locale.ResponseInstruction()` 回傳 `"Always respond in Traditional Chinese (zh-TW).\n\n"`（zh-TW）或 `""`（English）。
-- **Agent .md 檔案**：語言指示在 deploy time 由 `injectLangInstruction()` 注入（YAML frontmatter 之後）。
-
-新增語言需要：新的 `locale/{lang}.go` 翻譯 map + `SetLanguage()` 和 `ResponseInstruction()` 的新 case。
+**設計動機**：CJK 字元在 Claude tokenizer 密度約為英文 2×。coding 實作軌跡、reviewer 留言、task-runner 多平行批次這些最長且最多的對話強制英文後，整體 token 消耗顯著下降。clarifier 雖然也跟使用者對話，但相對短、且 Q&A 體驗用使用者母語明顯較好，所以單獨開例外。TUI chrome 走 `T()` 不經模型，i18n 完全不受影響。
 
 ---
 
-## 6.7 CLAUDE.md 模板
+## 6.8 Per-Role Model Selection
+
+每個 agent role 在啟動時透過 `--model <id>` 傳給 Claude Code CLI。由 `[agent_models]` 區塊控制（`internal/config/config.go:AgentModelsConfig`）：
+
+```toml
+[agent_models]
+clarifier = "opus[1m]"      # 需求澄清 — 最深層推理（1M context）
+coding = "opus[1m]"         # 功能實作（1M context）
+reviewer = "opus[1m]"       # PR review（1M context）
+task_runner = "opus[1m]"    # advisory — 由 coding session 繼承
+efficiency = "opus[1m]"     # 效能檢視 agent — 深層推理
+```
+
+**設計決策**：
+
+- **為什麼全部 role 都用 Opus**：實測 Sonnet 跑 coding 角色時，約 90% 的 loop 迭代會在 coding → review 第一輪被判為 needs-changes，進入第二輪才過。第二輪等於「多一次完整 coding 成本 + 多一次 review 成本」，攤提下來比直接用 Opus 跑單輪還貴，而且多一次 round-trip 也拖慢 loop 吞吐。因此預設把 coding/reviewer/task_runner 全部設為 `opus[1m]`；clarifier/efficiency 本來就是單次高價值推理，沿用 Opus。想試成本更低的組合（例如 `coding = "haiku[1m]"`）可以覆寫，但請先確認實測下 review 通過率是否還能守住 single-round 成功。
+- **為什麼全部加 `[1m]`**：agent 生命週期內可能吃進整份 Issue Spec + 多檔案 diff + channel 訊息串，1M context tier 消除 context 窗口壓力；API / pay-as-you-go 直連時 1M 無 long-context premium，實質僅增加 token 消耗，不增加單價。
+- **為什麼用 alias 而不是 full ID**：Anthropic API 直連情境下，alias（`opus` → 4.7、`sonnet` → 4.6）自動追蹤官方最新版，不需隨著模型更新手動改 config。代價是跨 provider 不一致（Bedrock/Vertex/Foundry 上 `opus` 會解析成 4.6），走這些 provider 的使用者應改用 full ID 覆寫（例如 `claude-opus-4-7[1m]`）。
+- **task_runner 目前 advisory**：task-runner subagent 透過 Claude Code Agent tool 由 coding orchestrator spawn，預設繼承父 session 的 model（目前即 Opus 4.7 1M），所以 `task_runner` 欄位在 prompt builder 尚未主動使用，保留作為未來 escape hatch（例如想讓平行 `[P]` 任務全跑 Haiku）。
+
+**Wiring**：
+
+- **Manual 啟動**（`[c]` / `[r]` / `[f]` / Enter / `[d]`）：在 `internal/tui/launch.go` 六個 launch function 各讀取對應欄位，注入 `--model` 參數。`deployAndLaunchAgent` 透過 `resolveAgentModel()` helper 依 `agentName` dispatch。
+- **Loop 啟動**（coding / reviewer）：在 `internal/tui/loop_cmds.go` 的 `loopLaunchCoderCmd` / `loopWriteAndLaunchReviewerCmd` 讀取對應欄位後注入。
+- **Copy-before-closure**：model 值在 closure 外先 copy 到 local（`model := m.state.cfg.AgentModels.X`），符合 AppState 並行存取規範。
+
+**Hot-reload**：`agent_models.*` 列為 hot-reloadable — 修改後下一次啟動 agent 即生效；已運行的 session 沿用啟動時的 model（Claude Code 無法中途改）。
+
+---
+
+## 6.9 CLAUDE.md 模板
 
 每個目標專案根目錄放一份，agent 實作時會自動讀取。
 以下為建議模板結構（Zpit 不自動產生，由使用者維護）：

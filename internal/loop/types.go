@@ -16,6 +16,7 @@ const (
 	SlotCoding
 	SlotLaunchingReviewer
 	SlotReviewing
+	SlotAutoMerging
 	SlotWaitingPRMerge
 	SlotCleaningUp
 	SlotDone
@@ -37,6 +38,8 @@ func (s SlotState) String() string {
 		return "launching reviewer"
 	case SlotReviewing:
 		return "reviewing"
+	case SlotAutoMerging:
+		return "auto-merging"
 	case SlotWaitingPRMerge:
 		return "waiting PR merge"
 	case SlotCleaningUp:

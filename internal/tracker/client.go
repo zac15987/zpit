@@ -23,6 +23,7 @@ type TrackerClient interface {
 	GetPRStatus(ctx context.Context, repo string, prID string) (*PRStatus, error)
 	FindPRByBranch(ctx context.Context, repo string, branch string) (*PRStatus, error)
 	ListOpenPRs(ctx context.Context, repo string) ([]PRInfo, error)
+	MergePR(ctx context.Context, repo string, prID string, method string, commitTitle string) (*PRStatus, error)
 }
 
 // NewClient creates a TrackerClient for the given provider type.
