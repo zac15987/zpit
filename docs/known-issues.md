@@ -497,13 +497,54 @@ Targeted reproduction attempts under matching conditions — same-IL, empty proj
 
 The MCP-layer path was also exercised end-to-end (spawned `dist/server.js` as subprocess, talked JSON-RPC over stdio exactly like the desktop-proxy does) — `set_value` and `get_ui_tree` measured identically to the direct NAPI bench. `press_button` shows a one-shot ~5 s cold-start on the first call (the `ensureFocusV4` → `activateApp` → `activateWindow` Win32 dance bringing the app from background to foreground), then drops to 24–26 ms — same cold-start pattern that's visible in the session log around 02:23:50 (`activate_window` 5.19 s) and 02:24:09 (`left_click` 5.26 s). That cold-start is not the 76 s / 96 s mystery.
 
-Plausible-but-unverifiable causes for the 76 s / 96 s:
+### Most plausible explanation — global UIA event subscribers
 
-- **Transient external load at the moment of the call** — antivirus full-disk scan, Windows Search indexer rebuild, OneDrive sync, Windows Update background download. Any of these can stall UIA queries that touch the Shell namespace by holding NTFS / Shell-extension locks.
-- **A Shell extension hook on path validation** that wasn't active at reproduction time. Common Item Dialog routes path entry through registered Shell namespace handlers; a buggy extension could synchronously block.
-- **KV Studio internal state at the moment** — some one-time cache miss / first-open-after-launch initialization that doesn't repeat.
+After exhausting the in-process hypotheses, the cause that best fits the observed pattern is **another process on the system holding a global UIA event subscription**. The mechanism is documented in [this gist by Skydev0h](https://gist.github.com/Skydev0h/3a8c08b148a38e8d270c02b563130ff6) — the author tracked a year-long systemic UIA slowdown to `PAD.BridgeToUIAutomation2.exe`:
 
-None of these are actionable from zpit-desktop-mcp's side. **`set_value` is therefore not being rewritten preemptively**; the working hypothesis is the 96 s was a transient environmental factor, not a `ValuePattern.SetValue` bug. If the same long timing reappears, capture: (a) Process Explorer snapshot at the time, (b) Resource Monitor disk/CPU/network, (c) Windows Event Log around the call, (d) whether it reproduces back-to-back or only once after some idle period.
+> "The overhead is on the provider side, not the client side. When any client subscribes to global UI Automation events: Every application with a visible window becomes a provider. On every repaint, each provider must check if the accessibility tree changed, build event notifications, and send them via cross-process COM calls. This happens synchronously on the UI thread of each application, and the provider has already done the work even if the client filters most events."
+
+Applied to our case: while the user's session was running, some process subscribed to global UIA events. That forced KV Studio into provider-overhead mode — its UI thread was busy with global event bookkeeping on every repaint. zpit-desktop-mcp's per-property cross-process calls (`CurrentName`, `CurrentBoundingRectangle`, `GetCurrentPatternAs`, etc.) all paid the inflated cost. `set_value`'s ~5 internal COM calls × 20 s amplified per-call latency = ~96 s; `get_ui_tree` at depth 4 with 160 nodes × ~500 ms per node = ~80 s. Numerically consistent.
+
+Once the global-subscriber process closed or ended its subscription, the slowdown vanished — which is why reproduction failed under "identical" conditions.
+
+### Known global-UIA-event subscriber candidates
+
+If you see this slowdown reappear, scan for these processes (in rough order of how often they cause this):
+
+- **`PAD.BridgeToUIAutomation2.exe`** (Microsoft Power Automate Desktop) — the documented worst offender
+- `UiPath.*`, `AutomationAnywhere*`, `WinAppDriver` — RPA / automation suites
+- `TestComplete`, `Ranorex`, `Inspect.exe`, `AccEvent.exe` — UI test / accessibility-inspection tools
+- `Narrator`, `NVDA`, `JAWS` — screen readers (only when set to always-on)
+- `ClickToDo`, `PowerToys.QuickAccess` — newer Windows features that scan UI for AI / quick-access workflows; intermittent
+- `DeskIn`, TeamViewer, AnyDesk, remote-desktop helpers — often UIA-active for screen content awareness
+- `MsMpEng` / `MpDefenderCoreService` — Microsoft Defender behavior-monitor can briefly hold UIA hooks during process introspection
+
+The mere PRESENCE of these processes is not sufficient — the slowdown only occurs while they hold an active global event subscription. They can flip in and out of that state during normal operation.
+
+### Diagnostic recipe
+
+PowerShell one-liner to list processes that have loaded the UIA client DLL (a necessary, not sufficient, condition for being a global subscriber):
+
+```powershell
+Get-Process | Where-Object { $_.Modules.ModuleName -contains 'UIAutomationCore.dll' } |
+  Select-Object Id, Name, @{N='Title';E={$_.MainWindowTitle}}, @{N='WS_MB';E={[math]::Round($_.WS/1MB,0)}} |
+  Format-Table -AutoSize
+```
+
+For the definitive answer (per the gist's recommendation):
+
+- **ETW trace with `Microsoft-Windows-UIAutomationCore` provider** — captures every UIA event in real time; the chatty processes show up as top talkers. Use `xperf -on ...` or the Windows Performance Recorder UI.
+- **AccEvent (Windows SDK)** — visual real-time accessibility-event viewer. If you launch it and see floods of events from a specific app or with global subscribers attached, that's the perpetrator.
+
+### Why `set_value` is still not being rewritten
+
+This is an environmental issue triggered by an out-of-process subscriber, not a `ValuePattern.SetValue` bug. Rewriting `set_value` to use SendInput-style keystroke simulation would technically bypass the slow provider path, but:
+
+- Same-IL stress testing (5 iterations, real path, matching session conditions) was rock-solid at 189–194 ms — `set_value` is fast under normal conditions, including against Common File Dialog
+- The SendInput-equivalent for `set_value` is significantly more complex than for `press_button` — needs to focus the field, clear existing text, type the new value, handle non-ASCII characters, deal with autocomplete suggestions, etc. Each adds a failure surface
+- The same global-subscriber slowdown would also affect `get_ui_tree`, `find_element`, and every other UIA read — those can't all be SendInput-replaced (no SendInput equivalent for "read the UI tree")
+
+The proper mitigation is at the system level: identify and disable / quit the global-subscriber process. `agents/desktop.md` carries the fallback rule for agents (UIA write takes >5 s → fall back to click + key).
 
 ### Activate-app cold start: a smaller, related observation
 
