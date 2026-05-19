@@ -151,7 +151,61 @@ description: Lightweight fast-track agent for rapid iteration
 
 ---
 
-## 6.5 go:embed 部署流程
+## 6.5 Desktop Agent (.claude/agents/desktop.md)
+
+**Deployment:** go:embed 嵌入 Zpit binary。透過 `[w]` 快捷鍵啟動，但**不部署 agent .md 到專案** — 因為 desktop agent 是全域 scope（cwd = `$HOME` / `%USERPROFILE%`），沒有 `project.Path`，也沒有 per-project `.claude/` 目錄。Agent 定義由 Claude Code 直接從 zpit 寫到 `~/.claude/agents/desktop.md`（或 launch 時透過 `--agent` 指定），policy 由 `~/.zpit/desktop-policy.toml` 控制。
+
+```yaml
+name: desktop
+description: Desktop-control agent — drives the user's desktop through the zpit desktop-proxy MCP server
+model: opus[1m]
+```
+
+**核心行為：**
+- 透過 `mcp__desktop-proxy__*` MCP 工具操作 OS（滑鼠/鍵盤/截圖/視窗/accessibility action）
+- 啟動時讀取 `~/.zpit/desktop-policy.toml`，依 active profile 規劃可達/不可達動作，預先告知使用者
+- Plan-before-act：先列計畫，使用者確認後才執行
+- Reply 語言跟隨使用者輸入（**不**強制英文 — 不產 commit / PR / Issue Spec，沒有 artifact 語言一致性需求）
+- 不主動讀寫專案檔案（沒有專案）；如需檔案存取，請使用者手動引導
+- 工具找不到時用 `ToolSearch` 拉 schema（deferred tool 機制）
+
+**部署語義差異（vs. 其他 agent）：**
+
+| 項目 | clarifier/reviewer | efficiency | desktop |
+|------|-------------------|------------|---------|
+| 工作目錄 | 專案 root | 專案 root | `$HOME` / `%USERPROFILE%` |
+| Hooks (`.claude/hooks/*.sh`) | ✅ 全部 | ❌ 不部署 | ❌ 不部署（hook 對 SendInput 無意義） |
+| ZPIT_AGENT=1 | ✅ 設定 | ❌ 不設定 | ❌ 不設定 |
+| Tracker 整合 | ✅ | ❌ | ❌ |
+| Worktree | Loop 模式 ✅ | ❌ | ❌ |
+| 安全層 | 5 層 stack | Layer 1+2 | **Go MCP proxy（唯一）** |
+| 多實例 | ✅ 並行 | ✅ 並行 | ❌ **single-instance lock** |
+| 平台 | 全部 | 全部 | macOS + Windows（Linux no-op） |
+
+**Proxy 架構（取代 hook stack）：**
+
+```
+Claude Code (desktop agent) ─ stdio ─> zpit serve-desktop-proxy (Go)
+                                                  │
+                                                  ├── policy gate（per-call allow/deny）
+                                                  └── stdio ─> npx zpit-desktop-mcp (Node)
+```
+
+每個 JSON-RPC `tools/call` frame 被 proxy 攔下，依 5 個 profile (`read-only` / `strict` / `standard` / `none-script` / `trusted`) 之一 evaluate：
+
+1. **Tool allowlist** — 不在 list 上的 tool 直接 reject（硬擋 `run_script` / `filesystem` / `process_kill` / `registry` / `notification` / `scrape` / 所有 virtual-desktop tools / `resize_window`）
+2. **Parameter policy** — `deny_keys` 對 `key` tool 做 substring match（預設擋 Windows `win+r` / `ctrl+alt+del` / `alt+f4`；macOS `cmd+q` / `cmd+option+esc` / `cmd+ctrl+q`）；`allow_bundles` 是預核可例外群組
+3. **Single-instance lock** — `AppState.activeDesktopAgent` mutex 跨所有 TUI 連線共用，第二次 `[w]` 用 status toast reject
+
+**Upstream：** [`zpit-desktop-mcp`](https://github.com/zac15987/computer-use-mcp) 是 zpit 的 fork（自 [`@zavora-ai/computer-use-mcp@6.1.0`](https://github.com/zavora-ai/computer-use-mcp) 分叉），加 Windows AUMID launch、Win32 `.exe` launch + PID 回傳、stdio-entrypoint backslash fix、SDK Zod 4 bump。
+
+**為什麼是 proxy 不是 hook：** MCP tool 參數是巢狀 JSON，shell hook 解析脆；Go proxy 能回 structured error 讓 agent reason 失敗原因，並同時跑 single-instance lock。完整選型論證、tool-by-tool allowlist justification、deny_keys 平台表、未來 Phase 2 擴充點，見 [desktop-agent.md](desktop-agent.md)。
+
+完整模板見 `agents/desktop.md`；安全模型詳述見 `09-safety.md` §9.10。
+
+---
+
+## 6.6 go:embed 部署流程
 
 Agents、hooks、docs 嵌入 binary，每次 agent 啟動時自動部署：
 
@@ -169,7 +223,7 @@ main.go (go:embed vars)
 
 ---
 
-## 6.6 Internationalization (i18n)
+## 6.7 Internationalization (i18n)
 
 **三軌策略**：TUI chrome 可在地化、coding/reviewer 強制英文、clarifier 對話跟隨 locale 但 artifact 仍英文。
 
@@ -184,7 +238,7 @@ main.go (go:embed vars)
 
 ---
 
-## 6.7 Per-Role Model Selection
+## 6.8 Per-Role Model Selection
 
 每個 agent role 在啟動時透過 `--model <id>` 傳給 Claude Code CLI。由 `[agent_models]` 區塊控制（`internal/config/config.go:AgentModelsConfig`）：
 
@@ -214,7 +268,7 @@ efficiency = "opus[1m]"     # 效能檢視 agent — 深層推理
 
 ---
 
-## 6.8 CLAUDE.md 模板
+## 6.9 CLAUDE.md 模板
 
 每個目標專案根目錄放一份，agent 實作時會自動讀取。
 以下為建議模板結構（Zpit 不自動產生，由使用者維護）：

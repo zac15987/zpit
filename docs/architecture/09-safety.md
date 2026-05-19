@@ -260,3 +260,40 @@ echo $?   # 應該是 2
 - 公用 fork / 公司專案：`auto_merge = false`（預設）。
 - 個人實驗專案、私人 repo：可考慮 `auto_merge = true`，但先觀察 reviewer 品質（例如連續 10 個 issue 的 review 都合理再開啟）。
 - **絕對不要**在不信任的專案上啟用，或者在 reviewer model 經常誤判的情境下啟用。
+
+---
+
+## 9.10 Desktop Agent 安全模型（5 層 stack 的例外）
+
+`[w]` 啟動的 desktop agent **不適用** 9.1 描繪的 5 層安全 stack。這不是疏漏 — 是 threat model 不同：
+
+| 為什麼不適用 | 說明 |
+|---|---|
+| Layer 1（agent-guidelines.md）| desktop agent 跑在 `$HOME` / `%USERPROFILE%`，不在任何專案 `.claude/docs/`；agent-guidelines 不部署 |
+| Layer 2（`--allowedTools`）| 工具名稱層級過濾不夠細 — 沒辦法擋住 `key text="win+r"` 卻放行 `key text="enter"`；需要 parameter-level enforcement |
+| Layer 3（PreToolUse hooks）| Write/Edit/Bash hook 對 `SendInput` 模擬鍵鼠毫無意義 — agent 不寫檔，是直接灌按鍵到整個桌面 |
+| Layer 4（worktree 隔離）| 沒有 worktree — agent 全域操作 |
+| Layer 5（PR merge 閘門）| 沒有 PR — 不產生 commit |
+
+**取代方案：`zpit serve-desktop-proxy` Go MCP proxy 是唯一的 safety layer。**
+
+Proxy 攔截每個 JSON-RPC `tools/call` frame，依 `~/.zpit/desktop-policy.toml` 的 profile 決定 forward 或 reject。三層 enforcement：
+
+1. **Tool allowlist**：不在 allowlist 上的 tool 名直接被 reject（不論參數）。`run_script` / `filesystem` / `process_kill` / `registry` / `notification` / `scrape` / 所有 virtual-desktop tools 全部硬擋。
+2. **Parameter policy**：`deny_keys` 對 `key` tool 做 substring match（例：`win+r` / `ctrl+alt+del` / `alt+f4`）；`allow_bundles` 是使用者預核可的群組例外。
+3. **Single-instance lock**：`AppState.activeDesktopAgent` 互斥欄位，所有連線 TUI 共用一個 desktop agent，第二次 `[w]` 會被 reject。
+
+**Profile 預設（`standard`，5 個之一）**：48 tools allowed、10 denied、7 deny_keys、`allow_run_script = false`。其他選項見 `desktop-agent.md` profile 表。
+
+**OS-level 最後一道：** macOS Accessibility 權限 / Windows UIAutomation 註冊，必須由你手動授權，proxy 也無法 bypass。
+
+**為什麼不用 hook 而選 Go proxy：**
+- MCP tool 參數是巢狀 JSON，shell 解析腳手架脆且難維護
+- Go proxy 能回 structured error 讓 agent 自己 reason 失敗原因，shell hook 只能回 exit code + stderr
+- proxy 同時跑 single-instance lock，hook 做不到
+
+完整選型論證、tool-by-tool allowlist justification、deny_keys 平台表，見 [desktop-agent.md](desktop-agent.md)。
+
+**ZPIT_AGENT 環境變數對 desktop agent 無作用** — 它本來就是「給 hook 看的開關」，desktop agent 不部署 hook，所以不設這個 env 也不影響 proxy 行為。
+
+**release 心智模型**：別把 desktop agent 想成「另一個 zpit agent」— 它是「另一個 safety domain」。專案內 agent 的 5 層 stack 防的是「agent 寫壞 code / push 錯地方」；desktop agent 的 proxy policy 防的是「agent 按錯鍵 / 開錯 app / 執行 shell」。兩條防線並行，但不互相支援。

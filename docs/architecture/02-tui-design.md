@@ -33,6 +33,7 @@ Catppuccin Mocha 色盤，無邊框、單欄寬的 `▎` mauve accent bar 只出
                                                       [U] 執行 claude update
     Zacfuse  🟢 已部署                                [a] 新增專案
      web │ astro, typescript, docs                    [e] 編輯設定
+                                                      [w] 桌面 Agent
                                                       [x] 關閉終端
                                                       [Tab] 切換面板
   執行中終端  1                                       [?] 說明
@@ -65,6 +66,7 @@ Catppuccin Mocha 色盤，無邊框、單欄寬的 `▎` mauve accent bar 只出
 - [d]：清除現有部署後重新寫入 4 個 agents (clarifier/reviewer/task-runner/efficiency) + hooks + docs，**不啟動 Claude**（confirm 後執行）
 - 專案名稱旁的狀態標記：🟢 已部署（全部 10 個檔案齊全）、🟡 部分部署（部分檔案缺失或只部署過單一 agent）、⚪ 未部署
 - [f]：啟動效率 Agent（輕量模式，無 hooks、無 tracker、self-review）
+- [w]：啟動 desktop agent（W for Window control）— 全域控制 OS（滑鼠/鍵盤/截圖/視窗管理），透過 `zpit serve-desktop-proxy` policy gate；cwd = `$HOME`，所有 TUI 連線共用一個實例（single-instance lock）；不需選專案；Linux 為 no-op 並從 hotkeys 隱藏（upstream `computer-use-mcp` 無 Linux backend）
 - Tab：循環切換 focus panel — 專案 → 活躍終端（有終端時）→ Loop（有 slot 時）→ 專案；Hotkeys 面板不納入 Tab cycle（純參考資訊，空間不足時自動收合 separator blank row、尾端補 `…`）
 - [x]：當焦點在活躍終端時，關閉選中的終端（force kill process，需確認）
 

@@ -167,3 +167,25 @@
 - [x] T11: `internal/tui/view_projects.go` — Hotkey 面板加入 `[h] History`，與 `[m] Channel` 同組（cross-session features）
 - [x] T12: README.md + CLAUDE.md 加入 Session sync 說明、Package Structure 加入 `sessionsync/`
 - [x] T13: `docs/architecture/02-tui-design.md` 加入 2.7 History 子節 + `docs/architecture/11-milestone.md` 加入 M4h 區塊
+
+## M5: Desktop Agent
+
+> 已完成
+
+開出一條與 5 層 hook stack 平行的新 safety domain — desktop agent 不在 worktree、不寫檔，靠 Go MCP proxy 做 per-call policy gate 而非 `PreToolUse` hook。
+
+- [x] `agents/desktop.md` agent 定義（`name: desktop`、`model: opus[1m]`），go:embed 嵌入 binary
+- [x] `zpit serve-desktop-proxy` 子命令 — Go stdio MCP proxy，攔截每個 `tools/call` frame，evaluate against policy，forward 或 reject
+- [x] `zpit-desktop-mcp` upstream fork（github.com/zac15987/computer-use-mcp，fork 自 `@zavora-ai/computer-use-mcp@6.1.0`） — Windows AUMID launch、Win32 `.exe` launch + PID 回傳、stdio-entrypoint backslash fix、`@modelcontextprotocol/sdk` Zod 4 bump
+- [x] `~/.zpit/desktop-policy.toml` policy file — 首次 `serve-desktop-proxy` 啟動時自動建立
+- [x] 5 個 profile presets（`internal/desktop/policy.go`）：`read-only` / `strict` / `standard`（預設）/ `none-script` / `trusted`，profile 欄位 + 明確欄位 override 機制
+- [x] Tool allowlist：硬擋 `run_script` / `filesystem` / `process_kill` / `registry` / `notification` / `scrape` / `multi_edit` / `multi_select` / `snapshot` / 所有 virtual-desktop tools / `resize_window`
+- [x] `deny_keys` 平台預設：Windows 擋 `win+r` / `ctrl+shift+esc` / `ctrl+alt+del` / `alt+f4`；macOS 擋 `cmd+q` / `cmd+option+esc` / `cmd+ctrl+q`
+- [x] `allow_bundles` 例外群組機制：使用者預核可的 shortcut 群組，匹配時繞過 `deny_keys`
+- [x] `keyboard_focus_strategy` 設定：可要求 pointer action 前先 `focus_check`，降低 type-into-wrong-window 風險
+- [x] `[w]` hotkey（W for Window control；`[g]` 已給 GitStatus）— 從 `ViewProjects` 啟動，不需選專案
+- [x] Single-instance lock：`AppState.activeDesktopAgent` mutex 欄位，跨所有 SSH 連線 TUI 共用一個 desktop agent；第二次 `[w]` 用 status toast reject
+- [x] Linux `[w]` no-op：`runtime.GOOS == "linux"` 直接 status toast 並從 hotkeys panel 隱藏（upstream `computer-use-mcp` 宣告 `os: ["darwin", "win32"]`，Rust NAPI module 沒有 Linux backend）
+- [x] 全域 scope：cwd = `$HOME` / `%USERPROFILE%`，無 `project.Path`、無 per-project hook 部署
+- [x] `docs/architecture/desktop-agent.md` — 完整選型論證（proxy vs hooks vs allowedTools vs raw `.mcp.json`）、security model、profile 表、tool-by-tool allowlist justification、deny_keys 平台表、未來 Phase 2 擴充點、upstream credit
+- [x] README.md + CLAUDE.md + `docs/architecture/README.md`（index #13）+ 09-safety.md（9.10 例外章節）+ 06-agents.md（6.5 desktop agent 章節）+ 02-tui-design.md（mockup 加 `[w]`）同步更新
