@@ -421,3 +421,74 @@ If this becomes a frequent friction point, the cleanest direction is a **per-ses
 - `docs/architecture/desktop-agent.md` — desktop agent architecture and policy file format
 - `~/.zpit/desktop-policy.toml` — the only safety layer once running elevated; auto-created on first `zpit serve-desktop-proxy` invocation
 - `internal/terminal/launcher_windows.go` `launchWindows` — `exec.Command("wt.exe", ...)` is standard `CreateProcess`, inherits parent IL (this is what makes the elevated-WT workaround work end-to-end)
+
+---
+
+## 8. UIA `InvokePattern.Invoke` blocks until modal dialog dismissal — `press_button` hangs on "open dialog" buttons
+
+**Affected OS:** Windows (UIA is Windows-only in zpit-desktop-mcp)
+**Component:** zpit-desktop-mcp `perform_action` (Rust NAPI `accessibility::perform_action`)
+**First observed:** 2026-05-14 (KV Studio installer session `022a118c-…`)
+**Status:** Mitigated in zpit-desktop-mcp 1.2.3 (2026-05-19) — `press_button` rewritten to use SendInput. `set_value` still uses UIA `ValuePattern.SetValue` and may exhibit the same pattern; not yet mitigated.
+
+### Symptom
+
+`press_button` / `set_value` against a button whose action opens a modal dialog returns successfully — but takes 50–90 seconds, with the dialog visible the whole time. The agent perceives "MCP hung". Manual mouse click on the same button opens the same dialog in <1s.
+
+Empirical measurements against KV Studio's "打開專案(Ctrl+O)" toolbar button (PID 22208, same Integrity Level as MCP, no cross-IL slowdown):
+
+| Path | Time | Outcome |
+|---|---|---|
+| `findElement` (locate the button) | 99–141 ms | Returns the element |
+| `mouseClick` at button-center coords (SendInput) | 15 ms | Dialog opens, click returns |
+| `performAction` AXPress (UIA `InvokePattern.Invoke`) before 1.2.3 | 53,315 ms | Dialog opens immediately, **Invoke blocks until dialog dismissed**, then returns `performed: true` |
+| `performAction` on "Cancel" inside the open dialog (Invoke for a modal-closing action) | 211 ms | Closes dialog, returns immediately |
+
+The Cancel-button test is the null hypothesis check: Invoke is fast EXCEPT when the action keeps a modal open. So it isn't `find_first` slowness, isn't KV Studio's UIA tree size (~76 nodes), isn't cross-IL, isn't WPF-specific.
+
+### Root cause
+
+This is documented Microsoft behavior, not a provider bug. From `IInvokeProvider::Invoke` (Win32 UIA):
+
+> "IInvokeProvider::Invoke is an asynchronous call and must return immediately without blocking. **Note** This is particularly critical for controls that, directly or indirectly, launch a modal dialog when invoked. **Any Microsoft UI Automation client that instigated the event will remain blocked until the modal dialog is closed.**"
+> — [learn.microsoft.com/.../iinvokeprovider-invoke](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationcore/nf-uiautomationcore-iinvokeprovider-invoke)
+
+And from `InvokePattern.Invoke` (.NET client side):
+
+> "Calls to Invoke should return immediately without blocking. However, this behavior is entirely dependent on the Microsoft UI Automation provider implementation. **In scenarios where calling Invoke causes a blocking issue (such as a modal dialog) a separate helper thread may be required to call the method.**"
+> — [learn.microsoft.com/.../invokepattern.invoke](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.invokepattern.invoke?view=windowsdesktop-7.0)
+
+Microsoft instructs *providers* to be async, but real-world providers (WPF, Common File Dialog, many industrial apps) frequently are not. Microsoft's recommended *client-side* workaround is a helper thread; zpit-desktop-mcp 1.2.3 took the simpler equivalent — bypass Invoke entirely.
+
+### Investigation trail
+
+Three iterations before the right fix landed:
+
+1. **First hypothesis (wrong): `find_first` tree walk is the bottleneck.** Theory: `FindAll(TreeScope_Descendants, ...)` walks every UIA descendant cross-process, and KV Studio's tree is huge. Fix in 1.2.2 (commit `0535487`, `perf(accessibility): FindFirst fast path`) added a `FindFirst` short-circuit. Direct NAPI benchmark showed `findElement` for the same button completes in 99 ms — the tree was only 76 nodes total. **Find_first was never slow; the fix is still correct and useful for cross-IL scenarios but didn't move the needle here.**
+
+2. **Second hypothesis (wrong): KV Studio's WPF `AutomationPeer.Invoke` is broken / synchronously runs a slow command.** Tested by calling `performAction` directly via Node + NAPI bench script, no dialog appeared (so we briefly thought the action wasn't reaching the button). User reported the dialog DID appear in their interactive session — manually closing the dialog unblocked the Invoke return. Reframed the question: not "why doesn't Invoke trigger" but "why doesn't Invoke return when the dialog opens".
+
+3. **Correct root cause: Invoke is synchronous with the bound command's full lifetime; for a modal-opening command, that's "dialog dismissal".** Confirmed via the Cancel-button test (action = close modal → returns in 211 ms) + the Microsoft Learn quotes above.
+
+### Fix (zpit-desktop-mcp 1.2.3)
+
+`native/src/accessibility.rs::perform_action` AXPress branch rewritten:
+
+1. **TogglePattern first** — checkboxes / toggle buttons stay on the UIA path. Toggle is semantic, doesn't open modals, no blocking risk.
+2. **Otherwise:** read the element's `CurrentBoundingRectangle`, compute the center, send a `MOUSEEVENTF_LEFTDOWN`/`LEFTUP` pair via `SendInput`. Fire-and-forget — queues to the OS input pipeline and returns. Empirically 37 ms end-to-end vs the previous 53,315 ms, same resulting state.
+
+Caveats of the SendInput path:
+- Requires the target window to be foreground at click time. `session.ts`'s `ensureFocusV4` already runs before every `press_button`, so production callers are covered.
+- Loses theoretical UIA Invoke semantics for keyboard-accelerator-only commands (commands bound to a button via UIA but with no visible-click handler). Empirically irrelevant for normal GUI buttons.
+
+### Still unfixed
+
+- **`set_value` uses `IUIAutomationValuePattern.SetValue`**, which has the same Microsoft-documented synchronous-may-block contract. The original 2026-05-14 session showed `set_value` on the Open dialog's File name field taking 96 s. A SendInput-equivalent fix would be: `click_element` on the field → clear → `key`-type the value, but that's a higher-impact rewrite. Until then, `agents/desktop.md` warns the agent to fall back to manual click + `key` if `set_value` doesn't return within ~5 s.
+- **Cross-IL UIA proxy slowdown is a separate compounding factor** (see §7) — when zpit runs elevated against a Medium-IL app, every UIA call pays the mssproxy round-trip cost. The 1.2.2 FindFirst fast path partially mitigates this; the 1.2.3 SendInput fix bypasses UIA entirely for press_button so cross-IL no longer matters there.
+
+### Related code / docs
+
+- `zpit-desktop-mcp` fork: `native/src/accessibility.rs::perform_action`, `send_left_click_at` helper, commit `05d64ee` ([github.com/zac15987/computer-use-mcp](https://github.com/zac15987/computer-use-mcp))
+- [IUIAutomationInvokePattern::Invoke - Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationinvokepattern-invoke)
+- [Implementing the Invoke Control Pattern - Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-implementinginvoke)
+- `agents/desktop.md` Rules section — agent-facing guidance on the residual `set_value` risk
