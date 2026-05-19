@@ -481,10 +481,23 @@ Caveats of the SendInput path:
 - Requires the target window to be foreground at click time. `session.ts`'s `ensureFocusV4` already runs before every `press_button`, so production callers are covered.
 - Loses theoretical UIA Invoke semantics for keyboard-accelerator-only commands (commands bound to a button via UIA but with no visible-click handler). Empirically irrelevant for normal GUI buttons.
 
-### Still unfixed
+### `set_value` is fine — the 96 s case was cross-IL, not the same root cause
 
-- **`set_value` uses `IUIAutomationValuePattern.SetValue`**, which has the same Microsoft-documented synchronous-may-block contract. The original 2026-05-14 session showed `set_value` on the Open dialog's File name field taking 96 s. A SendInput-equivalent fix would be: `click_element` on the field → clear → `key`-type the value, but that's a higher-impact rewrite. Until then, `agents/desktop.md` warns the agent to fall back to manual click + `key` if `set_value` doesn't return within ~5 s.
-- **Cross-IL UIA proxy slowdown is a separate compounding factor** (see §7) — when zpit runs elevated against a Medium-IL app, every UIA call pays the mssproxy round-trip cost. The 1.2.2 FindFirst fast path partially mitigates this; the 1.2.3 SendInput fix bypasses UIA entirely for press_button so cross-IL no longer matters there.
+Initial doc draft assumed `set_value` had the same risk (`IUIAutomationValuePattern.SetValue` carries the same Microsoft "should be async — but provider-dependent" contract). Targeted testing showed it does not, at least against Windows Common File Dialog:
+
+| Test condition | Same-IL (this machine) |
+|---|---|
+| `set_value` AXTextField "File name:" = real existing path (matches 96 s session call) | 235 ms |
+| `set_value` AXComboBox "File name:" = real existing path | 193 ms |
+| `set_value` AXComboBox "File name:" = empty (clear) | 191 ms |
+
+The session's 96 s is consistent with **cross-IL UIA proxy slowdown** (see §7), not a SetValue-synchronous-with-modal pattern. Cross-IL ratio for `set_value` (96 000 / 235 ≈ 408×) is steeper than for `get_ui_tree` (76 000 / 601 ≈ 126×) because `set_value` makes more internal COM calls per invocation (find element + read-only check + pattern fetch + SetValue), each paying the proxy round-trip. Common File Dialog's `IValueProvider::SetValue` does return promptly — Microsoft's "should be async" contract is honored here.
+
+Implication: `set_value` does NOT need the SendInput rewrite `press_button` got. The mitigation is at a different layer — avoid running zpit elevated against Medium-IL targets, or fall back to `click_element` + `key`/`type` if you observe a UIA write taking >5 s. `agents/desktop.md` carries the agent-side guidance.
+
+### Cross-IL UIA proxy slowdown as a compounding factor
+
+When zpit runs elevated (High IL) and the agent operates a Medium-IL app, every UIA RPC crosses the IL boundary via the system's mssproxy. The 1.2.2 FindFirst fast path partially mitigates this for `press_button`'s find phase; the 1.2.3 SendInput fix bypasses UIA entirely for `press_button` so cross-IL no longer matters there. Other tools (`get_ui_tree`, `find_element`, `set_value`, etc.) still pay the cross-IL tax. §7 of this document covers the elevated-WT workaround and its caveats — preferred mitigation is to keep zpit and the target at matching IL when possible.
 
 ### Related code / docs
 
