@@ -26,6 +26,13 @@ func BuildCodingPrompt(p CodingParams) string {
 
 	fmt.Fprintf(&b, "You are working on issue %s: %s\n", p.IssueID, p.IssueTitle)
 
+	b.WriteString("\n## Autonomy Contract\n\n")
+	b.WriteString("You were launched by an automated loop. Being launched IS consent — drive this issue from spec to PR without pausing to ask the user for permission to start, to proceed, or to stage the workflow.\n\n")
+	b.WriteString("- Do NOT ask whether to run the full workflow, whether to pause between phases, or whether to checkpoint mid-batch. The loop already answered those.\n")
+	b.WriteString("- Do NOT ask the user to pick between options when you already have a defensible default (one option aligns with the existing repo layout, or the answer is derivable from SCOPE / APPROACH). Take the default and record your reasoning in the PR body.\n")
+	b.WriteString("- Issue size, task count, or estimated duration is NEVER a reason to ask. The loop is designed for long autonomous runs.\n")
+	b.WriteString("- The genuine stop conditions are listed in \"When to Stop and Ask the User\" below — those are the only triggers. The reverse list \"When NOT to Ask\" calibrates the boundary.\n")
+
 	b.WriteString("\n## Problem to Solve\n\n")
 	b.WriteString(p.Spec.Context)
 
@@ -105,12 +112,21 @@ func buildStandardWorkflow(b *strings.Builder, p CodingParams) {
 
 ## When to Stop and Ask the User
 
-- The APPROACH description is unclear and you are unsure how to proceed
-- You find that you need to modify files outside the SCOPE
-- You find that a CONSTRAINT conflicts with the APPROACH
-- You encounter an uncertain technical decision (multiple valid approaches)
-- Any hardware-related logic you are unsure about (timeout values, safe-state behavior, etc.)
-- You discover during implementation that the APPROACH has a flaw or gap not covered by the Issue Spec
+- A CONSTRAINT conflicts with the APPROACH, or APPROACH contradicts itself
+- You must modify files outside SCOPE to complete the task
+- Hardware-related logic with safety implications (timeout values, safe-state behavior, interlock semantics)
+- The Issue Spec has a real gap that cannot be resolved by reading SCOPE files or existing repo conventions
+
+## When NOT to Ask
+
+The following are NOT reasons to ask the user — resolve them yourself:
+
+- Multiple valid technical approaches exist — pick the one consistent with existing repo conventions or APPROACH wording, record the choice in the PR body, proceed
+- A SCOPE path uses a folder name that already exists somewhere recognizable in the repo (e.g. solution root) — interpret it consistently with the surrounding repo structure, do not ask for path semantics
+- An optional configuration choice where the Issue Spec narrows the candidates (which subset of plugins, which default values) — pick the subset that matches the Issue's stated goal and proceed
+- The task batch is large or estimated to take a long time — the loop expects long autonomous runs
+- You want a mid-workflow checkpoint for human review — the reviewer agent is the only checkpoint; do not insert extra ones
+- You are about to start the workflow at all — being launched IS consent
 
 ## Tracker Operation Notes
 
@@ -323,12 +339,21 @@ func buildTaskWorkflow(b *strings.Builder, p CodingParams) {
 
 ## When to Stop and Ask the User
 
-- The APPROACH description is unclear and you are unsure how to proceed
-- You find that you need to modify files outside the SCOPE
-- You find that a CONSTRAINT conflicts with the APPROACH
-- You encounter an uncertain technical decision (multiple valid approaches)
-- Any hardware-related logic you are unsure about (timeout values, safe-state behavior, etc.)
-- You discover during implementation that the APPROACH has a flaw or gap not covered by the Issue Spec
+- A CONSTRAINT conflicts with the APPROACH, or APPROACH contradicts itself
+- You must modify files outside SCOPE to complete the task
+- Hardware-related logic with safety implications (timeout values, safe-state behavior, interlock semantics)
+- The Issue Spec has a real gap that cannot be resolved by reading SCOPE files or existing repo conventions
+
+## When NOT to Ask
+
+The following are NOT reasons to ask the user — resolve them yourself:
+
+- Multiple valid technical approaches exist — pick the one consistent with existing repo conventions or APPROACH wording, record the choice in the PR body, proceed
+- A SCOPE path uses a folder name that already exists somewhere recognizable in the repo (e.g. solution root) — interpret it consistently with the surrounding repo structure, do not ask for path semantics
+- An optional configuration choice where the Issue Spec narrows the candidates (which subset of plugins, which default values) — pick the subset that matches the Issue's stated goal and proceed
+- The task batch is large or estimated to take a long time — the loop expects long autonomous runs
+- You want a mid-workflow checkpoint for human review — the reviewer agent is the only checkpoint; do not insert extra ones
+- You are about to start the workflow at all — being launched IS consent
 
 ## Tracker Operation Notes
 

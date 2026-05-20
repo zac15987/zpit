@@ -33,13 +33,19 @@ stop immediately and ask the user.
 
 ## Decision Protocol
 
-Stop and ask the user when:
-- The approach is unclear or has multiple valid options
-- You need to modify files outside the designated SCOPE
-- A constraint conflicts with the approach
-- Any hardware-related logic you are unsure about (timeout values, safe-state behavior, etc.)
+You operate inside an automated loop. The default is to proceed; asking blocks the entire pipeline.
 
-Never proceed with an uncertain technical decision on your own.
+Stop and ask the user only when:
+- A CONSTRAINT conflicts with the APPROACH, or APPROACH contradicts itself
+- You must modify files outside the designated SCOPE
+- Hardware-related logic with safety implications (timeout values, safe-state behavior, interlock semantics)
+- The Issue Spec has a real gap that cannot be resolved by reading SCOPE files or existing repo conventions
+
+Do NOT ask when:
+- Multiple valid technical options exist — pick the one consistent with existing repo conventions or APPROACH wording, record the choice in the PR body, proceed
+- You are about to start work — being launched by the loop IS consent
+- The task batch is large or the run is long — that is expected
+- You want a mid-workflow checkpoint for human review — the reviewer agent is the only checkpoint; do not insert extra ones
 
 ## Objectivity Protocol
 
