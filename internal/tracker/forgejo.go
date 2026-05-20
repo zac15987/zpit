@@ -39,7 +39,8 @@ type forgejoPR struct {
 }
 
 type forgejoPRRef struct {
-	Ref string `json:"ref"` // branch name, e.g. "feat/13-refactor-json-toml"
+	Ref   string `json:"ref"`   // branch name, e.g. "feat/13-refactor-json-toml"
+	Label string `json:"label"` // same-repo: branch name; fork: "owner:branch"
 }
 
 func (c *ForgejoClient) ListIssues(ctx context.Context, repo string) ([]Issue, error) {
@@ -118,9 +119,13 @@ func (c *ForgejoClient) FindPRByBranch(ctx context.Context, repo string, branch 
 		return nil, fmt.Errorf("find PR by branch: %w", err)
 	}
 
-	// Client-side validation: head.ref must match exactly.
+	// Client-side validation: match by head.ref OR head.label.
+	// After "delete branch on merge" (common with squash), Gitea/Forgejo
+	// rewrites head.ref to "refs/pull/N/head" but preserves the original
+	// branch name in head.label — without the label fallback, merged PRs
+	// silently vanish from this query and the loop hangs in WaitingPRMerge.
 	for _, pr := range prs {
-		if pr.Head.Ref != branch {
+		if pr.Head.Ref != branch && pr.Head.Label != branch {
 			continue
 		}
 		state := pr.State

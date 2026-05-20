@@ -395,6 +395,36 @@ func TestForgejoFindPRByBranch_WrongBranch(t *testing.T) {
 	}
 }
 
+// TestForgejoFindPRByBranch_MergedBranchDeleted reproduces the squash-merge-with-
+// "delete branch on merge" case: Gitea/Forgejo rewrites head.ref to
+// "refs/pull/N/head" but preserves the original branch name in head.label.
+// Without the label fallback the merged PR is silently dropped and the loop
+// hangs forever in SlotWaitingPRMerge.
+func TestForgejoFindPRByBranch_MergedBranchDeleted(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]forgejoPR{
+			{Number: 35, State: "closed", Merged: true, HTMLURL: "http://git.local/o/r/pulls/35",
+				Head: forgejoPRRef{Ref: "refs/pull/35/head", Label: "feat/34-twincore-integration-skeleton"}},
+		})
+	}))
+	defer ts.Close()
+
+	client := &ForgejoClient{restClient: restClient{baseURL: ts.URL, token: "t", authScheme: "token", httpClient: ts.Client()}}
+	pr, err := client.FindPRByBranch(context.Background(), "org/repo", "feat/34-twincore-integration-skeleton")
+	if err != nil {
+		t.Fatalf("FindPRByBranch: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected merged PR, got nil")
+	}
+	if pr.State != "merged" {
+		t.Errorf("State = %q, want merged", pr.State)
+	}
+	if pr.ID != "35" {
+		t.Errorf("ID = %q, want 35", pr.ID)
+	}
+}
+
 func TestGitHubFindPRByBranch_Merged(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]githubPR{
