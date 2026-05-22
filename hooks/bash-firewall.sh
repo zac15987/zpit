@@ -70,11 +70,13 @@ done
 # Clarifier role — block mutation verbs and writes to source-code extensions
 if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
   # Allow clarifier to delete its own tracker temp files. Strict shape:
-  # `rm [./]tmp_<name>.{md,txt}` — no flags, single target. Mirrors the
-  # redirect carve-out below: clarifier may create tmp_*.{md,txt} and must
-  # be able to clean it up (clarifier.md workflow step 17b explicitly says
+  # `rm [-f] [./]tmp_<name>.{md,txt}` — single target, optional -f. -f is
+  # harmless on a single fixed-prefix file (cannot recurse, cannot cross
+  # dirs) and is the bash-idiomatic way to ignore missing/read-only files;
+  # -r/-R/-rf stay blocked. Mirrors the redirect carve-out below and parity
+  # with pwsh-firewall.sh's -Force allowance (clarifier.md step 17b says
   # "Delete the temp file after use").
-  if echo "$COMMAND" | grep -qE '^[[:space:]]*rm[[:space:]]+(\./)?tmp_[A-Za-z0-9_-]+\.(md|txt)[[:space:]]*$'; then
+  if echo "$COMMAND" | grep -qE '^[[:space:]]*rm([[:space:]]+-f)?[[:space:]]+(\./)?tmp_[A-Za-z0-9_-]+\.(md|txt)[[:space:]]*$'; then
     exit 0
   fi
 

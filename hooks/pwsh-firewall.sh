@@ -71,8 +71,11 @@ done
 # tracker temp file (clarifier.md workflow step 17b).
 if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
   # Allowlist 1: Remove-Item (or aliases rm/ri/del/erase) targeting tmp_*.{md,txt}.
-  # Strict shape: single argument, optional .\ or ./ prefix, no -Recurse/-Force.
-  if echo "$COMMAND" | grep -qiE '^[[:space:]]*(Remove-Item|rm|ri|del|erase)[[:space:]]+(\.[\\/])?tmp_[A-Za-z0-9_-]+\.(md|txt)[[:space:]]*$'; then
+  # Strict shape: single argument, optional .\ or ./ prefix, optional trailing
+  # -Force. -Force is harmless on a single file with a fixed-prefix name
+  # (cannot recurse, cannot cross dirs) and is PS-idiomatic when the file
+  # may be read-only; -Recurse is still blocked.
+  if echo "$COMMAND" | grep -qiE '^[[:space:]]*(Remove-Item|rm|ri|del|erase)[[:space:]]+(\.[\\/])?tmp_[A-Za-z0-9_-]+\.(md|txt)([[:space:]]+-Force)?[[:space:]]*$'; then
     exit 0
   fi
 

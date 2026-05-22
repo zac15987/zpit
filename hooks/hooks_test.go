@@ -661,15 +661,36 @@ func TestBashFirewall_Clarifier_BlocksRmNonTmp(t *testing.T) {
 	}
 }
 
+// Carve-out tolerates a single `-f` between `rm` and the tmp target — bash-
+// idiomatic way to suppress missing/read-only-file errors on a single fixed-
+// prefix file. Parity with pwsh-firewall.sh's -Force allowance.
+func TestBashFirewall_Clarifier_AllowsRmDashFTmp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm -f tmp_issue_body.md"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm -f tmp_*.md, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsRmDashFRelativeTmp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm -f ./tmp_pr_title.txt"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm -f ./tmp_*.txt, got %d: %s", code, msg)
+	}
+}
+
 func TestBashFirewall_Clarifier_BlocksRmTmpWithFlags(t *testing.T) {
-	// Carve-out is shape-strict: no flags allowed. `rm -rf tmp_x.md`
-	// would let an attacker smuggle other behaviour past the regex,
-	// so flagged forms remain blocked.
+	// Carve-out narrowly allows -f only; recursive forms (`-r`, `-R`, `-rf`,
+	// `-fr`) stay blocked. -r is meaningless on a file but principle-block
+	// to avoid expanding the carve-out surface.
 	code, msg := runHook(t, "bash-firewall.sh",
 		`{"tool_input":{"command":"rm -rf tmp_issue_body.md"}}`,
 		clarifierEnv(nil))
 	if code != 2 {
-		t.Errorf("expected exit 2 for rm -rf tmp_*.md (flagged form), got %d: %s", code, msg)
+		t.Errorf("expected exit 2 for rm -rf tmp_*.md (recursive form), got %d: %s", code, msg)
 	}
 }
 
@@ -837,6 +858,40 @@ func TestPwshFirewall_Clarifier_AllowsRemoveItemTmpTxt(t *testing.T) {
 		clarifierEnv(nil))
 	if code != 0 {
 		t.Errorf("expected exit 0 for Remove-Item tmp_*.txt, got %d: %s", code, msg)
+	}
+}
+
+// Carve-out tolerates trailing `-Force` — PS-idiomatic for read-only or
+// in-use files; harmless on a single tmp_*.{md,txt} target (no recursion,
+// no cross-dir reach). Real-world clarifier session in jsonl
+// 1e5370c4-df66-46fa-a73b-6dabea76ccf5 hit this path.
+func TestPwshFirewall_Clarifier_AllowsRemoveItemTmpMdForce(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Remove-Item tmp_issue_body.md -Force"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for Remove-Item tmp_*.md -Force, got %d: %s", code, msg)
+	}
+}
+
+func TestPwshFirewall_Clarifier_AllowsRmAliasTmpTxtForce(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"rm ./tmp_pr_title.txt -Force"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm ./tmp_*.txt -Force, got %d: %s", code, msg)
+	}
+}
+
+// Regression guard: -Recurse stays blocked. Even though it's meaningless on
+// a single file, the carve-out narrowly allows only -Force; any other flag
+// must fall through to the Remove-Item denylist.
+func TestPwshFirewall_Clarifier_BlocksRemoveItemTmpMdRecurse(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Remove-Item tmp_issue_body.md -Recurse"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for Remove-Item tmp_*.md -Recurse, got %d: %s", code, msg)
 	}
 }
 
