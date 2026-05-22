@@ -5,11 +5,22 @@ set -euo pipefail
 # Mirrors bash-firewall.sh but matches PowerShell cmdlets and aliases.
 # Exit 0 = allow, Exit 2 = block.
 
+# Skip enforcement for non-agent sessions (plain Claude Code) — checked
+# BEFORE the jq dependency check so non-zpit users aren't blocked when
+# jq is absent.
+[ -z "${ZPIT_AGENT:-}" ] && exit 0
+
+# Require jq: hook parses stdin JSON via jq. Fail closed when missing —
+# without jq the firewall cannot inspect commands, so destructive
+# PowerShell calls would otherwise slip through as "non-blocking" hook errors.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "BLOCKED: 'jq' is required for zpit safety hooks but is not installed." >&2
+  echo "Install it:  winget install jqlang.jq  |  brew install jq  |  apt install jq" >&2
+  exit 2
+fi
+
 COMMAND=$(cat | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
-
-# Skip enforcement for non-agent sessions (plain Claude Code)
-[ -z "${ZPIT_AGENT:-}" ] && exit 0
 
 # Check if grep supports -P (PCRE). Fall back to -E if not.
 GREP_FLAG="-P"

@@ -18,6 +18,14 @@ set -euo pipefail
 # instead of silently producing a zpit-style worktree.
 [ -z "${ZPIT_AGENT:-}" ] && exit 0
 
+# Require jq: hook parses stdin JSON via jq to extract name/cwd. Without
+# it we cannot produce a valid worktree path — fail with a clear error
+# instead of silently misbehaving.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "WorktreeCreate: 'jq' is required but not installed. Install it (winget install jqlang.jq | brew install jq | apt install jq) and retry." >&2
+  exit 1
+fi
+
 INPUT=$(cat)
 NAME=$(echo "$INPUT" | jq -r '.name // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')

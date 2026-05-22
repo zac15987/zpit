@@ -162,6 +162,7 @@ The zip bundle contains:
 - [Go](https://go.dev/) 1.26+
 - [Claude Code](https://claude.ai/code) CLI installed and authenticated
 - Windows Terminal (Windows) or tmux (Linux/WSL)
+- [`jq`](https://jqlang.github.io/jq/) — **required** for the PreToolUse safety hooks. Without it, hooks fail closed (block all agent Bash/Write/Edit calls with `BLOCKED: 'jq' is required...`). Install: `winget install jqlang.jq` (Windows) · `brew install jq` (macOS) · `apt install jq` / `dnf install jq` (Linux)
 - A Forgejo/Gitea or GitHub issue tracker
 
 ## Quick Start

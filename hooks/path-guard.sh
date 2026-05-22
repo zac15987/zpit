@@ -5,6 +5,20 @@ set -euo pipefail
 # Ensures file operations stay within the agent's worktree directory.
 # Exit 0 = allow, Exit 2 = block
 
+# Skip enforcement for non-agent sessions (plain Claude Code) — checked
+# BEFORE the jq dependency check so non-zpit users aren't blocked when
+# jq is absent.
+[ -z "${ZPIT_AGENT:-}" ] && exit 0
+
+# Require jq: hook parses stdin JSON via jq. Fail closed when missing —
+# without jq the guard cannot resolve the target path, so writes outside
+# the worktree would otherwise slip through as "non-blocking" hook errors.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "BLOCKED: 'jq' is required for zpit safety hooks but is not installed." >&2
+  echo "Install it:  winget install jqlang.jq  |  brew install jq  |  apt install jq" >&2
+  exit 2
+fi
+
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '
   .tool_input.file_path //
@@ -15,9 +29,6 @@ FILE_PATH=$(echo "$INPUT" | jq -r '
 
 # No file path — let other mechanisms handle it
 [ -z "$FILE_PATH" ] && exit 0
-
-# Skip enforcement for non-agent sessions (plain Claude Code)
-[ -z "${ZPIT_AGENT:-}" ] && exit 0
 
 # Allowed working directory — the root of the *active* git worktree.
 # Claude Code pins CLAUDE_PROJECT_DIR to the orchestrator's project root

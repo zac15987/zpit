@@ -5,6 +5,11 @@ set -euo pipefail
 # Fires when Claude Code needs permission approval.
 # No ZPIT_AGENT check: permission notifications apply to all sessions.
 
+# Best-effort: if jq is missing, silently skip rather than blocking the
+# Notification event (this hook is not a safety gate — the TUI will just
+# miss the permission toast for this session).
+command -v jq >/dev/null 2>&1 || exit 0
+
 INPUT=$(cat)
 
 # Check notification_type (may be missing per known bug anthropics/claude-code#11964).
