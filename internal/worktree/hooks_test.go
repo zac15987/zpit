@@ -89,6 +89,7 @@ func TestValidateHookMode_Valid(t *testing.T) {
 var testScripts = HookScripts{
 	PathGuard:        []byte("#!/bin/bash\n# path-guard"),
 	BashFirewall:     []byte("#!/bin/bash\n# bash-firewall"),
+	PwshFirewall:     []byte("#!/bin/bash\n# pwsh-firewall"),
 	GitGuard:         []byte("#!/bin/bash\n# git-guard"),
 	NotifyPermission: []byte("#!/bin/bash\n# notify-permission"),
 	WorktreeCreate:   []byte("#!/bin/bash\n# worktree-create"),
@@ -99,7 +100,7 @@ func TestDeployHooksToProject_ScriptsWritten(t *testing.T) {
 	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
 		t.Fatalf("DeployHooksToProject: %v", err)
 	}
-	for _, name := range []string{"path-guard.sh", "bash-firewall.sh", "git-guard.sh"} {
+	for _, name := range []string{"path-guard.sh", "bash-firewall.sh", "pwsh-firewall.sh", "git-guard.sh"} {
 		p := filepath.Join(dir, ".claude", "hooks", name)
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("hook %s not found: %v", name, err)
@@ -126,6 +127,9 @@ func TestDeployHooksToProject_MergeSettings_NewFile(t *testing.T) {
 	}
 	if !containsHook(data, "bash-firewall.sh") {
 		t.Error("settings.json should include bash-firewall for strict mode")
+	}
+	if !containsHook(data, "pwsh-firewall.sh") {
+		t.Error("settings.json should include pwsh-firewall for strict mode")
 	}
 }
 

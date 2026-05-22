@@ -58,6 +58,15 @@ done
 
 # Clarifier role — block mutation verbs and writes to source-code extensions
 if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
+  # Allow clarifier to delete its own tracker temp files. Strict shape:
+  # `rm [./]tmp_<name>.{md,txt}` — no flags, single target. Mirrors the
+  # redirect carve-out below: clarifier may create tmp_*.{md,txt} and must
+  # be able to clean it up (clarifier.md workflow step 17b explicitly says
+  # "Delete the temp file after use").
+  if echo "$COMMAND" | grep -qE '^[[:space:]]*rm[[:space:]]+(\./)?tmp_[A-Za-z0-9_-]+\.(md|txt)[[:space:]]*$'; then
+    exit 0
+  fi
+
   # Mutation verbs at command start or after a separator (;, &, |, whitespace)
   CLARIFIER_BLOCKED=(
     '(^|[;&|[:space:]])rm([[:space:]]|$)'

@@ -296,7 +296,8 @@ Note on terminology: zpit uses **regular Claude Code subagents** (the `subagent_
 2. **--allowedTools per agent role** (medium — Claude Code enforced)
 3. **PreToolUse hooks** (hard — enforced even with `--bypass-all-permissions`):
    - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/agents/`, `.claude/settings`, `.git/`, `.env`
-   - `bash-firewall.sh` — blocks destructive commands (rm -rf, curl|bash, force push, etc.)
+   - `bash-firewall.sh` — blocks destructive Bash commands (rm -rf, curl|bash, force push, etc.); clarifier-role blocks all mutation verbs except `rm tmp_*.{md,txt}` (its own tracker temp file)
+   - `pwsh-firewall.sh` — PowerShell-tool counterpart of bash-firewall (`Remove-Item` / `Stop-Computer` / `iwr|iex`, etc.); same clarifier carve-out for `tmp_*.{md,txt}`. Without it, agents on Windows could bypass bash-firewall via the PowerShell tool.
    - `git-guard.sh` — push whitelist (only `feat/*`), blocks merge/rebase/branch-delete
    - `notify-permission.sh` — not safety; writes signal file for TUI permission detection
 4. **Git worktree isolation** (physical)

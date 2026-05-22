@@ -13,6 +13,7 @@ import (
 type HookScripts struct {
 	PathGuard        []byte
 	BashFirewall     []byte
+	PwshFirewall     []byte // pwsh-firewall.sh — PowerShell-tool counterpart of BashFirewall
 	GitGuard         []byte
 	EnvWrapper       []byte // zpit-env.cmd — sets ZPIT_AGENT=1 for Windows agent launches (cmd)
 	EnvWrapperPS1    []byte // zpit-env.ps1 — sets ZPIT_AGENT=1 for Windows agent launches (pwsh/powershell)
@@ -46,6 +47,15 @@ const settingsStrict = `{
           {
             "type": "command",
             "command": ".claude/hooks/git-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/pwsh-firewall.sh"
           }
         ]
       }
@@ -314,6 +324,7 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 	files := map[string][]byte{
 		"path-guard.sh":        scripts.PathGuard,
 		"bash-firewall.sh":     scripts.BashFirewall,
+		"pwsh-firewall.sh":     scripts.PwshFirewall,
 		"git-guard.sh":         scripts.GitGuard,
 		"zpit-env.cmd":         scripts.EnvWrapper,
 		"zpit-env.ps1":         scripts.EnvWrapperPS1,

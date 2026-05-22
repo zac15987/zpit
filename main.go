@@ -57,6 +57,9 @@ var pathGuardSH []byte
 //go:embed hooks/bash-firewall.sh
 var bashFirewallSH []byte
 
+//go:embed hooks/pwsh-firewall.sh
+var pwshFirewallSH []byte
+
 //go:embed hooks/git-guard.sh
 var gitGuardSH []byte
 
@@ -378,6 +381,7 @@ func buildHookScripts() worktree.HookScripts {
 	return worktree.HookScripts{
 		PathGuard:        pathGuardSH,
 		BashFirewall:     bashFirewallSH,
+		PwshFirewall:     pwshFirewallSH,
 		GitGuard:         gitGuardSH,
 		EnvWrapper:       zpitEnvCMD,
 		EnvWrapperPS1:    zpitEnvPS1,

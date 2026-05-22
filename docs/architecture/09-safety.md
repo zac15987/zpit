@@ -84,6 +84,7 @@ Hook 腳本檢查 `ZPIT_AGENT` 環境變數 — 若不存在，直接 `exit 0`�
 └── hooks/
     ├── path-guard.sh      ← 路徑守衛（Write/Edit/MultiEdit）
     ├── bash-firewall.sh   ← Bash 指令過濾
+    ├── pwsh-firewall.sh   ← PowerShell 指令過濾（bash-firewall 的 PS 對應）
     ├── git-guard.sh       ← Git 操作守衛
     ├── notify-permission.sh ← 通知 hook（寫信號檔供 TUI 偵測）
     ├── zpit-env.cmd       ← Windows cmd agent 環境變數包裝
@@ -116,6 +117,12 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
         "hooks": [
           { "type": "command", "command": ".claude/hooks/bash-firewall.sh" },
           { "type": "command", "command": ".claude/hooks/git-guard.sh" }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/pwsh-firewall.sh" }
         ]
       }
     ],
@@ -159,10 +166,23 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
 - 全域套件安裝：`npm install -g`
 - 程序管理：`kill -9 1`、`killall`、`pkill -9`
 - **重導向逃逸偵測**：`>` 或 `>>` 指向 worktree 外的絕對路徑
+- **Clarifier 角色額外封鎖**：所有 mutation verbs（`rm`/`mv`/`cp`/`mkdir`/`touch`/`sed -i`），但開放 `rm tmp_*.{md,txt}` 與 `>` 重導向到 `tmp_*.{md,txt}`，讓 clarifier 能管理自己的 tracker 暫存檔
 
 **grep 相容性：** 先嘗試 `-P`（PCRE），不支援則 fallback 到 `-E`（ERE）。
 
-### 9.4.5 Hook 3: Git 操作守衛 (git-guard.sh)
+### 9.4.5 Hook 3: PowerShell 防火牆 (pwsh-firewall.sh)
+
+**目的：** bash-firewall 只覆蓋 Bash tool，沒覆蓋 PowerShell tool。在 Windows 上沒有 pwsh-firewall 等於 `Remove-Item` / `Out-File` / `Invoke-WebRequest | iex` 全部直通 — bash-firewall 防的 PowerShell 等價形式照樣可以執行。pwsh-firewall 把對應規則翻譯成 PS cmdlets / aliases 補上覆蓋。
+
+**攔截類別：**
+- 系統控制：`Stop-Computer`、`Restart-Computer`、`shutdown.exe`
+- 程序管理：`Stop-Process -Id 1`、`kill -Force 1`
+- 網路風險：`Invoke-WebRequest|iex`、`iwr|iex`、`curl|iex`、`wget|iex`、`New-Object Net.WebClient` 等下載即執行模式
+- 套件 publish：`npm publish`、`dotnet nuget push`、`pip ... upload`、`npm install -g`
+- 破壞性檔案操作：`Remove-Item ... -Recurse ... /` / `~` / `..`
+- **Clarifier 角色額外封鎖**：PS 寫入 cmdlets 與 aliases（`Remove-Item` / `rm` / `ri` / `del` / `Move-Item` / `mv` / `Copy-Item` / `cp` / `New-Item` / `mkdir` / `Set-Content` / `Add-Content` / `Out-File` / `Clear-Content`），同樣對 `tmp_*.{md,txt}` 開 carve-out（覆蓋 `Remove-Item` / `Set-Content` / `Out-File` 與 `>` 重導向三種寫入方式）
+
+### 9.4.6 Hook 4: Git 操作守衛 (git-guard.sh)
 
 **目的：** 限制 agent 的 git 操作範圍。
 
@@ -182,7 +202,7 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
 
 **允許的 git 操作：** `git add <specific-file>`、`git commit`、`git status`、`git diff`、`git log`、`git push feat/*`
 
-### 9.4.6 Hook 4: 通知 hook (notify-permission.sh)
+### 9.4.7 Hook 5: 通知 hook (notify-permission.sh)
 
 非安全 hook。當 Claude Code 需要 tool 權限時觸發，寫入信號檔供 TUI 偵測。
 
@@ -195,11 +215,11 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
 hook_mode = "strict"   # strict | standard | relaxed
 ```
 
-| 等級 | path-guard | bash-firewall | git-guard | notify-permission |
-|------|-----------|---------------|-----------|-------------------|
-| strict | ✓ | ✓ | ✓ | ✓ |
-| standard | ✓ | — | ✓ | ✓ |
-| relaxed | — | — | ✓ | ✓ |
+| 等級 | path-guard | bash-firewall | pwsh-firewall | git-guard | notify-permission |
+|------|-----------|---------------|---------------|-----------|-------------------|
+| strict | ✓ | ✓ | ✓ | ✓ | ✓ |
+| standard | ✓ | — | — | ✓ | ✓ |
+| relaxed | — | — | — | ✓ | ✓ |
 
 建議：機台專案用 strict，桌面工具用 standard，個人網頁用 relaxed。
 
