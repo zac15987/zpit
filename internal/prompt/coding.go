@@ -14,8 +14,18 @@ type CodingParams struct {
 	IssueTitle     string
 	Spec           *tracker.IssueSpec
 	LogPolicy      string // "strict" | "standard" | "minimal"
-	BaseBranch     string // e.g. "dev"
+	BaseBranch     string // worktree fork base — informational; the orchestrator's worktree is already on a branch forked from this
+	PRTarget       string // PR target branch (the `--base` flag for `gh pr create` / Forgejo equivalent). Falls back to BaseBranch when empty.
 	ChannelEnabled bool   // true when cross-agent channel communication is active
+}
+
+// prTarget returns the effective PR target branch, falling back to BaseBranch
+// when PRTarget is unset (back-compat with callers that have not been updated).
+func (p CodingParams) prTarget() string {
+	if p.PRTarget != "" {
+		return p.PRTarget
+	}
+	return p.BaseBranch
 }
 
 // BuildCodingPrompt assembles the full coding agent prompt from Issue Spec data.
@@ -135,7 +145,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, acSelfCheckExample("initial"), p.IssueID, p.BaseBranch, p.BaseBranch)
+`, acSelfCheckExample("initial"), p.IssueID, p.prTarget(), p.prTarget())
 
 	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
 		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))
@@ -362,7 +372,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, acSelfCheckExample("initial"), p.IssueID, p.BaseBranch, p.BaseBranch)
+`, acSelfCheckExample("initial"), p.IssueID, p.prTarget(), p.prTarget())
 
 	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
 		b.WriteString(coordinationReviewGate(p.Spec.CoordinatesWith))

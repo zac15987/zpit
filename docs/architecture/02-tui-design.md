@@ -101,7 +101,7 @@ TUI 本身透過 session log 即時顯示進度摘要。
 ║  │ │ ## ACCEPTANCE_CRITERIA                              │     │    ║
 ║  │ │ ## SCOPE                                           │     │    ║
 ║  │ │ ## CONSTRAINTS                                     │     │    ║
-║  │ │ ## BRANCH (可選)                                   │     │    ║
+║  │ │ ## BASE_BRANCH / ## PR_TARGET                      │     │    ║
 ║  │ │ ## TASKS (可選)                                    │     │    ║
 ║  │ └────────────────────────────────────────────────────┘     │    ║
 ║  │                                                            │    ║

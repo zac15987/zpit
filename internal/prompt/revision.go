@@ -14,8 +14,18 @@ type RevisionParams struct {
 	IssueTitle  string
 	Spec        *tracker.IssueSpec
 	LogPolicy   string // "strict" | "standard" | "minimal"
-	BaseBranch  string // e.g. "dev"
+	BaseBranch  string // worktree fork base — informational
+	PRTarget    string // PR target branch — surfaced in the revision prompt for the agent to verify. Falls back to BaseBranch when empty.
 	ReviewRound int    // 1-based round number
+}
+
+// prTarget returns the effective PR target branch, falling back to BaseBranch
+// when PRTarget is unset (back-compat with callers that have not been updated).
+func (p RevisionParams) prTarget() string {
+	if p.PRTarget != "" {
+		return p.PRTarget
+	}
+	return p.BaseBranch
 }
 
 // BuildRevisionPrompt assembles the coding agent prompt for fixing review feedback.
@@ -122,7 +132,7 @@ Use ONLY the tools and methods specified in tracker.md — do not use other MCP 
 Never embed long text directly in bash commands or MCP parameters.
 Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
 Delete the temp file after use.
-`, acSelfCheckExample("revision"), p.IssueID, p.BaseBranch)
+`, acSelfCheckExample("revision"), p.IssueID, p.prTarget())
 
 	return b.String()
 }

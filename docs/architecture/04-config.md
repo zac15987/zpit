@@ -101,7 +101,6 @@ type = "github"
 name = "ASE 檢測清潔機台"
 id = "ase-inspection"
 profile = "machine"             # 顯示標籤：machine | desktop | web | android | terminal (TUI icon)
-hook_mode = "strict"            # strict | standard | relaxed
 log_policy = "strict"           # strict | standard | minimal
 tracker = "my-forgejo"          # 指向 providers.tracker 的 key
 tracker_project = "ase-inspection"
@@ -234,7 +233,7 @@ Zpit 支援在 TUI 運行中重新載入 config.toml。設定欄位分為兩類�
 | `agent_models.*` | 更新 cfg，下次啟動 agent 時生效（已運行的 session 沿用啟動時 model） |
 | per-project `channel_enabled` | 動態 subscribe/unsubscribe EventBus |
 | per-project `channel_listen` | 動態管理跨專案訂閱 |
-| per-project `hook_mode` / `base_branch` / `log_policy` / `auto_merge` / `merge_method` | 更新 cfg，下次操作時生效（已在執行中的 merge 使用 handler 進入時捕獲的設定） |
+| per-project `base_branch` / `log_policy` / `auto_merge` / `merge_method` | 更新 cfg，下次操作時生效（已在執行中的 merge 使用 handler 進入時捕獲的設定）。`hook_mode` 已棄用，仍寫在 config 內會被忽略並印 deprecation warning。 |
 
 ### Restart-Required（需重啟）
 

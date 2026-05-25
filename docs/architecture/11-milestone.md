@@ -36,7 +36,7 @@
 ## M4a: Worktree + Prompt 模板 + Profile ✅
 
 - [x] Worktree Manager 模組（建立 / 清理 / 列出，shell out to git）
-- [x] Worktree 建立時根據 hook_mode 自動配置 settings.local.json
+- [x] Worktree 建立時自動寫入 settings.json + settings.local.json（單一 hook set；hook_mode 多模式已於 Issue #39 修正中合併移除）
 - [x] Hook 自動化測試（make test-hooks）
 - [x] Coding Agent Prompt 模板實作（Issue Spec → prompt 組裝 + log_policy 注入）
 - [x] Reviewer 驗收模板實作（Issue Spec → reviewer prompt 組裝）
@@ -58,7 +58,7 @@
 - [x] Reviewer label 更新（PASS → ai-review, NEEDS CHANGES → needs-changes）
 - [x] BuildRevisionPrompt — 修正版 coding prompt（讀 review comment → 修正 → 重送）
 - [x] Label on-demand 檢查：操作前檢查 required labels，缺少時 overlay confirm dialog 確認後建立（LabelManager interface）
-- [x] Per-issue branch 控制：Issue Spec `## BRANCH` → coding prompt 強制 PR target、reviewer 驗證
+- [x] Per-issue branch 控制：Issue Spec `## BASE_BRANCH` + `## PR_TARGET`（舊 `## BRANCH` 仍接受並印 deprecation warning） → coding prompt 強制 PR target、reviewer 驗證
 
 ## M4c: SSH 遠端存取 + 併發安全 ✅
 

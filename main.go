@@ -373,6 +373,13 @@ func loadConfigAndLog() (*config.Config, *os.File) {
 	}
 	cleanOldLogs(logDir, 30)
 
+	for _, msg := range cfg.DeprecationWarnings() {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", msg)
+		if logFile != nil {
+			fmt.Fprintf(logFile, "[deprecation] %s\n", msg)
+		}
+	}
+
 	return cfg, logFile
 }
 

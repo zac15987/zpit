@@ -8,84 +8,6 @@ import (
 	"testing"
 )
 
-func TestSetupHookMode_Strict(t *testing.T) {
-	dir := t.TempDir()
-	if err := setupHookMode(dir, "strict"); err != nil {
-		t.Fatalf("setupHookMode(strict): %v", err)
-	}
-	// No file should be written.
-	path := filepath.Join(dir, ".claude", "settings.local.json")
-	if _, err := os.Stat(path); err == nil {
-		t.Error("settings.local.json should not exist for strict mode")
-	}
-}
-
-func TestSetupHookMode_Standard(t *testing.T) {
-	dir := t.TempDir()
-	if err := setupHookMode(dir, "standard"); err != nil {
-		t.Fatalf("setupHookMode(standard): %v", err)
-	}
-	content := readSettingsLocal(t, dir)
-	// Should have path-guard and git-guard, but NOT bash-firewall.
-	if !containsHook(content, "path-guard.sh") {
-		t.Error("standard should include path-guard")
-	}
-	if !containsHook(content, "git-guard.sh") {
-		t.Error("standard should include git-guard")
-	}
-	if containsHook(content, "bash-firewall.sh") {
-		t.Error("standard should NOT include bash-firewall")
-	}
-}
-
-func TestSetupHookMode_Relaxed(t *testing.T) {
-	dir := t.TempDir()
-	if err := setupHookMode(dir, "relaxed"); err != nil {
-		t.Fatalf("setupHookMode(relaxed): %v", err)
-	}
-	content := readSettingsLocal(t, dir)
-	// Should only have git-guard.
-	if !containsHook(content, "git-guard.sh") {
-		t.Error("relaxed should include git-guard")
-	}
-	if containsHook(content, "path-guard.sh") {
-		t.Error("relaxed should NOT include path-guard")
-	}
-	if containsHook(content, "bash-firewall.sh") {
-		t.Error("relaxed should NOT include bash-firewall")
-	}
-}
-
-func TestSetupHookMode_ValidJSON(t *testing.T) {
-	for _, mode := range []string{"standard", "relaxed"} {
-		dir := t.TempDir()
-		if err := setupHookMode(dir, mode); err != nil {
-			t.Fatalf("setupHookMode(%s): %v", mode, err)
-		}
-		data := readSettingsLocal(t, dir)
-		var parsed map[string]interface{}
-		if err := json.Unmarshal(data, &parsed); err != nil {
-			t.Errorf("%s: invalid JSON: %v", mode, err)
-		}
-	}
-}
-
-func TestValidateHookMode_Unknown(t *testing.T) {
-	if err := validateHookMode("banana"); err == nil {
-		t.Error("expected error for unknown hook_mode")
-	}
-}
-
-func TestValidateHookMode_Valid(t *testing.T) {
-	for _, mode := range []string{"strict", "standard", "relaxed"} {
-		if err := validateHookMode(mode); err != nil {
-			t.Errorf("unexpected error for %q: %v", mode, err)
-		}
-	}
-}
-
-// --- DeployHooksToProject / DeployHooksToWorktree tests ---
-
 var testScripts = HookScripts{
 	PathGuard:        []byte("#!/bin/bash\n# path-guard"),
 	BashFirewall:     []byte("#!/bin/bash\n# bash-firewall"),
@@ -95,18 +17,19 @@ var testScripts = HookScripts{
 	WorktreeCreate:   []byte("#!/bin/bash\n# worktree-create"),
 }
 
+// --- DeployHooksToProject tests ---
+
 func TestDeployHooksToProject_ScriptsWritten(t *testing.T) {
 	dir := t.TempDir()
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("DeployHooksToProject: %v", err)
 	}
-	for _, name := range []string{"path-guard.sh", "bash-firewall.sh", "pwsh-firewall.sh", "git-guard.sh"} {
+	for _, name := range []string{"path-guard.sh", "bash-firewall.sh", "pwsh-firewall.sh", "git-guard.sh", "notify-permission.sh", "worktree-create.sh"} {
 		p := filepath.Join(dir, ".claude", "hooks", name)
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("hook %s not found: %v", name, err)
 		}
 	}
-	// Verify content
 	data, _ := os.ReadFile(filepath.Join(dir, ".claude", "hooks", "path-guard.sh"))
 	if string(data) != string(testScripts.PathGuard) {
 		t.Error("path-guard.sh content mismatch")
@@ -115,21 +38,17 @@ func TestDeployHooksToProject_ScriptsWritten(t *testing.T) {
 
 func TestDeployHooksToProject_MergeSettings_NewFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("DeployHooksToProject: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
 	if err != nil {
 		t.Fatalf("read settings.json: %v", err)
 	}
-	if !containsHook(data, "path-guard.sh") {
-		t.Error("settings.json should include path-guard for strict mode")
-	}
-	if !containsHook(data, "bash-firewall.sh") {
-		t.Error("settings.json should include bash-firewall for strict mode")
-	}
-	if !containsHook(data, "pwsh-firewall.sh") {
-		t.Error("settings.json should include pwsh-firewall for strict mode")
+	for _, hook := range []string{"path-guard.sh", "bash-firewall.sh", "pwsh-firewall.sh", "git-guard.sh", "notify-permission.sh", "worktree-create.sh"} {
+		if !containsHook(data, hook) {
+			t.Errorf("settings.json should include %s", hook)
+		}
 	}
 }
 
@@ -140,7 +59,7 @@ func TestDeployHooksToProject_MergeSettings_PreservesExistingKeys(t *testing.T) 
 	existing := `{"enabledPlugins":{"csharp-lsp@claude-plugins-official":true}}`
 	_ = os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(existing), 0o644)
 
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("DeployHooksToProject: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
@@ -163,7 +82,7 @@ func TestDeployHooksToProject_MergeSettings_ReplacesStaleHooks(t *testing.T) {
 	stale := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"old-hook.sh"}]}]}}`
 	_ = os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(stale), 0o644)
 
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("DeployHooksToProject: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
@@ -175,33 +94,12 @@ func TestDeployHooksToProject_MergeSettings_ReplacesStaleHooks(t *testing.T) {
 	}
 }
 
-func TestDeployHooksToWorktree_UsesSettingsLocal(t *testing.T) {
-	dir := t.TempDir()
-	if err := DeployHooksToWorktree(dir, "standard", testScripts); err != nil {
-		t.Fatalf("DeployHooksToWorktree: %v", err)
-	}
-	// settings.local.json should exist (standard mode writes overlay)
-	localPath := filepath.Join(dir, ".claude", "settings.local.json")
-	if _, err := os.Stat(localPath); err != nil {
-		t.Errorf("settings.local.json should exist for worktree standard mode: %v", err)
-	}
-	// settings.json should NOT be created by worktree deploy
-	settingsPath := filepath.Join(dir, ".claude", "settings.json")
-	if _, err := os.Stat(settingsPath); err == nil {
-		t.Error("settings.json should not be created for worktree deploy")
-	}
-	// Hook scripts should still exist
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "hooks", "path-guard.sh")); err != nil {
-		t.Error("hook scripts should be deployed even for worktrees")
-	}
-}
-
 func TestDeployHooksToProject_Idempotent(t *testing.T) {
 	dir := t.TempDir()
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("second call: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
@@ -211,23 +109,74 @@ func TestDeployHooksToProject_Idempotent(t *testing.T) {
 	}
 }
 
-func TestDeployHooksToProject_UnknownMode(t *testing.T) {
+// --- DeployHooksToWorktree tests ---
+
+// TestDeployHooksToWorktree_WritesBothSettingsFiles is the regression test
+// for the Issue #39 bug — strict mode used to skip settings entirely,
+// disabling every hook inside the worktree because Claude Code resolves
+// project settings against process CWD (linked worktree), not git toplevel.
+func TestDeployHooksToWorktree_WritesBothSettingsFiles(t *testing.T) {
 	dir := t.TempDir()
-	if err := DeployHooksToProject(dir, "banana", testScripts); err == nil {
-		t.Error("expected error for unknown hook_mode")
+	if err := DeployHooksToWorktree(dir, testScripts); err != nil {
+		t.Fatalf("DeployHooksToWorktree: %v", err)
+	}
+	for _, name := range []string{"settings.json", "settings.local.json"} {
+		path := filepath.Join(dir, ".claude", name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s should exist in worktree: %v", name, err)
+			continue
+		}
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			t.Errorf("%s: invalid JSON: %v", name, err)
+		}
+		if !containsHook(data, "worktree-create.sh") {
+			t.Errorf("%s: WorktreeCreate hook missing — [P] parallel batches will fall back to Claude Code default origin/main fork", name)
+		}
+		if !containsHook(data, "path-guard.sh") {
+			t.Errorf("%s: path-guard hook missing", name)
+		}
+		if !containsHook(data, "bash-firewall.sh") {
+			t.Errorf("%s: bash-firewall hook missing", name)
+		}
 	}
 }
 
-func TestDeployHooksToWorktree_UnknownMode(t *testing.T) {
+func TestDeployHooksToWorktree_ScriptsDeployed(t *testing.T) {
 	dir := t.TempDir()
-	if err := DeployHooksToWorktree(dir, "banana", testScripts); err == nil {
-		t.Error("expected error for unknown hook_mode")
+	if err := DeployHooksToWorktree(dir, testScripts); err != nil {
+		t.Fatalf("DeployHooksToWorktree: %v", err)
+	}
+	for _, name := range []string{"path-guard.sh", "bash-firewall.sh", "pwsh-firewall.sh", "git-guard.sh", "notify-permission.sh", "worktree-create.sh"} {
+		p := filepath.Join(dir, ".claude", "hooks", name)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("hook %s not deployed: %v", name, err)
+		}
+	}
+}
+
+func TestDeployHooksToWorktree_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	if err := DeployHooksToWorktree(dir, testScripts); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if err := DeployHooksToWorktree(dir, testScripts); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	// Both files still parseable JSON
+	for _, name := range []string{"settings.json", "settings.local.json"} {
+		data, _ := os.ReadFile(filepath.Join(dir, ".claude", name))
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			t.Errorf("%s: invalid JSON after idempotent call: %v", name, err)
+		}
 	}
 }
 
 func TestDeployHooksToProject_NotifyPermissionScriptDeployed(t *testing.T) {
 	dir := t.TempDir()
-	if err := DeployHooksToProject(dir, "strict", testScripts); err != nil {
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
 		t.Fatalf("DeployHooksToProject: %v", err)
 	}
 	p := filepath.Join(dir, ".claude", "hooks", "notify-permission.sh")
@@ -241,23 +190,23 @@ func TestDeployHooksToProject_NotifyPermissionScriptDeployed(t *testing.T) {
 }
 
 func TestDeployHooksToProject_NotificationHookInSettings(t *testing.T) {
-	for _, mode := range []string{"strict", "standard", "relaxed"} {
-		dir := t.TempDir()
-		if err := DeployHooksToProject(dir, mode, testScripts); err != nil {
-			t.Fatalf("DeployHooksToProject(%s): %v", mode, err)
-		}
-		data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
-		if err != nil {
-			t.Fatalf("read settings.json: %v", err)
-		}
-		if !containsHook(data, "notify-permission.sh") {
-			t.Errorf("%s mode: settings.json should include notify-permission.sh in Notification hook", mode)
-		}
-		if !strings.Contains(string(data), "Notification") {
-			t.Errorf("%s mode: settings.json should include Notification hook section", mode)
-		}
+	dir := t.TempDir()
+	if err := DeployHooksToProject(dir, testScripts); err != nil {
+		t.Fatalf("DeployHooksToProject: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if !containsHook(data, "notify-permission.sh") {
+		t.Error("settings.json should include notify-permission.sh in Notification hook")
+	}
+	if !strings.Contains(string(data), "Notification") {
+		t.Error("settings.json should include Notification hook section")
 	}
 }
+
+// --- EnsureGitignore tests ---
 
 func TestEnsureGitignore_NewFile(t *testing.T) {
 	dir := t.TempDir()
@@ -279,7 +228,6 @@ func TestEnsureGitignore_NewFile(t *testing.T) {
 
 func TestEnsureGitignore_PartialExists(t *testing.T) {
 	dir := t.TempDir()
-	// Pre-populate with one rule already present.
 	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".mcp.json\n"), 0o644)
 
 	EnsureGitignore(dir)
@@ -289,11 +237,9 @@ func TestEnsureGitignore_PartialExists(t *testing.T) {
 		t.Fatalf("read .gitignore: %v", err)
 	}
 	content := string(data)
-	// .mcp.json should appear exactly once (the original).
 	if strings.Count(content, ".mcp.json") != 1 {
 		t.Errorf(".mcp.json duplicated:\n%s", content)
 	}
-	// Other rules should be present.
 	for _, rule := range zpitIgnoreRules {
 		if !strings.Contains(content, rule) {
 			t.Errorf("missing rule: %s", rule)
@@ -303,7 +249,6 @@ func TestEnsureGitignore_PartialExists(t *testing.T) {
 
 func TestEnsureGitignore_AllExist(t *testing.T) {
 	dir := t.TempDir()
-	// Write all rules already.
 	var buf strings.Builder
 	buf.WriteString("# Zpit auto-deploy\n")
 	for _, rule := range zpitIgnoreRules {
@@ -322,16 +267,13 @@ func TestEnsureGitignore_AllExist(t *testing.T) {
 
 func TestEnsureGitignore_NoDuplicateHeader(t *testing.T) {
 	dir := t.TempDir()
-	// First deploy: creates header + all rules.
 	EnsureGitignore(dir)
 
-	// Simulate a future zpitIgnoreRules addition by removing one rule from .gitignore.
 	path := filepath.Join(dir, ".gitignore")
 	data, _ := os.ReadFile(path)
 	trimmed := strings.Replace(string(data), ".mcp.json\n", "", 1)
 	os.WriteFile(path, []byte(trimmed), 0o644)
 
-	// Second deploy: should add the missing rule without a second header.
 	EnsureGitignore(dir)
 
 	data, _ = os.ReadFile(path)
@@ -341,16 +283,6 @@ func TestEnsureGitignore_NoDuplicateHeader(t *testing.T) {
 	if !strings.Contains(string(data), ".mcp.json") {
 		t.Error("missing rule was not re-added")
 	}
-}
-
-func readSettingsLocal(t *testing.T, dir string) []byte {
-	t.Helper()
-	path := filepath.Join(dir, ".claude", "settings.local.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read settings.local.json: %v", err)
-	}
-	return data
 }
 
 func containsHook(data []byte, hookName string) bool {
@@ -374,10 +306,6 @@ func TestZpitIgnoreRules_ContainsAllDeployedArtifacts(t *testing.T) {
 	if !strings.Contains(rules, ".claude/settings.json") {
 		t.Error("settings.json missing from zpitIgnoreRules — committing it creates a latent fresh-clone bug because the hook commands it references live in gitignored dirs")
 	}
-	// settings.local.json is intentionally NOT in zpitIgnoreRules — that file is
-	// Claude Code's conventional local-override slot, and auto-appending it
-	// caused uncommitted .gitignore drift on every agent launch (see §5 of
-	// docs/known-issues.md).
 	if strings.Contains(rules, ".claude/settings.local.json") {
 		t.Error("settings.local.json should NOT be in zpitIgnoreRules — it causes user-project .gitignore drift on every launch")
 	}
@@ -385,6 +313,8 @@ func TestZpitIgnoreRules_ContainsAllDeployedArtifacts(t *testing.T) {
 		t.Error(".zpit-children/ missing from zpitIgnoreRules")
 	}
 }
+
+// --- CleanSettingsHooks tests ---
 
 func TestCleanSettingsHooks_RemovesHooksKey(t *testing.T) {
 	dir := t.TempDir()

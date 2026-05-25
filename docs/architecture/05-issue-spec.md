@@ -55,9 +55,15 @@ AC-2: ...
 ## REFERENCES
 <!-- 可選。相關的參考資料 -->
 
-## BRANCH
-<!-- 可選。指定 PR 的 target branch（覆蓋專案預設的 base_branch） -->
+## BASE_BRANCH
+<!-- 必填。Orchestrator worktree 從這個 branch fork。99% 案例與 PR_TARGET 相同。 -->
 dev
+
+## PR_TARGET
+<!-- 必填。PR 合併進這個 branch。99% 案例與 BASE_BRANCH 相同；少數場景（從 feature branch fork、PR 回 integration branch）才會不同。 -->
+dev
+
+<!-- 舊 issue 仍使用單一 `## BRANCH` 區段；parser 同時接受兩種寫法，舊寫法會在 Loop 啟動時印一次 deprecation warning（map 到 BASE_BRANCH=PR_TARGET）。 -->
 
 ## TASKS
 <!-- 可選。任務分解，用於大型 issue 的有序執行 -->

@@ -160,7 +160,7 @@ The `[e]` key opens a sub-menu for config editing:
 - `[2]` Edit channel_listen — multi-select list of other projects + `_global`
 - `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
 
-**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, `agent_models.*` (picked up on the next agent launch — already-running sessions keep their original model), per-project `channel_enabled/channel_listen/hook_mode/base_branch/log_policy`.
+**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, `agent_models.*` (picked up on the next agent launch — already-running sessions keep their original model), per-project `channel_enabled/channel_listen/base_branch/log_policy`.
 
 **Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
 
@@ -307,7 +307,9 @@ Note on terminology: zpit uses **regular Claude Code subagents** (the `subagent_
 
    Only enable `auto_merge` when you trust the reviewer model's quality on your repo — it removes the last line of defense before code lands on `dev`.
 
-Hook strictness per-project via `hook_mode`: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only).
+Every zpit-managed project and worktree receives the same complete hook set (`path-guard` + `bash-firewall` + `pwsh-firewall` + `git-guard` + `notify-permission` + `worktree-create`). There is no `hook_mode` knob — the prior strict/standard/relaxed distinction was removed because `ZPIT_AGENT=1` already prevents the hooks from affecting non-zpit Claude Code sessions, so per-project weakening provided no real flexibility, only footguns. Legacy `hook_mode = "..."` keys in `config.toml` are parsed and ignored with a one-time deprecation warning on startup.
+
+**Worktree dual-write (since the Issue #39 fix)**: `DeployHooksToWorktree` writes BOTH `.claude/settings.json` and `.claude/settings.local.json` into every worktree. Claude Code resolves project settings via `getSettingsRootPathForSource()` against process CWD, so a linked git worktree does NOT inherit settings from the main repo — without an explicit file in the worktree, the `WorktreeCreate` hook (and every other hook) silently misfires, which is the root cause of Issue #39's wrong-base subagent worktrees. Writing both files belt-and-suspenders the project layer (settings.json) and the local-override layer (settings.local.json) so a user-side override does not displace the zpit-managed hooks.
 
 **ZPIT_AGENT=1**: Hook scripts check this env var — if absent, they `exit 0` (allow everything). This ensures hooks only restrict Zpit-launched agents, not plain Claude Code sessions. On Windows, injected via `zpit-env.cmd` wrapper; on Unix, inline-prefixed to command.
 
@@ -330,7 +332,7 @@ Defaults: `coding` / `reviewer` / `clarifier` / `efficiency` = `opus[1m]`; `task
 ## Conventions
 
 - **Branch naming**: `feat/ISSUE-ID-slug` — Loop always uses `feat/` prefix; PR title classification (feat/fix) decided by agent
-- **Per-issue branch control**: Issue Spec `## BRANCH` specifies PR target branch (optional, falls back to project `base_branch`)
+- **Per-issue branch control**: Issue Spec carries two separate fields — `## BASE_BRANCH` (where the orchestrator's worktree forks from) and `## PR_TARGET` (where the PR merges into). Both fall back to project `base_branch` when empty; they are usually identical, and the split only matters in the asymmetric case (fork from feature branch, PR back to integration branch). The legacy single `## BRANCH` section is still accepted (maps to both fields and logs a deprecation warning) so historic issues resume cleanly.
 - **Git model**: `main` ← `dev` ← feature branches
 - **Commit messages**: `[ISSUE-ID] short description` is **only** for commits produced by the zpit agent workflow (Loop coding/reviewer slots, task-runner subagents). Manual/ad-hoc commits made outside the loop — including any commit you (Claude) make while assisting the user directly — must NOT carry an `[NNN]` prefix; use a plain conventional-commit style (`feat:`, `fix:`, `docs:`, `refactor:`, etc.) without the bracket. The `[ISSUE-ID]` tag is a workflow signal that links a commit back to a tracker issue handled by the Loop, not a generic prefix.
 - **Issue status flow**: pending_confirm → todo → in_progress → ai_review → waiting_review → needs_verify → done

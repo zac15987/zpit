@@ -22,12 +22,12 @@ var vagueWords = []string{"appropriate", "reasonable", "sufficient", "when neces
 
 // TaskEntry represents a single task line in the ## TASKS section.
 type TaskEntry struct {
-	ID           string   // e.g. "T1", "T2"
-	Description  string   // task description text
-	Parallel     bool     // true if [P] marker is present
-	Paths        []string // file paths extracted from [create], [modify], [delete] actions
-	DependsOn    []string // task IDs this task depends on; empty if (depends: none)
-	RelevantACs  []string // AC IDs this task implements, from optional `(covers: AC-N, AC-M)` suffix; nil if absent
+	ID          string   // e.g. "T1", "T2"
+	Description string   // task description text
+	Parallel    bool     // true if [P] marker is present
+	Paths       []string // file paths extracted from [create], [modify], [delete] actions
+	DependsOn   []string // task IDs this task depends on; empty if (depends: none)
+	RelevantACs []string // AC IDs this task implements, from optional `(covers: AC-N, AC-M)` suffix; nil if absent
 }
 
 // IssueSpec is the structured representation of an issue body.
@@ -37,11 +37,25 @@ type IssueSpec struct {
 	AcceptanceCriteria []string // individual "AC-N: ..." lines
 	Scope              []ScopeEntry
 	Constraints        string
-	References         string      // optional section
-	Branch             string      // optional: PR target branch (from ## BRANCH section)
-	Tasks              []TaskEntry // optional: task decomposition from ## TASKS section
-	DependsOn          []string    // optional: issue numbers this issue depends on (e.g. "42", "15")
-	CoordinatesWith    []string    // optional: parallel coordination targets (e.g. "42", "15")
+	References         string // optional section
+	// BaseBranch is the worktree fork base: the orchestrator's feat/<id>-<slug>
+	// branch is created from this branch's HEAD. Sourced from `## BASE_BRANCH`,
+	// or falls back to the legacy `## BRANCH` section, or — if both are absent
+	// — the project's default base_branch (resolved by the caller).
+	BaseBranch string
+	// PRTarget is the branch the reviewer/auto-merge points the PR at. Sourced
+	// from `## PR_TARGET`, falling back to legacy `## BRANCH`, then to project
+	// default base_branch. In ~99% of cases BaseBranch == PRTarget; the split
+	// only matters when a feature branch forks from another feature branch but
+	// PRs back to a shared integration branch.
+	PRTarget string
+	// LegacyBranch carries the value of `## BRANCH` for callers that want to
+	// surface a deprecation warning when only the legacy section is present.
+	// Empty when the new `## BASE_BRANCH` / `## PR_TARGET` sections are used.
+	LegacyBranch    string
+	Tasks           []TaskEntry // optional: task decomposition from ## TASKS section
+	DependsOn       []string    // optional: issue numbers this issue depends on (e.g. "42", "15")
+	CoordinatesWith []string    // optional: parallel coordination targets (e.g. "42", "15")
 }
 
 // ScopeEntry represents a single file scope line.
@@ -315,7 +329,20 @@ func ParseIssueSpec(body string) (*IssueSpec, error) {
 		Approach:    sections["APPROACH"],
 		Constraints: sections["CONSTRAINTS"],
 		References:  sections["REFERENCES"],
-		Branch:      sections["BRANCH"],
+	}
+
+	// Branch resolution (new fields take precedence; legacy `## BRANCH` is a
+	// back-compat fallback that maps to both BaseBranch and PRTarget).
+	spec.BaseBranch = sections["BASE_BRANCH"]
+	spec.PRTarget = sections["PR_TARGET"]
+	if legacy := sections["BRANCH"]; legacy != "" {
+		spec.LegacyBranch = legacy
+		if spec.BaseBranch == "" {
+			spec.BaseBranch = legacy
+		}
+		if spec.PRTarget == "" {
+			spec.PRTarget = legacy
+		}
 	}
 
 	// Parse AC entries

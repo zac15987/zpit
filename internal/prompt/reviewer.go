@@ -14,8 +14,18 @@ type ReviewerParams struct {
 	IssueTitle  string
 	Spec        *tracker.IssueSpec
 	LogPolicy   string // "strict" | "standard" | "minimal"
-	BaseBranch  string // e.g. "dev"
+	BaseBranch  string // worktree fork base — used for `git diff origin/<base>...HEAD` style commands
+	PRTarget    string // PR target branch — what the reviewer checks `--base` against. Falls back to BaseBranch when empty.
 	ReviewRound int    // 0 = first review, >0 = revision review
+}
+
+// prTarget returns the effective PR target branch, falling back to BaseBranch
+// when PRTarget is unset (back-compat with callers that have not been updated).
+func (p ReviewerParams) prTarget() string {
+	if p.PRTarget != "" {
+		return p.PRTarget
+	}
+	return p.BaseBranch
 }
 
 const reviewerTrackerNotes = `
@@ -97,7 +107,7 @@ func buildFirstReviewProcess(b *strings.Builder, p ReviewerParams) {
 12. Write the Review Report to both the PR comment and the issue comment
 13. If PASS, update issue label: remove "review", add "ai-review"
 14. If NEEDS CHANGES, update issue label: remove "review", add "needs-changes"
-`, p.BaseBranch, p.BaseBranch)
+`, p.BaseBranch, p.prTarget())
 
 	b.WriteString(reviewerTrackerNotes)
 }

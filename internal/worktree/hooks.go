@@ -23,9 +23,11 @@ type HookScripts struct {
 	WorktreeCreate   []byte // WorktreeCreate hook — forks child worktree from orchestrator HEAD for [P] parallel subagents
 }
 
-// Hook configuration JSON for each mode.
-
-const settingsStrict = `{
+// settingsTemplate is the canonical hook configuration written into every
+// zpit-managed project and worktree. Non-agent Claude Code sessions are
+// unaffected because each hook script short-circuits when ZPIT_AGENT is
+// unset.
+const settingsTemplate = `{
   "hooks": {
     "PreToolUse": [
       {
@@ -84,106 +86,6 @@ const settingsStrict = `{
     ]
   }
 }`
-
-const settingsStandard = `{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/path-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/git-guard.sh"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/notify-permission.sh"
-          }
-        ]
-      }
-    ],
-    "WorktreeCreate": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/worktree-create.sh",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  }
-}`
-
-const settingsRelaxed = `{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/git-guard.sh"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/notify-permission.sh"
-          }
-        ]
-      }
-    ],
-    "WorktreeCreate": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/worktree-create.sh",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  }
-}`
-
-// hookModeTemplates maps valid hook_mode values to their JSON template.
-var hookModeTemplates = map[string]string{
-	"strict":   settingsStrict,
-	"standard": settingsStandard,
-	"relaxed":  settingsRelaxed,
-}
-
-// validateHookMode returns an error if hookMode is not a recognized value.
-func validateHookMode(hookMode string) error {
-	if _, ok := hookModeTemplates[hookMode]; !ok {
-		return fmt.Errorf("unknown hook_mode: %s (expected strict|standard|relaxed)", hookMode)
-	}
-	return nil
-}
 
 // ZpitDeployedDirs lists the .claude/ subdirectories fully managed by Zpit.
 var ZpitDeployedDirs = []string{"agents", "docs", "hooks"}
@@ -267,50 +169,59 @@ func EnsureGitignore(projectPath string) {
 
 // DeployHooksToProject writes hook scripts to .claude/hooks/ and merges hook config
 // into the existing .claude/settings.json (preserving other keys like enabledPlugins).
-func DeployHooksToProject(targetPath, hookMode string, scripts HookScripts) error {
-	if err := validateHookMode(hookMode); err != nil {
-		return err
-	}
+func DeployHooksToProject(targetPath string, scripts HookScripts) error {
 	if err := deployHookScripts(targetPath, scripts); err != nil {
 		return fmt.Errorf("deploying hook scripts: %w", err)
 	}
-	return mergeSettingsHooks(targetPath, hookMode)
+	return mergeSettingsHooks(targetPath)
 }
 
-// DeployHooksToWorktree writes hook scripts to .claude/hooks/ and configures
-// .claude/settings.local.json overlay based on hookMode.
-// For "strict", no overlay is written (the worktree inherits the base settings.json).
-func DeployHooksToWorktree(targetPath, hookMode string, scripts HookScripts) error {
-	if err := validateHookMode(hookMode); err != nil {
-		return err
-	}
+// DeployHooksToWorktree writes hook scripts to .claude/hooks/ and writes BOTH
+// .claude/settings.json and .claude/settings.local.json into the worktree.
+//
+// Why both: Claude Code resolves project settings via
+// getSettingsRootPathForSource() (src/utils/settings/settings.ts:244-253),
+// which uses the process CWD. Linked git worktrees do NOT inherit settings
+// from the main repo — without an explicit file in the worktree, every hook
+// (path-guard, bash-firewall, pwsh-firewall, git-guard, notify-permission,
+// worktree-create) is silently disabled inside that worktree. Writing
+// settings.json covers the project layer; settings.local.json covers the
+// local-override layer so a user-side override file does not displace the
+// zpit-managed hooks.
+func DeployHooksToWorktree(targetPath string, scripts HookScripts) error {
 	if err := deployHookScripts(targetPath, scripts); err != nil {
 		return fmt.Errorf("deploying hook scripts: %w", err)
 	}
-	return setupHookMode(targetPath, hookMode)
-}
-
-// setupHookMode configures .claude/settings.local.json in the worktree.
-// For "strict", no overlay is written. hookMode is assumed already validated.
-func setupHookMode(worktreePath, hookMode string) error {
-	if hookMode == "strict" {
-		return nil
+	if err := writeSettings(targetPath, settingsTemplate); err != nil {
+		return err
 	}
-	return writeSettingsLocal(worktreePath, hookModeTemplates[hookMode])
+	return writeSettingsLocal(targetPath, settingsTemplate)
 }
 
+// writeSettings writes .claude/settings.json with the given content,
+// no-op if the file already matches.
+func writeSettings(worktreePath, content string) error {
+	return writeClaudeJSON(worktreePath, "settings.json", content)
+}
+
+// writeSettingsLocal writes .claude/settings.local.json with the given content,
+// no-op if the file already matches.
 func writeSettingsLocal(worktreePath, content string) error {
+	return writeClaudeJSON(worktreePath, "settings.local.json", content)
+}
+
+func writeClaudeJSON(worktreePath, filename, content string) error {
 	claudeDir := filepath.Join(worktreePath, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		return fmt.Errorf("creating .claude dir: %w", err)
 	}
-	path := filepath.Join(claudeDir, "settings.local.json")
+	path := filepath.Join(claudeDir, filename)
 	existing, _ := os.ReadFile(path)
 	if bytes.Equal(existing, []byte(content)) {
 		return nil
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("writing settings.local.json: %w", err)
+		return fmt.Errorf("writing %s: %w", filename, err)
 	}
 	return nil
 }
@@ -343,9 +254,9 @@ func deployHookScripts(targetPath string, scripts HookScripts) error {
 }
 
 // mergeSettingsHooks reads existing .claude/settings.json, sets the "hooks" key
-// based on hookMode, and writes back. Preserves all other existing keys.
-// hookMode is assumed already validated.
-func mergeSettingsHooks(targetPath, hookMode string) error {
+// from settingsTemplate, and writes back. Preserves all other existing keys
+// (enabledPlugins, etc.) so user-managed settings survive zpit redeploys.
+func mergeSettingsHooks(targetPath string) error {
 	claudeDir := filepath.Join(targetPath, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		return fmt.Errorf("creating .claude dir: %w", err)
@@ -363,9 +274,9 @@ func mergeSettingsHooks(targetPath, hookMode string) error {
 		settings = make(map[string]interface{})
 	}
 
-	// Extract "hooks" value from the mode template.
+	// Extract "hooks" value from the template.
 	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(hookModeTemplates[hookMode]), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(settingsTemplate), &parsed); err != nil {
 		return fmt.Errorf("parsing hook template: %w", err)
 	}
 	settings["hooks"] = parsed["hooks"]

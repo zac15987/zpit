@@ -70,9 +70,6 @@ func TestLoad(t *testing.T) {
 	if first.Profile != "machine" {
 		t.Errorf("Projects[0].Profile = %q", first.Profile)
 	}
-	if first.HookMode != "strict" {
-		t.Errorf("Projects[0].HookMode = %q", first.HookMode)
-	}
 	if len(first.Tags) != 3 {
 		t.Errorf("Projects[0].Tags = %v", first.Tags)
 	}
@@ -329,4 +326,40 @@ func TestDefaultConfigPath(t *testing.T) {
 	if path == "" {
 		t.Error("DefaultConfigPath returned empty string")
 	}
+}
+
+func TestDeprecationWarnings_HookMode(t *testing.T) {
+	cfg := &Config{
+		Projects: []ProjectConfig{
+			{Name: "alpha", HookModeDeprecated: "strict"},
+			{ID: "beta", HookModeDeprecated: "relaxed"},
+			{Name: "gamma"}, // no hook_mode, should not produce a warning
+		},
+	}
+	msgs := cfg.DeprecationWarnings()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 warnings, got %d: %v", len(msgs), msgs)
+	}
+	if !containsAll(msgs[0], "alpha", "hook_mode", "strict") {
+		t.Errorf("first warning missing fields: %q", msgs[0])
+	}
+	if !containsAll(msgs[1], "beta", "hook_mode", "relaxed") {
+		t.Errorf("second warning missing fields: %q", msgs[1])
+	}
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, p := range parts {
+		found := false
+		for i := 0; i+len(p) <= len(s); i++ {
+			if s[i:i+len(p)] == p {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

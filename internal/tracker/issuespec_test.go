@@ -220,35 +220,66 @@ func TestParseScopeEntry_MalformedLine(t *testing.T) {
 	}
 }
 
-func TestParseIssueSpec_BranchSection(t *testing.T) {
+// fullIssueBody uses the legacy `## BRANCH` section so this test verifies the
+// back-compat mapping: legacy ## BRANCH -> BaseBranch + PRTarget + LegacyBranch.
+func TestParseIssueSpec_LegacyBranchSection(t *testing.T) {
 	spec, err := ParseIssueSpec(fullIssueBody)
 	if err != nil {
 		t.Fatalf("ParseIssueSpec failed: %v", err)
 	}
-	if spec.Branch != "dev" {
-		t.Errorf("Branch = %q, want %q", spec.Branch, "dev")
+	if spec.LegacyBranch != "dev" {
+		t.Errorf("LegacyBranch = %q, want %q", spec.LegacyBranch, "dev")
+	}
+	if spec.BaseBranch != "dev" {
+		t.Errorf("BaseBranch = %q, want %q (legacy ## BRANCH should map here)", spec.BaseBranch, "dev")
+	}
+	if spec.PRTarget != "dev" {
+		t.Errorf("PRTarget = %q, want %q (legacy ## BRANCH should map here)", spec.PRTarget, "dev")
 	}
 }
 
-func TestParseIssueSpec_BranchEmpty(t *testing.T) {
+func TestParseIssueSpec_NoBranchSections(t *testing.T) {
 	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] f.go (reason)\n\n## CONSTRAINTS\nnone\n"
 	spec, err := ParseIssueSpec(body)
 	if err != nil {
 		t.Fatalf("ParseIssueSpec failed: %v", err)
 	}
-	if spec.Branch != "" {
-		t.Errorf("expected empty branch when ## BRANCH absent, got %q", spec.Branch)
+	if spec.BaseBranch != "" || spec.PRTarget != "" || spec.LegacyBranch != "" {
+		t.Errorf("expected all branch fields empty when no section present; got base=%q pr=%q legacy=%q", spec.BaseBranch, spec.PRTarget, spec.LegacyBranch)
 	}
 }
 
-func TestParseIssueSpec_BranchCustom(t *testing.T) {
-	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] f.go (reason)\n\n## CONSTRAINTS\nnone\n\n## BRANCH\nmain\n"
+func TestParseIssueSpec_NewBranchFields_BothPresent(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] f.go (reason)\n\n## CONSTRAINTS\nnone\n\n## BASE_BRANCH\nfeat/foo\n\n## PR_TARGET\ndev\n"
 	spec, err := ParseIssueSpec(body)
 	if err != nil {
 		t.Fatalf("ParseIssueSpec failed: %v", err)
 	}
-	if spec.Branch != "main" {
-		t.Errorf("Branch = %q, want %q", spec.Branch, "main")
+	if spec.BaseBranch != "feat/foo" {
+		t.Errorf("BaseBranch = %q, want feat/foo", spec.BaseBranch)
+	}
+	if spec.PRTarget != "dev" {
+		t.Errorf("PRTarget = %q, want dev", spec.PRTarget)
+	}
+	if spec.LegacyBranch != "" {
+		t.Errorf("LegacyBranch should be empty when new fields are used, got %q", spec.LegacyBranch)
+	}
+}
+
+func TestParseIssueSpec_NewBranchFields_TakePrecedenceOverLegacy(t *testing.T) {
+	body := "## CONTEXT\nctx\n\n## APPROACH\napproach\n\n## ACCEPTANCE_CRITERIA\nAC-1: test\n\n## SCOPE\n[modify] f.go (reason)\n\n## CONSTRAINTS\nnone\n\n## BRANCH\nlegacy-value\n\n## BASE_BRANCH\nfeat/foo\n\n## PR_TARGET\ndev\n"
+	spec, err := ParseIssueSpec(body)
+	if err != nil {
+		t.Fatalf("ParseIssueSpec failed: %v", err)
+	}
+	if spec.BaseBranch != "feat/foo" {
+		t.Errorf("new BASE_BRANCH should win over legacy: got %q", spec.BaseBranch)
+	}
+	if spec.PRTarget != "dev" {
+		t.Errorf("new PR_TARGET should win over legacy: got %q", spec.PRTarget)
+	}
+	if spec.LegacyBranch != "legacy-value" {
+		t.Errorf("LegacyBranch should still be surfaced for deprecation warning: got %q", spec.LegacyBranch)
 	}
 }
 

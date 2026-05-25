@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# setup-hooks.sh — Deploy hooks, docs, and settings.json to a project's .claude/ directory
-# Usage: ./scripts/setup-hooks.sh <project-path> [hook_mode]
-# hook_mode: strict (default) | standard | relaxed
+# setup-hooks.sh — Manual fallback for deploying zpit hooks, docs, and settings
+# to a project's .claude/ directory. The normal path is `zpit` itself, which
+# embeds these files via go:embed and deploys them on every agent launch.
+# Use this script only when the binary isn't available (e.g. CI smoke tests,
+# manual repro of Issue #39 worktree settings).
+#
+# Usage: ./scripts/setup-hooks.sh <project-path>
 
-PROJECT_DIR="${1:?Usage: setup-hooks.sh <project-path> [hook_mode]}"
-HOOK_MODE="${2:-strict}"
+PROJECT_DIR="${1:?Usage: setup-hooks.sh <project-path>}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -18,13 +21,15 @@ HOOKS_DST="$CLAUDE_DIR/hooks"
 DOCS_DST="$CLAUDE_DIR/docs"
 
 echo "Setting up .claude/ for: $PROJECT_DIR"
-echo "Hook mode: $HOOK_MODE"
 
-# Copy hook scripts
+# Copy hook scripts (the full set; per-project hook_mode is no longer supported)
 mkdir -p "$HOOKS_DST"
-cp "$HOOKS_SRC/path-guard.sh" "$HOOKS_DST/"
-cp "$HOOKS_SRC/bash-firewall.sh" "$HOOKS_DST/"
-cp "$HOOKS_SRC/git-guard.sh" "$HOOKS_DST/"
+cp "$HOOKS_SRC/path-guard.sh"        "$HOOKS_DST/"
+cp "$HOOKS_SRC/bash-firewall.sh"     "$HOOKS_DST/"
+cp "$HOOKS_SRC/pwsh-firewall.sh"     "$HOOKS_DST/"
+cp "$HOOKS_SRC/git-guard.sh"         "$HOOKS_DST/"
+cp "$HOOKS_SRC/notify-permission.sh" "$HOOKS_DST/"
+cp "$HOOKS_SRC/worktree-create.sh"   "$HOOKS_DST/"
 chmod +x "$HOOKS_DST"/*.sh
 echo "Hooks copied to $HOOKS_DST"
 
@@ -43,14 +48,10 @@ if [ -d "$AGENTS_SRC" ]; then
     echo "Agents copied to $AGENTS_DST"
 fi
 
-# Generate settings.json based on hook_mode
-generate_settings() {
-    local mode="$1"
-    local file="$2"
-
-    case "$mode" in
-        strict)
-            cat > "$file" << 'SETTINGS'
+# Generate the canonical settings template (matches internal/worktree/hooks.go
+# settingsTemplate). The same content is written to both settings.json and
+# settings.local.json — see hooks.go DeployHooksToWorktree for the rationale.
+SETTINGS_CONTENT=$(cat << 'SETTINGS'
 {
   "hooks": {
     "PreToolUse": [
@@ -75,51 +76,35 @@ generate_settings() {
             "command": ".claude/hooks/git-guard.sh"
           }
         ]
-      }
-    ]
-  }
-}
-SETTINGS
-            ;;
-        standard)
-            cat > "$file" << 'SETTINGS'
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/path-guard.sh"
-          }
-        ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/git-guard.sh"
+            "command": ".claude/hooks/pwsh-firewall.sh"
           }
         ]
       }
-    ]
-  }
-}
-SETTINGS
-            ;;
-        relaxed)
-            cat > "$file" << 'SETTINGS'
-{
-  "hooks": {
-    "PreToolUse": [
+    ],
+    "Notification": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/git-guard.sh"
+            "command": ".claude/hooks/notify-permission.sh"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/worktree-create.sh",
+            "timeout": 30
           }
         ]
       }
@@ -127,22 +112,11 @@ SETTINGS
   }
 }
 SETTINGS
-            ;;
-        *)
-            echo "Unknown hook_mode: $mode (expected strict|standard|relaxed)" >&2
-            exit 1
-            ;;
-    esac
-}
+)
 
-# Always generate the base settings.json as strict
-generate_settings "strict" "$CLAUDE_DIR/settings.json"
-echo "Generated $CLAUDE_DIR/settings.json (strict)"
-
-# If mode is not strict, generate settings.local.json as overlay
-if [ "$HOOK_MODE" != "strict" ]; then
-    generate_settings "$HOOK_MODE" "$CLAUDE_DIR/settings.local.json"
-    echo "Generated $CLAUDE_DIR/settings.local.json ($HOOK_MODE)"
-fi
+printf '%s\n' "$SETTINGS_CONTENT" > "$CLAUDE_DIR/settings.json"
+echo "Generated $CLAUDE_DIR/settings.json"
+printf '%s\n' "$SETTINGS_CONTENT" > "$CLAUDE_DIR/settings.local.json"
+echo "Generated $CLAUDE_DIR/settings.local.json"
 
 echo "Done! Hook setup complete for $PROJECT_DIR"

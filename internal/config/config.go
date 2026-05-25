@@ -110,22 +110,26 @@ type ProviderEntry struct {
 }
 
 type ProjectConfig struct {
-	Name           string            `toml:"name"`
-	ID             string            `toml:"id"`
-	Profile        string            `toml:"profile"`
-	HookMode       string            `toml:"hook_mode"`
-	Tracker        string            `toml:"tracker"`
-	TrackerProject string            `toml:"tracker_project"`
-	Git            string            `toml:"git"`
-	Repo           string            `toml:"repo"`
-	LogPolicy      string            `toml:"log_policy"` // "strict" | "standard" | "minimal"
-	BaseBranch     string            `toml:"base_branch"`
-	ChannelEnabled bool              `toml:"channel_enabled"`
-	ChannelListen  []string          `toml:"channel_listen"`
-	Tags           []string          `toml:"tags"`
-	Path           ProjectPathConfig `toml:"path"`
-	AutoMerge      bool              `toml:"auto_merge"`
-	MergeMethod    string            `toml:"merge_method"`
+	Name    string `toml:"name"`
+	ID      string `toml:"id"`
+	Profile string `toml:"profile"`
+	// HookModeDeprecated captures legacy `hook_mode` values from older configs so
+	// we can log a one-time deprecation warning on Load. The field is intentionally
+	// not consumed elsewhere — every zpit-managed project/worktree now receives the
+	// same complete hook set (see internal/worktree/hooks.go settingsTemplate).
+	HookModeDeprecated string            `toml:"hook_mode"`
+	Tracker            string            `toml:"tracker"`
+	TrackerProject     string            `toml:"tracker_project"`
+	Git                string            `toml:"git"`
+	Repo               string            `toml:"repo"`
+	LogPolicy          string            `toml:"log_policy"` // "strict" | "standard" | "minimal"
+	BaseBranch         string            `toml:"base_branch"`
+	ChannelEnabled     bool              `toml:"channel_enabled"`
+	ChannelListen      []string          `toml:"channel_listen"`
+	Tags               []string          `toml:"tags"`
+	Path               ProjectPathConfig `toml:"path"`
+	AutoMerge          bool              `toml:"auto_merge"`
+	MergeMethod        string            `toml:"merge_method"`
 }
 
 type ProjectPathConfig struct {
@@ -227,7 +231,6 @@ desktop = "sonnet[1m]"      # desktop-control agent (window/keyboard/mouse) — 
 # name = "My Project"
 # id = "my-project"
 # profile = "machine"       # display tag: machine | desktop | web | android | terminal (for TUI icon)
-# hook_mode = "standard"    # strict | standard | relaxed
 # log_policy = "standard"   # strict | standard | minimal
 # tracker = "my-github"
 # repo = "owner/repo"
@@ -259,6 +262,26 @@ func Load(path string) (*Config, error) {
 	}
 	applyDefaults(&cfg)
 	return &cfg, nil
+}
+
+// DeprecationWarnings returns human-readable messages describing legacy config
+// fields that are still parsed for back-compat but no longer have any effect.
+// Callers should log these once at startup so the user can clean up the file.
+func (c *Config) DeprecationWarnings() []string {
+	var msgs []string
+	for _, p := range c.Projects {
+		if p.HookModeDeprecated != "" {
+			name := p.Name
+			if name == "" {
+				name = p.ID
+			}
+			msgs = append(msgs, fmt.Sprintf(
+				"project %q: 'hook_mode = %q' is deprecated and ignored; the field can be removed (every project now uses the same full hook set)",
+				name, p.HookModeDeprecated,
+			))
+		}
+	}
+	return msgs
 }
 
 // ResolveSSHPaths expands ~ in SSH config paths to the user's home directory.
@@ -368,8 +391,8 @@ func projectsChannelEqual(a, b []ProjectConfig) bool {
 	return true
 }
 
-// projectsMetaEqual checks if hook_mode, base_branch, log_policy, auto_merge,
-// and merge_method are identical across matching projects.
+// projectsMetaEqual checks if base_branch, log_policy, auto_merge, and
+// merge_method are identical across matching projects.
 func projectsMetaEqual(a, b []ProjectConfig) bool {
 	am := projectMap(a)
 	bm := projectMap(b)
@@ -378,8 +401,7 @@ func projectsMetaEqual(a, b []ProjectConfig) bool {
 		if !ok {
 			continue
 		}
-		if ap.HookMode != bp.HookMode ||
-			ap.BaseBranch != bp.BaseBranch ||
+		if ap.BaseBranch != bp.BaseBranch ||
 			ap.LogPolicy != bp.LogPolicy ||
 			ap.AutoMerge != bp.AutoMerge ||
 			ap.MergeMethod != bp.MergeMethod {
@@ -519,9 +541,6 @@ func applyDefaults(cfg *Config) {
 	for i := range cfg.Projects {
 		if cfg.Projects[i].BaseBranch == "" {
 			cfg.Projects[i].BaseBranch = defaultBaseBranch
-		}
-		if cfg.Projects[i].HookMode == "" {
-			cfg.Projects[i].HookMode = "strict"
 		}
 		if cfg.Projects[i].LogPolicy == "" {
 			cfg.Projects[i].LogPolicy = "standard"

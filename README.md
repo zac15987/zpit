@@ -244,7 +244,6 @@ token_env = "FORGEJO_TOKEN"
 name = "My Project"
 id = "my-project"
 profile = "machine"         # display tag: machine | desktop | web | android | terminal (for TUI icon)
-hook_mode = "strict"        # strict | standard | relaxed
 log_policy = "standard"     # strict | standard | minimal — agent logging strictness
 tracker = "my-forgejo"
 # tracker_project = "My_Project"  # tracker project name if different from repo
@@ -332,7 +331,7 @@ Zpit enforces 5 layers of safety to prevent agents from causing damage:
 **Notification hook:**
 - `notify-permission.sh` — writes signal file when Claude Code needs tool permission approval; TUI detects and shows 🟠 status + toast notification
 
-Hook strictness is per-project: `strict` (all hooks), `standard` (path-guard + git-guard), `relaxed` (git-guard only). Notification hook is always active in all modes.
+Every zpit-managed project and worktree receives the same complete hook set (path-guard + bash-firewall + pwsh-firewall + git-guard + notify-permission + worktree-create). The earlier `strict` / `standard` / `relaxed` `hook_mode` knob was removed; `ZPIT_AGENT=1` already prevents the hooks from affecting non-zpit Claude Code sessions, so per-project weakening provided no real flexibility. Legacy `hook_mode = "..."` keys in `config.toml` are parsed and ignored with a one-time deprecation warning on startup.
 
 ## Issue Spec Format
 
@@ -356,8 +355,11 @@ AC-2: ...
 ## CONSTRAINTS
 [Hard limits]
 
-## BRANCH
-[Optional: PR target branch, defaults to project base_branch]
+## BASE_BRANCH
+[Required: branch the orchestrator's worktree forks from; defaults to project base_branch]
+
+## PR_TARGET
+[Required: branch the PR merges into; defaults to project base_branch. Same as BASE_BRANCH in ~99% of cases — split is for the rare asymmetric scenario (fork from feature branch, PR back to integration branch). Legacy ## BRANCH section is still accepted and maps to both fields with a deprecation warning.]
 
 ## TASKS
 [Optional: Task decomposition — triggers subagent delegation]

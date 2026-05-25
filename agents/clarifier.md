@@ -193,9 +193,14 @@ All channel messages in meeting mode MUST use these formats:
    it must state so explicitly in the APPROACH section with justification. Flag any deviation to the user
    before proceeding.
 8. **Confirm branch strategy**: Read the "Branch Strategy" section in `.claude/docs/tracker.md`
-   to get the project's default base branch. Ask the user: "Which branch should this issue branch off from? Where should the PR merge into?
-   (Default: {base branch from tracker.md})"
-   If the user specifies a different branch, note it and write it into `## BRANCH`.
+   to get the project's default base branch. Ask the user two questions:
+   - "Which branch should this issue branch off from? (Default: {base branch from tracker.md})" → this becomes `## BASE_BRANCH`.
+   - "Which branch should the PR merge into? (Default: same as above)" → this becomes `## PR_TARGET`.
+   Both fields MUST be written into the Issue Spec, even when they are identical (which is the 99% case).
+   The two-field design exists so the rare asymmetric scenario — forking from a feature branch but PRing back to a
+   shared integration branch — is expressible without an inline note.
+   Do NOT emit the legacy single `## BRANCH` section; zpit still parses it for back-compat but logs a deprecation
+   warning on every loop run.
 9. Ask the user clarifying questions (one question at a time)
 10. After the user responds, if anything remains unclear, continue asking
 11. **Keep confirming until the user explicitly says "OK" or "go ahead"**
@@ -368,8 +373,11 @@ AC-N+1: [If hardware/physical verification is needed, describe the verification 
 ## CONSTRAINTS
 [Hard constraints, or "No additional constraints — follow CLAUDE.md"]
 
-## BRANCH
-[PR target branch (optional — omit to use the project default)]
+## BASE_BRANCH
+[Branch that the worktree forks from. Required. Defaults to the project's base branch (resolved from .claude/docs/tracker.md) unless the user asked for something else.]
+
+## PR_TARGET
+[Branch that the PR merges into. Required. Same as BASE_BRANCH in ~99% of cases; differs only when forking from a feature branch but PRing back to a shared integration branch.]
 
 ## DEPENDS_ON
 #N
@@ -514,8 +522,12 @@ Workflow step 15n will auto-append this clause when the pattern is detected — 
 - **If the approach is based on information you found, include the reference source URLs in REFERENCES**
 - **No project file modification: You must not modify any project source files.
   The Write tool is only permitted for tracker operation temp files (e.g. `./tmp_issue_body.md`) — write to the working directory, use it, then delete it immediately.**
-- **Branch strategy: If the user doesn't specify a particular branch, don't add the `## BRANCH` section
-  (the Loop engine will use the project's default base branch). Only add it when the user explicitly specifies a different branch.**
+- **Branch strategy**: Always emit both `## BASE_BRANCH` and `## PR_TARGET`, even when the user did
+  not specify anything (in which case both take the project's default base branch). The two-field design
+  exists so the rare asymmetric scenario (fork from feature branch, PR back to integration branch) is
+  expressible without an inline note; the explicit duplication is the price. Do NOT emit the legacy
+  single `## BRANCH` section — zpit still parses it for back-compat but logs a deprecation warning on
+  every loop run.
 - **Orphan responsibility**: when SCOPE contains `[delete]` entries, the clarifier is
   responsible for detecting orphan files (reverse-reference, package stubs) and surfacing
   pre-existing cleanup debts flagged in CLAUDE.md. Missing an orphan means the Issue ships

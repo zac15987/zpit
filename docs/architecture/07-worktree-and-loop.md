@@ -36,13 +36,15 @@ Issue 進入 In Progress
     │
     ├─ 1. 從 base branch 建立 feature branch（統一 feat/ 前綴）
     │     git branch feat/ISSUE-ID-slug {base_branch}
-    │     base branch 來源：Issue Spec ## BRANCH > project config base_branch
+    │     base branch 來源：Issue Spec ## BASE_BRANCH（或舊 ## BRANCH 回退）> project config base_branch
+    │     PR target 來源：Issue Spec ## PR_TARGET（或舊 ## BRANCH 回退）> project config base_branch
     │
     ├─ 2. 建立 worktree
     │     git worktree add <worktree-path> feat/ISSUE-ID-slug
     │
     ├─ 3. 部署 hooks + agents + docs 到 worktree
-    │     DeployHooksToWorktree() → .claude/hooks/ + settings.local.json
+    │     DeployHooksToWorktree() → .claude/hooks/ + settings.json + settings.local.json
+    │     （雙寫；CC 不會從主 repo 繼承 settings，所以兩份都要在 worktree 內顯式存在）
     │
     ├─ 4. 在新終端中啟動 Claude Code（可見，使用者可隨時介入）
     │     工作目錄 = worktree 路徑（path override）
@@ -112,10 +114,12 @@ TUI 按 [l]
 │  │    如果 >= max_per_project → 等待                      │
 │  │                                                        │
 │  │ 3. Zpit 建立 branch + worktree + 部署 hooks           │
-│  │    base branch = Issue Spec ## BRANCH || config        │
+│  │    base = Issue Spec ## BASE_BRANCH (或舊 BRANCH) ||   │
+│  │           project config base_branch                    │
 │  │    git branch feat/ISSUE-ID-slug {base_branch}         │
 │  │    git worktree add <path> feat/ISSUE-ID-slug          │
-│  │    DeployHooksToWorktree() 配置 settings               │
+│  │    DeployHooksToWorktree() 寫 settings.json +          │
+│  │      settings.local.json 兩份到 worktree              │
 │  │                                                        │
 │  │ 4. 寫入臨時 agent 檔案到 worktree                      │
 │  │    .claude/agents/coding-{issue-id}.md                 │

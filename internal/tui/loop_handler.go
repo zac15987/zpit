@@ -94,15 +94,29 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			break // at capacity
 		}
 
-		// Resolve effective base branch: Issue Spec > project config.
-		effectiveBranch := project.BaseBranch
-		if spec, err := tracker.ParseIssueSpec(issue.Body); err == nil && spec.Branch != "" {
-			effectiveBranch = spec.Branch
+		// Resolve effective base branch and PR target separately. Each falls
+		// back to the project's default base_branch when the Issue Spec leaves
+		// the field empty. If the spec carries only the legacy `## BRANCH`
+		// section, ParseIssueSpec already mirrored it into BaseBranch+PRTarget,
+		// and we log a one-time deprecation note for the issue.
+		effectiveBase := project.BaseBranch
+		effectivePRTarget := project.BaseBranch
+		if spec, err := tracker.ParseIssueSpec(issue.Body); err == nil {
+			if spec.BaseBranch != "" {
+				effectiveBase = spec.BaseBranch
+			}
+			if spec.PRTarget != "" {
+				effectivePRTarget = spec.PRTarget
+			}
+			if spec.LegacyBranch != "" {
+				m.state.logger.Printf("loop: issue #%s uses deprecated `## BRANCH = %s`; please migrate to `## BASE_BRANCH` + `## PR_TARGET`", issue.ID, spec.LegacyBranch)
+			}
 		}
 
 		// Check if a worktree already exists for this issue (resumed from previous session).
 		if slot := findLoopSlotFromWorktree(msg.ProjectID, issue, existingWorktrees); slot != nil {
-			slot.BaseBranch = effectiveBranch
+			slot.BaseBranch = effectiveBase
+			slot.PRTarget = effectivePRTarget
 			ls.Slots[key] = slot
 			m.state.logger.Printf("loop: resume #%s from existing worktree (branch=%s)", issue.ID, slot.BranchName)
 			actions = append(actions, slotAction{issueID: issue.ID, isResume: true})
@@ -113,7 +127,8 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			ProjectID:  msg.ProjectID,
 			IssueID:    issue.ID,
 			IssueTitle: issue.Title,
-			BaseBranch: effectiveBranch,
+			BaseBranch: effectiveBase,
+			PRTarget:   effectivePRTarget,
 			State:      loop.SlotCreatingWorktree,
 		}
 		ls.Slots[key] = slot

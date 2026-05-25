@@ -200,7 +200,6 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	slug := worktree.Slugify(issueTitle, 40)
 	branchName := fmt.Sprintf("feat/%s-%s", issueID, slug)
 	mgr := m.state.wtManager
-	hookMode := project.HookMode
 	hookScripts := m.state.hookScripts
 	channelEnabled := project.ChannelEnabled
 	channelListen := project.ChannelListen
@@ -224,7 +223,7 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
 		worktree.EnsureGitignore(wtPath)
-		if err := worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts); err != nil {
+		if err := worktree.DeployHooksToWorktree(wtPath, hookScripts); err != nil {
 			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
 		}
 
@@ -315,6 +314,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	wtPath := slot.WorktreePath
 	baseBranch := slot.BaseBranch
+	prTarget := slot.PRTarget
 	m.state.RUnlock()
 
 	client, ok := m.state.clients[project.Tracker]
@@ -334,14 +334,13 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	taskRunnerMD := m.state.taskRunnerMD
 	taskRunnerModel := m.state.cfg.AgentModels.TaskRunner
 	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
 	channelEnabled := project.ChannelEnabled
 	logger := m.state.logger
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + gitignore exist (handles resume from previous session)
 		worktree.EnsureGitignore(wtPath)
-		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
+		_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -368,6 +367,7 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 			Spec:           spec,
 			LogPolicy:      logPolicy,
 			BaseBranch:     baseBranch,
+			PRTarget:       prTarget,
 			ChannelEnabled: channelEnabled,
 		})
 
@@ -470,6 +470,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	}
 	wtPath := slot.WorktreePath
 	baseBranch := slot.BaseBranch
+	prTarget := slot.PRTarget
 	reviewRound := slot.ReviewRound
 	m.state.RUnlock()
 
@@ -491,7 +492,6 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	zpitBin := m.state.cfg.ZpitBin
 	logger := m.state.logger
 	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	reviewerDisallowed := prompt.FrontmatterField(m.state.reviewerMD, "disallowedTools")
@@ -503,7 +503,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + docs + gitignore exist
 		worktree.EnsureGitignore(wtPath)
-		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
+		_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
 		// Rewrite .mcp.json with reviewer agent type so SSE connection registers as "reviewer"
@@ -536,6 +536,7 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 			Spec:        spec,
 			LogPolicy:   logPolicy,
 			BaseBranch:  baseBranch,
+			PRTarget:    prTarget,
 			ReviewRound: reviewRound,
 		})
 
@@ -856,20 +857,20 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	}
 	wtPath := slot.WorktreePath
 	baseBranch := slot.BaseBranch
+	prTarget := slot.PRTarget
 	reviewRound := slot.ReviewRound
 	m.state.RUnlock()
 
 	repo := project.Repo
 	logPolicy := project.LogPolicy
 	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + docs + gitignore exist
 		worktree.EnsureGitignore(wtPath)
-		_ = worktree.DeployHooksToWorktree(wtPath, hookMode, hookScripts)
+		_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
 		deployDocs(wtPath, "", agentGuidelines, codeConstructionPrinciples)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -891,6 +892,7 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 			Spec:        spec,
 			LogPolicy:   logPolicy,
 			BaseBranch:  baseBranch,
+			PRTarget:    prTarget,
 			ReviewRound: reviewRound,
 		})
 

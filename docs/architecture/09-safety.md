@@ -96,9 +96,9 @@ Hook 腳本檢查 `ZPIT_AGENT` 環境變數 — 若不存在，直接 `exit 0`�
 Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[r]`/`[l]`）或 redeploy（`[d]`）時自動部署。
 
 **部署機制（`internal/worktree/hooks.go`）：**
-- Hook 配置以 Go 常數定義（`settingsStrict`、`settingsStandard`、`settingsRelaxed`）
-- `DeployHooksToProject()` — 部署到主 repo：寫入 hook 腳本 + 合併 hook 配置到 `.claude/settings.json`（保留既有的 `enabledPlugins` 等設定）
-- `DeployHooksToWorktree()` — 部署到 worktree：寫入 hook 腳本 + 根據 hookMode 寫 `.claude/settings.local.json`（strict 模式不寫 overlay，繼承主 repo 設定）
+- Hook 配置以單一 Go 常數定義（`settingsTemplate`，內容為完整 hook set）。歷史上曾有 `strict` / `standard` / `relaxed` 三個 mode template，Issue #39 的 worktree settings inheritance bug 暴露之後合併為單一模板，per-project `hook_mode` 欄位停用。
+- `DeployHooksToProject()` — 部署到主 repo：寫入 hook 腳本 + 合併 hook 配置到 `.claude/settings.json`（保留既有的 `enabledPlugins` 等設定）。
+- `DeployHooksToWorktree()` — 部署到 worktree：寫入 hook 腳本 + **同時寫入 `.claude/settings.json` 與 `.claude/settings.local.json` 兩份**（內容相同，都是 `settingsTemplate`）。雙寫的理由：Claude Code 的 `getSettingsRootPathForSource()` 用 process CWD 解析 project settings root，linked git worktree **不會** 繼承主 repo 的 `.claude/settings.json`。沒有顯式寫入 worktree 等於 `WorktreeCreate` / `path-guard` / `bash-firewall` 等 hooks 全部失效（Issue #39 root cause）。`settings.json` 覆蓋 project 層、`settings.local.json` 覆蓋 local-override 層，使用者後續加自己的 override 也不會把 zpit 的 hooks 推開。
 
 ### 9.4.2 settings.json — Hook 註冊格式
 
@@ -208,20 +208,15 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
 
 ---
 
-## 9.5 Hook 防護等級 (Per Project)
+## 9.5 Hook 防護等級
 
-```toml
-[[projects]]
-hook_mode = "strict"   # strict | standard | relaxed
-```
+歷史上曾有 `strict` / `standard` / `relaxed` 三段 per-project `hook_mode`，Issue #39 修正後合併為**單一固定 hook set**：
 
-| 等級 | path-guard | bash-firewall | pwsh-firewall | git-guard | notify-permission |
-|------|-----------|---------------|---------------|-----------|-------------------|
-| strict | ✓ | ✓ | ✓ | ✓ | ✓ |
-| standard | ✓ | — | — | ✓ | ✓ |
-| relaxed | — | — | — | ✓ | ✓ |
+| path-guard | bash-firewall | pwsh-firewall | git-guard | notify-permission | worktree-create |
+|-----------|---------------|---------------|-----------|-------------------|-----------------|
+| ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-建議：機台專案用 strict，桌面工具用 standard，個人網頁用 relaxed。
+合併理由：`ZPIT_AGENT=1` env guard 已經處理「非 zpit Claude Code session 不受 hook 影響」這個分流；per-project 弱化 hook 沒有實際安全價值（agent 跑飛時你要的是更多閘、不是更少），多模式設計反而是 footgun。舊 `hook_mode = "..."` 設定在 config.toml 中仍然會被解析，但會在啟動時印一次 deprecation warning 並完全忽略。
 
 ---
 

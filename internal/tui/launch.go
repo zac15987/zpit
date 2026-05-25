@@ -469,7 +469,6 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
 	var trackerDocContent string
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
@@ -486,7 +485,7 @@ func (m Model) deployAndLaunchAgent(agentName string, agentMD []byte) tea.Cmd {
 	return func() tea.Msg {
 		// Deploy hooks + gitignore
 		worktree.EnsureGitignore(projectPath)
-		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
+		if err := worktree.DeployHooksToProject(projectPath, hookScripts); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Hook deploy failed: %s", err)}
 		}
 
@@ -615,7 +614,6 @@ func (m Model) deployAllCmd() tea.Cmd {
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	hookScripts := m.state.hookScripts
-	hookMode := project.HookMode
 	var trackerDocContent string
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
@@ -627,7 +625,7 @@ func (m Model) deployAllCmd() tea.Cmd {
 
 		worktree.EnsureGitignore(projectPath)
 
-		if err := worktree.DeployHooksToProject(projectPath, hookMode, hookScripts); err != nil {
+		if err := worktree.DeployHooksToProject(projectPath, hookScripts); err != nil {
 			logger.Printf("[redeploy] %s: hook deploy failed: %v", projectName, err)
 			return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
 		}

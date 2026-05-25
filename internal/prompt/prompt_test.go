@@ -133,6 +133,24 @@ func TestBuildCodingPrompt_BaseBranch(t *testing.T) {
 	}
 }
 
+func TestBuildCodingPrompt_PRTargetOverridesBaseBranch(t *testing.T) {
+	result := BuildCodingPrompt(CodingParams{
+		IssueID:    "TEST-1",
+		IssueTitle: "test",
+		Spec:       testSpec(),
+		LogPolicy:  "minimal",
+		BaseBranch: "feat/foo", // worktree fork base
+		PRTarget:   "dev",      // PR target, distinct from fork base
+	})
+
+	if !strings.Contains(result, "--base dev") {
+		t.Error("coding prompt's --base flag should follow PRTarget, not BaseBranch")
+	}
+	if strings.Contains(result, "--base feat/foo") {
+		t.Error("BaseBranch should NOT appear as the PR target in the coding prompt")
+	}
+}
+
 func TestBuildReviewerPrompt_AllSections(t *testing.T) {
 	p := ReviewerParams{
 		IssueID:     "ASE-47",
@@ -730,6 +748,24 @@ func TestBuildReviewerPrompt_BaseBranch(t *testing.T) {
 
 	if !strings.Contains(result, "git diff origin/main...HEAD") {
 		t.Error("reviewer prompt should use custom base branch")
+	}
+}
+
+func TestBuildReviewerPrompt_PRTargetSeparateFromBaseBranch(t *testing.T) {
+	result := BuildReviewerPrompt(ReviewerParams{
+		IssueID:    "TEST-1",
+		IssueTitle: "test",
+		Spec:       testSpec(),
+		LogPolicy:  "minimal",
+		BaseBranch: "feat/foo", // worktree fork base — used for the git diff command
+		PRTarget:   "dev",      // PR target branch — used for the "PR's target branch is X" check
+	})
+
+	if !strings.Contains(result, "git diff origin/feat/foo...HEAD") {
+		t.Error("reviewer git diff command should use BaseBranch (fork base)")
+	}
+	if !strings.Contains(result, "`dev`") {
+		t.Error("reviewer PR-target check should use PRTarget, not BaseBranch")
 	}
 }
 
