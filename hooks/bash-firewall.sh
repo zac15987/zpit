@@ -67,47 +67,73 @@ for pattern in "${BLOCKED_PATTERNS[@]}"; do
   fi
 done
 
-# Clarifier role — block mutation verbs and writes to source-code extensions
+# Clarifier role — block mutation verbs and writes to source-code extensions.
+#
+# Per-segment evaluation: split COMMAND on shell separators (&&, ||, ;, |) and
+# check each segment independently. The `rm` carve-out is semantic, not
+# shape-based — any path form (bare, ./, absolute unix, D:/...) is accepted as
+# long as the basename matches tmp_*.{md,txt}, the target count is one, and
+# no -r/-R/--recursive flag is present. Optional -f is allowed (bash-idiomatic
+# for missing/read-only files; harmless on a single fixed-prefix file).
+#
+# Why per-segment: the previous whole-command regex broke as soon as the
+# agent appended a confirmation chain like `&& echo "removed"`, even though
+# the rm itself was safe. Splitting first lets each segment be judged on its
+# own merits — the rm segment passes the carve-out, the echo segment trips
+# nothing.
+#
+# Coarse split: separators inside quoted strings will be wrongly split, but
+# the failure mode is over-splitting → stricter checking, never under-splitting.
 if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
-  # Allow clarifier to delete its own tracker temp files. Strict shape:
-  # `rm [-f] [./]tmp_<name>.{md,txt}` — single target, optional -f. -f is
-  # harmless on a single fixed-prefix file (cannot recurse, cannot cross
-  # dirs) and is the bash-idiomatic way to ignore missing/read-only files;
-  # -r/-R/-rf stay blocked. Mirrors the redirect carve-out below and parity
-  # with pwsh-firewall.sh's -Force allowance (clarifier.md step 17b says
-  # "Delete the temp file after use").
-  if echo "$COMMAND" | grep -qE '^[[:space:]]*rm([[:space:]]+-f)?[[:space:]]+(\./)?tmp_[A-Za-z0-9_-]+\.(md|txt)[[:space:]]*$'; then
-    exit 0
-  fi
-
-  # Mutation verbs at command start or after a separator (;, &, |, whitespace)
   CLARIFIER_BLOCKED=(
-    '(^|[;&|[:space:]])rm([[:space:]]|$)'
-    '(^|[;&|[:space:]])mv([[:space:]]|$)'
-    '(^|[;&|[:space:]])cp([[:space:]]|$)'
-    '(^|[;&|[:space:]])mkdir([[:space:]]|$)'
-    '(^|[;&|[:space:]])touch([[:space:]]|$)'
-    '(^|[;&|[:space:]])sed[[:space:]]+-i'
+    '(^|[[:space:]])rm([[:space:]]|$)'
+    '(^|[[:space:]])mv([[:space:]]|$)'
+    '(^|[[:space:]])cp([[:space:]]|$)'
+    '(^|[[:space:]])mkdir([[:space:]]|$)'
+    '(^|[[:space:]])touch([[:space:]]|$)'
+    '(^|[[:space:]])sed[[:space:]]+-i'
   )
-  for pattern in "${CLARIFIER_BLOCKED[@]}"; do
-    if echo "$COMMAND" | grep -qE "$pattern"; then
-      echo "BLOCKED: Clarifier cannot execute '$COMMAND'. Only read-only commands and tracker CLI (gh / forgejo) are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
-      exit 2
-    fi
-  done
 
-  # Redirect to source-code file extensions — block unless target is a tmp_*.{md,txt} tracker file
-  if echo "$COMMAND" | grep -qE '>[[:space:]]*[^[:space:]|&;]+\.(go|ts|tsx|js|jsx|astro|md|json|toml|yaml|yml|css|scss|sh|py|java|cs|cpp|c|h)([[:space:]]|$)'; then
-    CLARIFIER_TGT=$(echo "$COMMAND" | grep -oE '>[[:space:]]*[^[:space:]|&;]+' | sed -E 's/^>[[:space:]]*//' | tail -1)
-    CLARIFIER_TGT_BASE=$(basename "$CLARIFIER_TGT")
-    case "$CLARIFIER_TGT_BASE" in
-      tmp_*.md|tmp_*.txt) : ;;
-      *)
-        echo "BLOCKED: Clarifier cannot redirect output to '$CLARIFIER_TGT'. Only tmp_*.{md,txt} tracker temp files are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
+  # awk gsub is portable across BSD / GNU / git-bash awk; \n in replacement works.
+  NORMALIZED=$(printf '%s' "$COMMAND" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
+
+  while IFS= read -r seg; do
+    # Trim leading/trailing whitespace
+    seg="${seg#"${seg%%[![:space:]]*}"}"
+    seg="${seg%"${seg##*[![:space:]]}"}"
+    [ -z "$seg" ] && continue
+
+    # rm-tmp carve-out: single target whose basename is tmp_*.{md,txt},
+    # optional -f, no -r/-R/--recursive. Path shape is unrestricted.
+    if [[ "$seg" =~ ^rm([[:space:]]+(-f|--force))?[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]]; then
+      RM_TARGET="${BASH_REMATCH[3]}"
+      RM_BASE="${RM_TARGET##*/}"
+      case "$RM_BASE" in
+        tmp_*.md|tmp_*.txt) continue ;;
+      esac
+    fi
+
+    # Mutation verbs in this segment
+    for pattern in "${CLARIFIER_BLOCKED[@]}"; do
+      if echo "$seg" | grep -qE "$pattern"; then
+        echo "BLOCKED: Clarifier cannot execute '$COMMAND'. Only read-only commands and tracker CLI (gh / forgejo) are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
         exit 2
-        ;;
-    esac
-  fi
+      fi
+    done
+
+    # Redirect to source-code file extensions — block unless target is tmp_*.{md,txt}
+    if echo "$seg" | grep -qE '>[[:space:]]*[^[:space:]|&;]+\.(go|ts|tsx|js|jsx|astro|md|json|toml|yaml|yml|css|scss|sh|py|java|cs|cpp|c|h)([[:space:]]|$)'; then
+      CLARIFIER_TGT=$(echo "$seg" | grep -oE '>[[:space:]]*[^[:space:]|&;]+' | sed -E 's/^>[[:space:]]*//' | tail -1)
+      CLARIFIER_TGT_BASE="${CLARIFIER_TGT##*/}"
+      case "$CLARIFIER_TGT_BASE" in
+        tmp_*.md|tmp_*.txt) : ;;
+        *)
+          echo "BLOCKED: Clarifier cannot redirect output to '$CLARIFIER_TGT'. Only tmp_*.{md,txt} tracker temp files are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
+          exit 2
+          ;;
+      esac
+    fi
+  done <<< "$NORMALIZED"
 fi
 
 # Redirect escape detection — block writes outside worktree

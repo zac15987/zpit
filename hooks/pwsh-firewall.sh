@@ -69,62 +69,90 @@ done
 # Clarifier role — block PS write/mutation cmdlets and aliases, with a
 # tmp_*.{md,txt} carve-out so the clarifier can create + delete its own
 # tracker temp file (clarifier.md workflow step 17b).
+#
+# Per-segment evaluation mirrors bash-firewall.sh: split on PS separators
+# (&&, ||, ;, |) and judge each segment independently. The carve-outs are
+# semantic, not shape-based — any path form (bare, .\, ./, absolute) is
+# accepted as long as the basename matches tmp_*.{md,txt}. -Force is allowed
+# on a single fixed-prefix target (cannot recurse, cannot cross dirs);
+# -Recurse stays blocked.
+#
+# Why per-segment: the previous whole-command regex broke when the agent
+# chained `Remove-Item tmp_x.md; Write-Host "done"` or used absolute paths.
+# Splitting first lets each segment be judged on its own.
 if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
-  # Allowlist 1: Remove-Item (or aliases rm/ri/del/erase) targeting tmp_*.{md,txt}.
-  # Strict shape: single argument, optional .\ or ./ prefix, optional trailing
-  # -Force. -Force is harmless on a single file with a fixed-prefix name
-  # (cannot recurse, cannot cross dirs) and is PS-idiomatic when the file
-  # may be read-only; -Recurse is still blocked.
-  if echo "$COMMAND" | grep -qiE '^[[:space:]]*(Remove-Item|rm|ri|del|erase)[[:space:]]+(\.[\\/])?tmp_[A-Za-z0-9_-]+\.(md|txt)([[:space:]]+-Force)?[[:space:]]*$'; then
-    exit 0
-  fi
-
-  # Allowlist 2: Set-Content / Add-Content / Out-File / Clear-Content targeting tmp_*.{md,txt}.
-  # Matches typical PS write idioms: `Set-Content tmp_foo.md -Value ...`,
-  # `... | Out-File tmp_foo.md`, etc. The target file name appears immediately
-  # after the cmdlet (positional -Path) or after -Path/-LiteralPath.
-  if echo "$COMMAND" | grep -qiE '(Set-Content|Add-Content|Out-File|Clear-Content)\s+(-(Path|LiteralPath)\s+)?(\.[\\/])?tmp_[A-Za-z0-9_-]+\.(md|txt)([[:space:]]|$)'; then
-    exit 0
-  fi
-
-  # Allowlist 3: `> tmp_*.{md,txt}` or `>> tmp_*.{md,txt}` redirection.
-  # Same shape as bash-firewall's redirect carve-out; PS uses identical syntax.
-  if echo "$COMMAND" | grep -qE '>+[[:space:]]*(\.[\\/])?tmp_[A-Za-z0-9_-]+\.(md|txt)([[:space:]]|$)'; then
-    REDIRECT_OK=1
-  else
-    REDIRECT_OK=0
-  fi
-
-  # PS write cmdlets and their aliases — block at command start or after a separator.
-  # `rm` here is PS's alias for Remove-Item (the strict allowlist above already
-  # cleared the tmp_*.{md,txt} use case).
+  # PS write cmdlets and their aliases (used after carve-out for unsafe segments).
   CLARIFIER_BLOCKED_PS=(
-    '(^|[;&|[:space:]])Remove-Item([[:space:]]|$)'
-    '(^|[;&|[:space:]])(rm|ri|del|erase|rd|rmdir)([[:space:]]|$)'
-    '(^|[;&|[:space:]])Move-Item([[:space:]]|$)'
-    '(^|[;&|[:space:]])(mv|mi|move)([[:space:]]|$)'
-    '(^|[;&|[:space:]])Copy-Item([[:space:]]|$)'
-    '(^|[;&|[:space:]])(cp|cpi|copy)([[:space:]]|$)'
-    '(^|[;&|[:space:]])New-Item([[:space:]]|$)'
-    '(^|[;&|[:space:]])(mkdir|md)([[:space:]]|$)'
-    '(^|[;&|[:space:]])Set-Content([[:space:]]|$)'
-    '(^|[;&|[:space:]])Add-Content([[:space:]]|$)'
-    '(^|[;&|[:space:]])Out-File([[:space:]]|$)'
-    '(^|[;&|[:space:]])Clear-Content([[:space:]]|$)'
+    '(^|[[:space:]])Remove-Item([[:space:]]|$)'
+    '(^|[[:space:]])(rm|ri|del|erase|rd|rmdir)([[:space:]]|$)'
+    '(^|[[:space:]])Move-Item([[:space:]]|$)'
+    '(^|[[:space:]])(mv|mi|move)([[:space:]]|$)'
+    '(^|[[:space:]])Copy-Item([[:space:]]|$)'
+    '(^|[[:space:]])(cp|cpi|copy)([[:space:]]|$)'
+    '(^|[[:space:]])New-Item([[:space:]]|$)'
+    '(^|[[:space:]])(mkdir|md)([[:space:]]|$)'
+    '(^|[[:space:]])Set-Content([[:space:]]|$)'
+    '(^|[[:space:]])Add-Content([[:space:]]|$)'
+    '(^|[[:space:]])Out-File([[:space:]]|$)'
+    '(^|[[:space:]])Clear-Content([[:space:]]|$)'
   )
-  for pattern in "${CLARIFIER_BLOCKED_PS[@]}"; do
-    if echo "$COMMAND" | grep -qiE "$pattern"; then
-      echo "BLOCKED: Clarifier cannot execute '$COMMAND'. Only read-only PowerShell commands and tracker CLI (gh / forgejo) are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
+
+  NORMALIZED=$(printf '%s' "$COMMAND" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
+
+  while IFS= read -r seg; do
+    seg="${seg#"${seg%%[![:space:]]*}"}"
+    seg="${seg%"${seg##*[![:space:]]}"}"
+    [ -z "$seg" ] && continue
+
+    # Carve-out 1: Remove-Item / aliases targeting a single tmp_*.{md,txt}.
+    # Semantic check — path shape unrestricted, optional -Force, -Recurse blocked.
+    if [[ "$seg" =~ ^(Remove-Item|rm|ri|del|erase)[[:space:]]+([^[:space:]]+)([[:space:]]+-Force)?[[:space:]]*$ ]]; then
+      RM_TARGET="${BASH_REMATCH[2]}"
+      RM_BASE_FS="${RM_TARGET##*/}"
+      RM_BASE="${RM_BASE_FS##*\\}"
+      case "$RM_BASE" in
+        tmp_*.md|tmp_*.txt) continue ;;
+      esac
+    fi
+
+    # Carve-out 2: Set-Content / Add-Content / Out-File / Clear-Content
+    # targeting tmp_*.{md,txt}. Semantic basename check.
+    if [[ "$seg" =~ (Set-Content|Add-Content|Out-File|Clear-Content)[[:space:]]+(-(Path|LiteralPath)[[:space:]]+)?([^[:space:]]+) ]]; then
+      WR_TARGET="${BASH_REMATCH[4]}"
+      WR_BASE_FS="${WR_TARGET##*/}"
+      WR_BASE="${WR_BASE_FS##*\\}"
+      case "$WR_BASE" in
+        tmp_*.md|tmp_*.txt) continue ;;
+      esac
+    fi
+
+    # Carve-out 3: `> tmp_*.{md,txt}` or `>> tmp_*.{md,txt}` redirection
+    # (used to short-circuit the per-segment source-extension check below).
+    SEGMENT_REDIRECT_OK=0
+    if echo "$seg" | grep -qE '>+[[:space:]]*[^[:space:]|&;]+' ; then
+      RED_TARGET=$(echo "$seg" | grep -oE '>+[[:space:]]*[^[:space:]|&;]+' | sed -E 's/^>+[[:space:]]*//' | tail -1)
+      RED_BASE_FS="${RED_TARGET##*/}"
+      RED_BASE="${RED_BASE_FS##*\\}"
+      case "$RED_BASE" in
+        tmp_*.md|tmp_*.txt) SEGMENT_REDIRECT_OK=1 ;;
+      esac
+    fi
+
+    # Mutation cmdlets/aliases in this segment
+    for pattern in "${CLARIFIER_BLOCKED_PS[@]}"; do
+      if echo "$seg" | grep -qiE "$pattern"; then
+        echo "BLOCKED: Clarifier cannot execute '$COMMAND'. Only read-only PowerShell commands and tracker CLI (gh / forgejo) are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
+        exit 2
+      fi
+    done
+
+    # Redirect to source-code file extensions — block unless target is tmp_*.{md,txt}.
+    if [ "$SEGMENT_REDIRECT_OK" -ne 1 ] && echo "$seg" | grep -qE '>+[[:space:]]*[^[:space:]|&;]+\.(go|ts|tsx|js|jsx|astro|md|json|toml|yaml|yml|css|scss|sh|ps1|py|java|cs|cpp|c|h)([[:space:]]|$)'; then
+      REDIR_TGT=$(echo "$seg" | grep -oE '>+[[:space:]]*[^[:space:]|&;]+' | sed -E 's/^>+[[:space:]]*//' | tail -1)
+      echo "BLOCKED: Clarifier cannot redirect output to '$REDIR_TGT'. Only tmp_*.{md,txt} tracker temp files are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
       exit 2
     fi
-  done
-
-  # Redirect to source-code file extensions — block unless target is tmp_*.{md,txt}.
-  if [ "$REDIRECT_OK" -ne 1 ] && echo "$COMMAND" | grep -qE '>+[[:space:]]*[^[:space:]|&;]+\.(go|ts|tsx|js|jsx|astro|md|json|toml|yaml|yml|css|scss|sh|ps1|py|java|cs|cpp|c|h)([[:space:]]|$)'; then
-    REDIR_TGT=$(echo "$COMMAND" | grep -oE '>+[[:space:]]*[^[:space:]|&;]+' | sed -E 's/^>+[[:space:]]*//' | tail -1)
-    echo "BLOCKED: Clarifier cannot redirect output to '$REDIR_TGT'. Only tmp_*.{md,txt} tracker temp files are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
-    exit 2
-  fi
+  done <<< "$NORMALIZED"
 fi
 
 # Redirect escape detection — block writes outside the working directory.

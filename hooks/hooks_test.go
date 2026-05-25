@@ -705,6 +705,90 @@ func TestBashFirewall_Clarifier_BlocksRmTmpWithExtraArgs(t *testing.T) {
 	}
 }
 
+// Carve-out is semantic (basename-based), not shape-based — absolute paths
+// to tmp_*.{md,txt} are allowed. Real-world case from clarifier session in
+// jsonl c8df08de-d985-4ac2-af03-4483e48ef980 where the agent passed a full
+// Windows path after switching cwd during reference-project lookup.
+func TestBashFirewall_Clarifier_AllowsRmAbsoluteWindowsPathTmp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm D:/Documents/LeYu/Workspace/AI_Inspection_Cleaning_Demo/tmp_issue_body.md"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm <abs-win>/tmp_*.md, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsRmAbsoluteUnixPathTmp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm /home/user/project/tmp_pr_title.txt"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm <abs-unix>/tmp_*.txt, got %d: %s", code, msg)
+	}
+}
+
+// Per-segment evaluation: `rm tmp_x.md && echo done` splits into two
+// segments. The rm segment is a safe tmp cleanup; the echo segment trips
+// no mutation pattern. Whole command allowed. This was the exact pattern
+// the agent used and got blocked in jsonl c8df08de... line 638.
+func TestBashFirewall_Clarifier_AllowsRmTmpWithAndEcho(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm tmp_issue_body.md && echo \"tmp_issue_body.md removed\""}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm tmp_*.md && echo, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsRmAbsTmpWithAndEcho(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm D:/project/tmp_issue_body.md && echo removed"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm <abs>/tmp_*.md && echo, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_AllowsRmTmpSemicolonLs(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm tmp_issue_body.md; ls"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for rm tmp_*.md; ls, got %d: %s", code, msg)
+	}
+}
+
+// Per-segment split must NOT let a chained mutation slip through. The first
+// segment is a safe rm-tmp, but the second is rm against a source file —
+// block the whole command.
+func TestBashFirewall_Clarifier_BlocksRmTmpThenRmNonTmp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm tmp_issue_body.md && rm docs/spec.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for rm tmp_*.md && rm docs/*, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksRmTmpThenMv(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm tmp_issue_body.md; mv a.md b.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for rm tmp_*.md; mv a b, got %d: %s", code, msg)
+	}
+}
+
+// Absolute path to non-tmp file must still block — carve-out is basename-bound.
+func TestBashFirewall_Clarifier_BlocksRmAbsoluteNonTmp(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"rm /etc/passwd"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for rm /etc/passwd, got %d: %s", code, msg)
+	}
+}
+
 // ── pwsh-firewall.sh tests ──
 
 func TestPwshFirewall_BypassWithoutZPITAgent(t *testing.T) {
@@ -892,6 +976,38 @@ func TestPwshFirewall_Clarifier_BlocksRemoveItemTmpMdRecurse(t *testing.T) {
 		clarifierEnv(nil))
 	if code != 2 {
 		t.Errorf("expected exit 2 for Remove-Item tmp_*.md -Recurse, got %d: %s", code, msg)
+	}
+}
+
+// Semantic carve-out: absolute paths to tmp_*.{md,txt} are accepted. Mirrors
+// the bash-firewall behavior for the post-cd-back-to-other-project case.
+func TestPwshFirewall_Clarifier_AllowsRemoveItemAbsTmp(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Remove-Item D:/project/tmp_issue_body.md"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for Remove-Item <abs>/tmp_*.md, got %d: %s", code, msg)
+	}
+}
+
+// Per-segment evaluation: PS uses `;` as statement separator; a safe
+// Remove-Item tmp_* followed by a no-op like Write-Host must pass.
+func TestPwshFirewall_Clarifier_AllowsRemoveItemTmpThenWriteHost(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Remove-Item tmp_issue_body.md; Write-Host done"}}`,
+		clarifierEnv(nil))
+	if code != 0 {
+		t.Errorf("expected exit 0 for Remove-Item tmp_*.md; Write-Host, got %d: %s", code, msg)
+	}
+}
+
+// Chained mutation must still block even when first segment is a safe rm-tmp.
+func TestPwshFirewall_Clarifier_BlocksRemoveItemTmpThenRemoveItemNonTmp(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Remove-Item tmp_issue_body.md; Remove-Item docs/spec.md"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for Remove-Item tmp_*.md; Remove-Item docs/*, got %d: %s", code, msg)
 	}
 }
 

@@ -319,8 +319,8 @@ All channel messages in meeting mode MUST use these formats:
     a. Before performing any tracker operation, you MUST first read `.claude/docs/tracker.md`.
        Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
     b. Never embed long text directly in bash commands or MCP parameters.
-       Write the issue body to a temp file first (e.g. `./tmp_issue_body.md`), then pass it via `--body-file` or read it back before sending.
-       Delete the temp file after use.
+       Write the issue body to a temp file in the **project root** (e.g. `./tmp_issue_body.md`), then pass it via `--body-file` or read it back before sending.
+       Delete the temp file when done — use the bare-filename form `rm tmp_<name>.md` (no path prefix, no chained commands). If you `cd`'d into a reference project during clarification, `cd` back to the original working directory before running `rm`. The hook firewall accepts other path shapes as a safety net, but the bare-filename form is the contract.
     c. Set the status to "pending confirmation" (label: pending)
 18. After successful push, inform the user of the issue URL
 
