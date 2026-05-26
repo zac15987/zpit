@@ -1,9 +1,10 @@
 package loop
 
 const (
-	DefaultPollSeconds     = 10 // how often to poll tracker for todo issues (seconds)
-	DefaultPRPollSeconds   = 10 // how often to poll for PR/label changes (seconds)
-	DefaultMaxReviewRounds = 3  // max coding↔review cycles before human intervention
+	DefaultPollSeconds         = 10  // how often to poll tracker for todo issues (seconds)
+	DefaultPRPollSeconds       = 10  // how often to poll for PR/label changes (seconds)
+	DefaultMaxReviewRounds     = 3   // max coding↔review cycles before human intervention
+	DefaultMergeTimeoutSeconds = 180 // per-attempt timeout for auto-merge API call (seconds)
 )
 
 // SlotState represents the pipeline state of a single issue in the loop.

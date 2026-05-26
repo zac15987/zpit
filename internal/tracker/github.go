@@ -136,6 +136,7 @@ func (c *GitHubClient) FindPRByBranch(ctx context.Context, repo string, branch s
 			ID:    fmt.Sprintf("%d", pr.Number),
 			State: state,
 			URL:   pr.HTMLURL,
+			Title: pr.Title,
 		}, nil
 	}
 	return nil, nil // no matching PR
@@ -158,6 +159,7 @@ func (c *GitHubClient) GetPRStatus(ctx context.Context, repo string, prID string
 		ID:    fmt.Sprintf("%d", pr.Number),
 		State: state,
 		URL:   pr.HTMLURL,
+		Title: pr.Title,
 	}, nil
 }
 

@@ -934,7 +934,6 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 		return nil
 	}
 	branch := slot.BranchName
-	issueTitle := slot.IssueTitle
 	m.state.RUnlock()
 
 	repo := project.Repo
@@ -942,7 +941,10 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 	if method == "" {
 		method = "squash"
 	}
-	commitTitle := fmt.Sprintf("[%s] %s", issueID, issueTitle)
+	mergeTimeout := time.Duration(m.state.cfg.Worktree.MergeTimeoutSeconds) * time.Second
+	if mergeTimeout <= 0 {
+		mergeTimeout = time.Duration(loop.DefaultMergeTimeoutSeconds) * time.Second
+	}
 	logger := m.state.logger
 
 	return func() tea.Msg {
@@ -983,13 +985,35 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 			}
 		}
 		prID := pr.ID
+		// Build merge commit subject from the live PR title. Using pr.Title
+		// (vs slot.IssueTitle) keeps the merge commit aligned with whatever
+		// the coding agent actually titled the PR, and avoids double-prefix
+		// bugs when resume populates slot.IssueTitle from pr.Title directly.
+		commitTitle := fmt.Sprintf("merge: %s", pr.Title)
+
+		// checkAlreadyMerged returns the PR if it is already in the "merged"
+		// state, nil otherwise (including on lookup error). Used to recover
+		// from the timeout race: a MergePR request may complete server-side
+		// after the client-side context expired, so the retry sees 405
+		// "already merged" (classified as permanent) — or all 3 attempts
+		// time out but at least one landed. In either case the merge actually
+		// happened and we should report success instead of NeedsHuman.
+		checkAlreadyMerged := func() *tracker.PRStatus {
+			vctx, vcancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer vcancel()
+			vpr, verr := client.GetPRStatus(vctx, repo, prID)
+			if verr != nil || vpr == nil || vpr.State != "merged" {
+				return nil
+			}
+			return vpr
+		}
 
 		const maxAttempts = 3
 		backoffs := []time.Duration{1 * time.Second, 4 * time.Second, 16 * time.Second}
 
 		var lastErr error
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			mergeCtx, mergeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			mergeCtx, mergeCancel := context.WithTimeout(context.Background(), mergeTimeout)
 			merged, err := client.MergePR(mergeCtx, repo, prID, method, commitTitle)
 			mergeCancel()
 
@@ -1016,6 +1040,14 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 			kind := classifyMergeErr(err)
 
 			if kind == "permanent" {
+				if vpr := checkAlreadyMerged(); vpr != nil {
+					logger.Printf("loop: auto-merge success #%s (race recovery: saw %v but PR is merged) → cleaning up",
+						issueID, err)
+					return LoopAutoMergeMsg{
+						ProjectID: projectID, IssueID: issueID,
+						PR: vpr,
+					}
+				}
 				logger.Printf("loop: auto-merge permanent fail #%s: %v → needs human", issueID, err)
 				return LoopAutoMergeMsg{
 					ProjectID: projectID, IssueID: issueID,
@@ -1035,6 +1067,14 @@ func (m Model) loopAutoMergeCmd(projectID, issueID string) tea.Cmd {
 				issueID, attempt, maxAttempts, err)
 			if attempt < maxAttempts {
 				time.Sleep(backoffs[attempt-1])
+			}
+		}
+		if vpr := checkAlreadyMerged(); vpr != nil {
+			logger.Printf("loop: auto-merge success #%s (race recovery after transient_exhausted: %v) → cleaning up",
+				issueID, lastErr)
+			return LoopAutoMergeMsg{
+				ProjectID: projectID, IssueID: issueID,
+				PR: vpr,
 			}
 		}
 		logger.Printf("loop: auto-merge exhausted %d retries #%s: %v → needs human",

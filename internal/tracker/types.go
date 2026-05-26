@@ -44,6 +44,7 @@ type PRStatus struct {
 	ID    string
 	State string // "open", "merged", "closed"
 	URL   string
+	Title string // PR title (populated by FindPRByBranch / GetPRStatus)
 }
 
 // PRInfo contains summary info for an open PR (used by Loop scan).

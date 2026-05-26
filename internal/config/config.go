@@ -88,14 +88,15 @@ type NotificationConfig struct {
 }
 
 type WorktreeConfig struct {
-	BaseDirWindows  string `toml:"base_dir_windows"`
-	BaseDirWSL      string `toml:"base_dir_wsl"`
-	DirFormat       string `toml:"dir_format"`
-	AutoCleanup     bool   `toml:"auto_cleanup"`
-	MaxPerProject   int    `toml:"max_per_project"`
-	MaxReviewRounds int    `toml:"max_review_rounds"`
-	PollSeconds     int    `toml:"poll_seconds"`    // todo issue polling interval
-	PRPollSeconds   int    `toml:"pr_poll_seconds"` // PR merge polling interval
+	BaseDirWindows      string `toml:"base_dir_windows"`
+	BaseDirWSL          string `toml:"base_dir_wsl"`
+	DirFormat           string `toml:"dir_format"`
+	AutoCleanup         bool   `toml:"auto_cleanup"`
+	MaxPerProject       int    `toml:"max_per_project"`
+	MaxReviewRounds     int    `toml:"max_review_rounds"`
+	PollSeconds         int    `toml:"poll_seconds"`          // todo issue polling interval
+	PRPollSeconds       int    `toml:"pr_poll_seconds"`       // PR merge polling interval
+	MergeTimeoutSeconds int    `toml:"merge_timeout_seconds"` // per-attempt timeout for auto-merge API call
 }
 
 type ProvidersConfig struct {
@@ -184,6 +185,7 @@ base_dir_wsl = ""           # e.g. "/mnt/d/worktrees"
 max_per_project = 5
 # poll_seconds = 10         # todo issue polling interval (seconds)
 # pr_poll_seconds = 10      # PR merge polling interval (seconds)
+# merge_timeout_seconds = 180  # per-attempt timeout for auto-merge API call (seconds); bump on slow trackers (NAS, low-bandwidth links)
 
 # --- Agent Models ---
 # Model passed to Claude Code via --model when launching each agent role.
@@ -330,7 +332,8 @@ func Diff(old, new *Config) ConfigDiff {
 	}
 	if old.Worktree.PollSeconds != new.Worktree.PollSeconds ||
 		old.Worktree.PRPollSeconds != new.Worktree.PRPollSeconds ||
-		old.Worktree.MaxReviewRounds != new.Worktree.MaxReviewRounds {
+		old.Worktree.MaxReviewRounds != new.Worktree.MaxReviewRounds ||
+		old.Worktree.MergeTimeoutSeconds != new.Worktree.MergeTimeoutSeconds {
 		diff.HotReload = append(diff.HotReload, "worktree")
 	}
 	if old.Terminal != new.Terminal {
@@ -500,6 +503,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Worktree.PollSeconds == 0 {
 		cfg.Worktree.PollSeconds = loop.DefaultPollSeconds
+	}
+	if cfg.Worktree.MergeTimeoutSeconds == 0 {
+		cfg.Worktree.MergeTimeoutSeconds = loop.DefaultMergeTimeoutSeconds
 	}
 	if cfg.Worktree.PRPollSeconds == 0 {
 		cfg.Worktree.PRPollSeconds = loop.DefaultPRPollSeconds

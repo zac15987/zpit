@@ -506,7 +506,7 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 	// Track actions for cmd creation after unlock.
 	type resumeAction struct {
 		issueID string
-		kind    string // "revision", "reviewer", "labelPoll", "prPoll"
+		kind    string // "revision", "reviewer", "labelPoll", "prPoll", "autoMerge"
 	}
 	var actions []resumeAction
 
@@ -562,7 +562,23 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 			m.state.logger.Printf("loop: resume #%s (branch=%s, label=wip) → label poll", issueID, pr.Branch)
 			actions = append(actions, resumeAction{issueID: issueID, kind: "labelPoll"})
 
-		default: // ai-review or no matching label → waiting for merge
+		case hasLabel(labels, "ai-review"):
+			// Mirror the normal SlotReviewing→ai-review fork: when auto_merge
+			// is on, retry the merge API; otherwise fall through to PR poll.
+			// This is the resume path users hit after fixing an auth error
+			// that previously parked the slot in SlotError.
+			autoMerge := project != nil && project.AutoMerge
+			if autoMerge {
+				slot.State = loop.SlotAutoMerging
+				m.state.logger.Printf("loop: resume #%s (branch=%s, label=ai-review) → auto-merging", issueID, pr.Branch)
+				actions = append(actions, resumeAction{issueID: issueID, kind: "autoMerge"})
+			} else {
+				slot.State = loop.SlotWaitingPRMerge
+				m.state.logger.Printf("loop: resume #%s (branch=%s, label=ai-review) → waiting PR merge", issueID, pr.Branch)
+				actions = append(actions, resumeAction{issueID: issueID, kind: "prPoll"})
+			}
+
+		default: // no matching label → waiting for merge
 			slot.State = loop.SlotWaitingPRMerge
 			m.state.logger.Printf("loop: resume #%s (branch=%s) → waiting PR merge", issueID, pr.Branch)
 			actions = append(actions, resumeAction{issueID: issueID, kind: "prPoll"})
@@ -583,6 +599,8 @@ func (m Model) handleLoopOpenPRs(msg LoopOpenPRsMsg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loopScheduleLabelPoll(msg.ProjectID, a.issueID))
 		case "prPoll":
 			cmds = append(cmds, m.loopSchedulePRPoll(msg.ProjectID, a.issueID))
+		case "autoMerge":
+			cmds = append(cmds, m.loopAutoMergeCmd(msg.ProjectID, a.issueID))
 		}
 	}
 	return m, tea.Batch(cmds...)

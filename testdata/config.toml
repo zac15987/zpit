@@ -37,6 +37,7 @@ auto_cleanup = true
 max_per_project = 5
 poll_seconds = 10
 pr_poll_seconds = 10
+merge_timeout_seconds = 180
 
 # Per-role model selection.
 # - clarifier/coding/reviewer/efficiency: passed to Claude Code via --model at launch.

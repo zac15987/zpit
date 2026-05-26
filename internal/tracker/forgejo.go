@@ -136,6 +136,7 @@ func (c *ForgejoClient) FindPRByBranch(ctx context.Context, repo string, branch 
 			ID:    fmt.Sprintf("%d", pr.Number),
 			State: state,
 			URL:   pr.HTMLURL,
+			Title: pr.Title,
 		}, nil
 	}
 	return nil, nil // no matching PR
@@ -158,6 +159,7 @@ func (c *ForgejoClient) GetPRStatus(ctx context.Context, repo string, prID strin
 		ID:    fmt.Sprintf("%d", pr.Number),
 		State: state,
 		URL:   pr.HTMLURL,
+		Title: pr.Title,
 	}, nil
 }
 
