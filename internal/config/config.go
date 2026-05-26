@@ -235,12 +235,10 @@ desktop = "sonnet[1m]"      # desktop-control agent (window/keyboard/mouse) — 
 # tracker = "my-github"
 # repo = "owner/repo"
 # base_branch = "dev"
-# channel_enabled = false  # enable cross-agent channel communication
+# auto_merge = false        # when true, Zpit calls the tracker's merge API after ai-review
+# merge_method = "squash"   # squash | merge | rebase (only used when auto_merge = true)
+# channel_enabled = false   # enable cross-agent channel communication
 # tags = ["go"]
-# auto_merge: when true, Zpit calls the tracker's merge API after ai-review; default false.
-# auto_merge = false
-# merge_method: one of "squash" | "merge" | "rebase"; default "squash" when auto_merge=true.
-# merge_method = "squash"
 #
 # [projects.path]
 # windows = "D:/Projects/my-project"
