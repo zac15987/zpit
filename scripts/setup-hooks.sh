@@ -60,7 +60,7 @@ SETTINGS_CONTENT=$(cat << 'SETTINGS'
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/path-guard.sh"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/path-guard.sh"
           }
         ]
       },
@@ -69,11 +69,11 @@ SETTINGS_CONTENT=$(cat << 'SETTINGS'
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/bash-firewall.sh"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/bash-firewall.sh"
           },
           {
             "type": "command",
-            "command": ".claude/hooks/git-guard.sh"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/git-guard.sh"
           }
         ]
       },
@@ -82,7 +82,7 @@ SETTINGS_CONTENT=$(cat << 'SETTINGS'
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/pwsh-firewall.sh"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pwsh-firewall.sh"
           }
         ]
       }
@@ -92,7 +92,7 @@ SETTINGS_CONTENT=$(cat << 'SETTINGS'
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/notify-permission.sh"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify-permission.sh"
           }
         ]
       }
@@ -103,7 +103,7 @@ SETTINGS_CONTENT=$(cat << 'SETTINGS'
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/worktree-create.sh",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-create.sh",
             "timeout": 30
           }
         ]
