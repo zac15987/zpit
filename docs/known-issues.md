@@ -558,3 +558,37 @@ This is documented Win32 behavior, not a bug. It surfaces in the session at the 
 - [IUIAutomationInvokePattern::Invoke - Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationinvokepattern-invoke)
 - [Implementing the Invoke Control Pattern - Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-implementinginvoke)
 - `agents/desktop.md` Rules section — agent-facing guidance on the residual `set_value` risk
+
+---
+
+## 9. Windows MAX_PATH overflow on nested child worktrees during `[P]` batches
+
+**Affected OS:** Windows (path length is unbounded on Linux/macOS)
+**Component:** `hooks/worktree-create.sh`, `internal/worktree/hooks.go` (`zpitIgnoreRules`)
+**First observed:** 2026-05-28 (`ai-inspection-cleaning` issue #45, phase 6 playback)
+**Status:** Mitigated — child worktrees now live at `$HOME/.zpit/children/<8-hex>` (flat); a Windows-only pre-check inside the hook fires `exit 2` with actionable instructions if the path still looks too deep.
+
+### Symptom
+
+The orchestrator hit a `[P]` batch (`[T1, T10]`), dispatched two `task-runner` subagents with `isolation: "worktree"`, and got back failures from `hooks/worktree-create.sh` → `git worktree add`. The orchestrator silently degraded to sequential execution with no clear hint why. Parent worktree path at the time of failure: `D:\Documents\.worktrees\ai-inspection-cleaning\45-…-twinclient-playback-api` (~89 chars). With the historical child layout (`<parent>/.zpit-children/<slug>` → ~130 chars before any file inside) plus git's internal `.git\worktrees\<leaf>\…` paths plus the deepest project file under the child, the leaf path crossed 260.
+
+### Root cause
+
+`git worktree add` opens a file under the *main repo's* `.git/worktrees/<leaf>/…` AND lays out the working tree at `<WT_PATH>/<repo-files>`. Both inherit the parent's depth in the historical layout. Once any of those crossed 260, `git worktree add` errored. The hook surfaced git's error to Claude Code, which (correctly) reported worktree creation failed — but the orchestrator's natural recovery path is to fall back to sequential, and the user had no signal that this was a fixable environmental issue rather than a "parallel batch isn't supported here" outcome.
+
+### Fix
+
+1. **Flatten the child path**: `hooks/worktree-create.sh` now computes `WT_PATH="$HOME/.zpit/children/$(sha256(cwd + slug)[:8])"`. On Windows this collapses the base to ~40 chars regardless of how deep the orchestrator's worktree sits. The branch name (`<parent-branch>-<slug>`) is unchanged and stays human-readable, so `cat <child>/.git` still reveals the parent identity for debugging.
+2. **Pre-check**: on `MINGW*`/`CYGWIN*`/`MSYS*` shells with `git config core.longpaths != true`, the hook checks `${#WT_PATH} > 160` before `git worktree add` and `exit 2`s with instructions to enable `core.longpaths` and `HKLM\…\LongPathsEnabled`. With the flattened path this almost never fires, but if `$HOME` itself is unusually deep the user gets an explainable error.
+3. **Removed `.zpit-children/` from `zpitIgnoreRules`** (`internal/worktree/hooks.go`) and from the repo's own `.gitignore` — children no longer live under the project, so the rule is dead weight.
+
+### What this does NOT cover
+
+- **Parent worktree path length**: the orchestrator's own worktree, created from `base_dir + dir_format` in `internal/worktree/manager.go`, is still un-budget-checked. If a user's `base_dir` + project + issue exceeds the budget, that's a separate config-layer problem (shorter `dir_format`, shorter `base_dir`, or `core.longpaths`).
+- **Migration of existing `.zpit-children/` dirs** in user projects. They're now just regular untracked dirs; `rm -rf .zpit-children/` cleans them up.
+- **Orphan `~/.zpit/children/<hash>` dirs** left by crashed hooks. Same slot-driven cleanup as before; if orphans accumulate in practice, a periodic sweeper can be added later.
+
+### Related references
+
+- §2 and §3 above describe the original `<parent>/.zpit-children/<slug>` design and its quirks — they remain accurate as historical context for the per-subagent worktree model.
+- `internal/prompt/coding.go` did NOT need changes: `worktreePath` is opaque to the orchestrator prompt, branch discovery uses `git -C "$path" rev-parse --abbrev-ref HEAD`, and cleanup uses `git worktree remove --force "$path"` + `git branch -D <branch>`.

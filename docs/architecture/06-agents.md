@@ -105,7 +105,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 流程：
 
 1. **Orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`**（這是 Claude Code 的 runtime parameter，不是 subagent frontmatter）。
-2. Claude Code 觸發 zpit 的 `WorktreeCreate` hook（`hooks/worktree-create.sh`），hook 讀取 stdin JSON 的 `cwd` 與 `name`，執行 `git -C <cwd> worktree add -B <parent-branch>-<slug> <cwd>/.zpit-children/<slug> HEAD`（關鍵：fork 自 orchestrator 的 HEAD，而非 Claude Code 內建的 `origin/<defaultBranch>`，否則會錯過先前循序 task 的 commit），然後 `cp -r .claude/` + `.mcp.json` 進 child，把 worktree path 印到 stdout 交還 Claude Code。
+2. Claude Code 觸發 zpit 的 `WorktreeCreate` hook（`hooks/worktree-create.sh`），hook 讀取 stdin JSON 的 `cwd` 與 `name`，執行 `git -C <cwd> worktree add -B <parent-branch>-<slug> $HOME/.zpit/children/<8-hex-sha256(cwd+slug)> HEAD`（兩個關鍵：(a) fork 自 orchestrator 的 HEAD，而非 Claude Code 內建的 `origin/<defaultBranch>`，否則會錯過先前循序 task 的 commit；(b) child 路徑放在 `$HOME/.zpit/children/` 的扁平短路徑下，而非早期 `<cwd>/.zpit-children/<slug>` 的巢狀位置，因為巢狀路徑在深層 parent worktree 下會踩到 Windows MAX_PATH——詳見 known-issues §9），然後 `cp -r .claude/` + `.mcp.json` 進 child，把 worktree path 印到 stdout 交還 Claude Code。
 3. 平行 subagent 在 child worktree 以 `git add -- <files> && git commit` 正常 commit，沒有任何 index 隔離、沒有 `mkdir` lock、沒有跨 shell 的 env 問題。
 4. Agent tool 回傳 `{worktreePath}` 給 orchestrator。**注意：`worktreeBranch` 永遠是 `undefined`** — Claude Code 的 `WorktreeCreate`-hook 路徑只會 propagate path，不會 propagate branch（根因追在 known-issues §3）。
 5. Orchestrator 在 cleanup 之前，先用一個 Bash call 查各 subagent 的分支名：`for path in <paths>; do git -C "$path" rev-parse --abbrev-ref HEAD; done`。這是權威來源 — 不靠字串推導，不依賴命名慣例。

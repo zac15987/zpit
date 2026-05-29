@@ -309,8 +309,8 @@ func TestZpitIgnoreRules_ContainsAllDeployedArtifacts(t *testing.T) {
 	if strings.Contains(rules, ".claude/settings.local.json") {
 		t.Error("settings.local.json should NOT be in zpitIgnoreRules — it causes user-project .gitignore drift on every launch")
 	}
-	if !strings.Contains(rules, ".zpit-children/") {
-		t.Error(".zpit-children/ missing from zpitIgnoreRules")
+	if strings.Contains(rules, ".zpit-children/") {
+		t.Error(".zpit-children/ must NOT be in zpitIgnoreRules — child worktrees now live under $HOME/.zpit/children/, outside the project")
 	}
 }
 

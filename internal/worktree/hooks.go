@@ -115,11 +115,6 @@ var zpitIgnoreRules = func() []string {
 	}
 	rules = append(rules, ".claude/settings.json")
 	rules = append(rules, ZpitDeployedFiles...)
-	// .zpit-children/ holds ephemeral per-subagent worktrees created by the
-	// WorktreeCreate hook during [P] batches. Cleaned up by the orchestrator
-	// post-cherry-pick but always gitignored so in-flight or abandoned
-	// children never leak into a PR.
-	rules = append(rules, ".zpit-children/")
 	return rules
 }()
 

@@ -26,6 +26,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+# Require sha256sum: used to derive the short hash that flattens child
+# worktree paths under $HOME/.zpit/children. Ships in Git for Windows,
+# WSL, coreutils, and macOS via Homebrew coreutils.
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "WorktreeCreate: 'sha256sum' is required but not installed. Install coreutils (brew install coreutils on macOS) and retry." >&2
+  exit 1
+fi
+
 INPUT=$(cat)
 NAME=$(echo "$INPUT" | jq -r '.name // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
@@ -46,10 +54,41 @@ if [ -z "$ORCHESTRATOR_BRANCH" ] || [ "$ORCHESTRATOR_BRANCH" = "HEAD" ]; then
   exit 1
 fi
 
-WT_PATH="$CWD/.zpit-children/$SLUG"
+# Flatten the child path under <home>/.zpit/children/<8-hex-sha256> to
+# avoid Windows MAX_PATH (260). Nesting children under the orchestrator's
+# worktree (the historical $CWD/.zpit-children/$SLUG layout) compounded
+# every deep parent path and tripped MAX_PATH once git internals + the
+# project tree + the copied .claude/ piled on top.
+#
+# Prefer $USERPROFILE on Windows-like shells: in Git Bash $HOME expands
+# to /c/Users/<user> (Unix-style), which downstream tools that call
+# `chdir`/`os.Stat` against the path (Node, Go) do not understand on
+# Windows. $USERPROFILE inherits the OS-native form (C:\Users\<user>).
+# Falls back to $HOME on Linux/macOS where USERPROFILE is unset.
+HOME_DIR="${USERPROFILE:-$HOME}"
+HASH=$(printf '%s\0%s' "$CWD" "$SLUG" | sha256sum | cut -c1-8)
+WT_PATH="$HOME_DIR/.zpit/children/$HASH"
 WT_BRANCH="${ORCHESTRATOR_BRANCH}-${SLUG}"
 
-mkdir -p "$CWD/.zpit-children"
+# Defense in depth: on Windows-like shells without long-path support,
+# warn if the computed base path is already deep enough that git's
+# internals + project files would likely overflow MAX_PATH. With the
+# flattened path above this branch almost never fires — but if $HOME
+# itself is unusually deep, the user gets an actionable message instead
+# of a confusing `git worktree add` failure further down.
+case "$(uname -s)" in
+  MINGW*|CYGWIN*|MSYS*)
+    LONG_PATHS=$(git config --get core.longpaths 2>/dev/null || true)
+    if [ "$LONG_PATHS" != "true" ] && [ ${#WT_PATH} -gt 160 ]; then
+      echo "WorktreeCreate: child worktree base path is ${#WT_PATH} chars. Windows MAX_PATH (260) will likely be exceeded once git internals + project files are added. Enable long paths:" >&2
+      echo "  (1) git config --global core.longpaths true" >&2
+      echo "  (2) (admin) reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f" >&2
+      exit 2
+    fi
+    ;;
+esac
+
+mkdir -p "$HOME_DIR/.zpit/children"
 
 # Fork from current HEAD (not origin/defaultBranch). -B resets any orphan
 # branch left behind by a previously removed worktree dir (matches Claude
