@@ -663,6 +663,61 @@ func TestBuildCodingPrompt_ParallelBatchIntegration(t *testing.T) {
 	}
 }
 
+// TestBuildCodingPrompt_DisableParallelBatches asserts that in_project mode
+// (DisableParallelBatches=true) force-sequences [P] tasks: sequential task-runner
+// delegation is still emitted, but the worktree-isolation / cherry-pick batch
+// machinery is fully suppressed even when the spec marks tasks [P].
+func TestBuildCodingPrompt_DisableParallelBatches(t *testing.T) {
+	spec := testSpec()
+	spec.Tasks = []tracker.TaskEntry{
+		{ID: "T1", Description: "Add base struct", Paths: []string{"a.go"}, DependsOn: nil},
+		{ID: "T2", Description: "Add retry", Parallel: true, Paths: []string{"b.go"}, DependsOn: []string{"T1"}},
+		{ID: "T3", Description: "Add retry tests", Parallel: true, Paths: []string{"c.go"}, DependsOn: []string{"T1"}},
+	}
+
+	result := BuildCodingPrompt(CodingParams{
+		IssueID:                "TEST-77",
+		IssueTitle:             "in_project no parallel",
+		Spec:                   spec,
+		LogPolicy:              "minimal",
+		BaseBranch:             "dev",
+		DisableParallelBatches: true,
+		InProject:              true,
+	})
+
+	// Sequential delegation must still be present.
+	for _, c := range []string{"Task Execution Order", "task-runner", "subagent_type", "T1", "T2", "T3"} {
+		if !strings.Contains(result, c) {
+			t.Errorf("expected sequential delegation to contain %q", c)
+		}
+	}
+
+	// All parallel-batch machinery must be gone.
+	mustNotContain := []string{
+		"Parallel Subagent Delegation",
+		"Parallel group",
+		"isolation: \"worktree\"",
+		"git cherry-pick",
+		"git worktree remove",
+		"PARENT_HEAD=$(git rev-parse HEAD)",
+	}
+	for _, c := range mustNotContain {
+		if strings.Contains(result, c) {
+			t.Errorf("DisableParallelBatches prompt must NOT contain %q", c)
+		}
+	}
+
+	// The in_project note must warn against committing zpit-managed files.
+	if !strings.Contains(result, "In-Project Mode") || !strings.Contains(result, ".mcp.json") {
+		t.Error("InProject prompt should contain the In-Project Mode note mentioning .mcp.json")
+	}
+
+	// The caller's spec must be untouched (normalization works on a copy).
+	if !spec.Tasks[1].Parallel || !spec.Tasks[2].Parallel {
+		t.Error("BuildCodingPrompt mutated the caller's Spec.Tasks Parallel flags")
+	}
+}
+
 func TestBuildCodingPrompt_WithoutTasks_NoTaskWorkflow(t *testing.T) {
 	p := CodingParams{
 		IssueID:    "ASE-48",

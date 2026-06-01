@@ -102,6 +102,7 @@ name = "ASE 檢測清潔機台"
 id = "ase-inspection"
 profile = "machine"             # 顯示標籤：machine | desktop | web | android | terminal (TUI icon)
 log_policy = "strict"           # strict | standard | minimal
+isolation = "worktree"          # worktree（預設，每個 issue 開 git worktree）| in_project（直接在專案目錄工作，停用 [P] 並行、slot 上限鎖 1；適用於 worktree 複製成本過高的大型 repo）
 tracker = "my-forgejo"          # 指向 providers.tracker 的 key
 tracker_project = "ase-inspection"
 git = "forgejo-local"
@@ -233,7 +234,7 @@ Zpit 支援在 TUI 運行中重新載入 config.toml。設定欄位分為兩類�
 | `agent_models.*` | 更新 cfg，下次啟動 agent 時生效（已運行的 session 沿用啟動時 model） |
 | per-project `channel_enabled` | 動態 subscribe/unsubscribe EventBus |
 | per-project `channel_listen` | 動態管理跨專案訂閱 |
-| per-project `base_branch` / `log_policy` / `auto_merge` / `merge_method` | 更新 cfg，下次操作時生效（已在執行中的 merge 使用 handler 進入時捕獲的設定）。`hook_mode` 已棄用，仍寫在 config 內會被忽略並印 deprecation warning。 |
+| per-project `base_branch` / `log_policy` / `isolation` / `auto_merge` / `merge_method` | 更新 cfg，下次操作時生效（已在執行中的 merge 使用 handler 進入時捕獲的設定；`isolation` 變更套用於下次 issue dispatch，進行中的 slot 保留原本配置的 working tree）。`hook_mode` 已棄用，仍寫在 config 內會被忽略並印 deprecation warning。 |
 
 ### Restart-Required（需重啟）
 

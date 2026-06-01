@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,11 @@ import (
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/platform"
 )
+
+// ErrWorkingTreeDirty is returned by CreateInPlace when the project's working
+// tree has uncommitted changes, so the loop can escalate to human intervention
+// instead of clobbering the user's work.
+var ErrWorkingTreeDirty = errors.New("working tree has uncommitted changes")
 
 // WorktreeInfo describes an active worktree.
 type WorktreeInfo struct {
@@ -90,6 +96,62 @@ func (m *Manager) Create(p CreateParams) (string, error) {
 	}
 
 	return wtPath, nil
+}
+
+// CreateInPlace prepares an in-project (no-worktree) branch directly in the
+// project repository, for projects with isolation = "in_project". It refuses to
+// run when the working tree is dirty (returns ErrWorkingTreeDirty) so uncommitted
+// user work is never clobbered. If the feature branch already exists it is checked
+// out (resume); otherwise it is created from origin/<BaseBranch>.
+// Returns the repository path itself as the "worktree" path.
+func (m *Manager) CreateInPlace(p CreateParams) (string, error) {
+	// Refuse on a dirty working tree — a checkout/branch switch would either fail
+	// or risk discarding the user's uncommitted changes.
+	status, err := runGit(p.RepoPath, "status", "--porcelain")
+	if err != nil {
+		return "", fmt.Errorf("checking working tree status: %w", err)
+	}
+	if strings.TrimSpace(status) != "" {
+		return "", ErrWorkingTreeDirty
+	}
+
+	// Fetch latest remote state for baseBranch so the new branch includes any
+	// recently merged code.
+	if _, err := runGit(p.RepoPath, "fetch", "origin", p.BaseBranch); err != nil {
+		return "", fmt.Errorf("fetching origin/%s: %w", p.BaseBranch, err)
+	}
+
+	// Resume if the feature branch already exists locally; otherwise create it
+	// from the remote tracking branch.
+	if _, err := runGit(p.RepoPath, "rev-parse", "--verify", "--quiet", "refs/heads/"+p.BranchName); err == nil {
+		if _, err := runGit(p.RepoPath, "checkout", p.BranchName); err != nil {
+			return "", fmt.Errorf("checking out existing branch %s: %w", p.BranchName, err)
+		}
+	} else {
+		remoteBranch := "origin/" + p.BaseBranch
+		if _, err := runGit(p.RepoPath, "checkout", "-b", p.BranchName, remoteBranch); err != nil {
+			return "", fmt.Errorf("creating branch %s: %w", p.BranchName, err)
+		}
+	}
+
+	return p.RepoPath, nil
+}
+
+// RemoveInPlace restores an in-project repository back to its base branch and
+// deletes the feature branch after the issue is done. It never deletes the base
+// branch itself. The checkout-to-base error is returned so the caller can decide
+// whether base-branch sync is safe; branch deletion is best-effort.
+func (m *Manager) RemoveInPlace(repoPath, baseBranch, branchName string) error {
+	if branchName == "" || branchName == baseBranch {
+		return nil // nothing to clean up, and never delete the base branch
+	}
+	if _, err := runGit(repoPath, "checkout", baseBranch); err != nil {
+		return fmt.Errorf("checking out base branch %s: %w", baseBranch, err)
+	}
+	// Best-effort: the feature branch is merged at this point; failure to delete
+	// it is non-fatal (it just lingers).
+	_, _ = runGit(repoPath, "branch", "-D", branchName)
+	return nil
 }
 
 // Remove removes a worktree and optionally deletes the associated branch.

@@ -93,6 +93,9 @@ type LoopWorktreeCreatedMsg struct {
 	WorktreePath string
 	BranchName   string
 	Err          error
+	// NeedsHuman marks an error that should escalate to SlotNeedsHuman rather than
+	// SlotError (e.g. in_project mode found a dirty working tree at dispatch).
+	NeedsHuman bool
 }
 
 // LoopAgentWrittenMsg indicates the temp agent file was written.

@@ -428,3 +428,136 @@ branch refs/heads/fix/ASE-48-vision
 		t.Errorf("result[1].Branch = %q", result[1].Branch)
 	}
 }
+
+// currentBranchInTest returns the checked-out branch of a test repo.
+func currentBranchInTest(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %s: %v", out, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestCreateInPlace(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t) // HEAD on dev, clean, origin/dev present
+	mgr := testManager(t)
+
+	got, err := mgr.CreateInPlace(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/1-thing",
+		ProjectID: "proj", IssueID: "1", Slug: "thing",
+	})
+	if err != nil {
+		t.Fatalf("CreateInPlace: %v", err)
+	}
+	if got != repo {
+		t.Errorf("CreateInPlace path = %q, want repo path %q", got, repo)
+	}
+	if cur := currentBranchInTest(t, repo); cur != "feat/1-thing" {
+		t.Errorf("current branch = %q, want feat/1-thing", cur)
+	}
+	// No worktree should have been created.
+	wts, err := mgr.List(repo)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(wts) != 0 {
+		t.Errorf("CreateInPlace created %d worktree(s), want 0", len(wts))
+	}
+}
+
+func TestCreateInPlaceDirty(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t)
+	mgr := testManager(t)
+
+	// Dirty the working tree with an untracked file.
+	if err := os.WriteFile(filepath.Join(repo, "scratch.txt"), []byte("wip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := mgr.CreateInPlace(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/2-thing",
+		ProjectID: "proj", IssueID: "2", Slug: "thing",
+	})
+	if err != ErrWorkingTreeDirty {
+		t.Fatalf("CreateInPlace on dirty tree = %v, want ErrWorkingTreeDirty", err)
+	}
+}
+
+func TestCreateInPlaceResume(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t)
+	mgr := testManager(t)
+
+	// Pre-create the feature branch (simulating a prior interrupted run), then
+	// return HEAD to dev so the tree is clean and not already on the branch.
+	for _, args := range [][]string{
+		{"git", "branch", "feat/3-thing"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args[1:], out, err)
+		}
+	}
+
+	got, err := mgr.CreateInPlace(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/3-thing",
+		ProjectID: "proj", IssueID: "3", Slug: "thing",
+	})
+	if err != nil {
+		t.Fatalf("CreateInPlace (resume): %v", err)
+	}
+	if got != repo {
+		t.Errorf("path = %q, want %q", got, repo)
+	}
+	if cur := currentBranchInTest(t, repo); cur != "feat/3-thing" {
+		t.Errorf("current branch = %q, want feat/3-thing (resume should checkout existing)", cur)
+	}
+}
+
+func TestRemoveInPlace(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t)
+	mgr := testManager(t)
+
+	if _, err := mgr.CreateInPlace(CreateParams{
+		RepoPath: repo, BaseBranch: "dev", BranchName: "feat/4-thing",
+		ProjectID: "proj", IssueID: "4", Slug: "thing",
+	}); err != nil {
+		t.Fatalf("CreateInPlace: %v", err)
+	}
+
+	if err := mgr.RemoveInPlace(repo, "dev", "feat/4-thing"); err != nil {
+		t.Fatalf("RemoveInPlace: %v", err)
+	}
+	if cur := currentBranchInTest(t, repo); cur != "dev" {
+		t.Errorf("after RemoveInPlace, current branch = %q, want dev", cur)
+	}
+	// The feature branch should be gone.
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/heads/feat/4-thing")
+	cmd.Dir = repo
+	if err := cmd.Run(); err == nil {
+		t.Error("feat/4-thing still exists after RemoveInPlace")
+	}
+}
+
+func TestRemoveInPlaceGuardsBase(t *testing.T) {
+	skipIfNoGit(t)
+	repo := initTestRepo(t) // HEAD on dev
+	mgr := testManager(t)
+
+	// branchName == baseBranch must be a no-op that never deletes the base branch.
+	if err := mgr.RemoveInPlace(repo, "dev", "dev"); err != nil {
+		t.Fatalf("RemoveInPlace(dev,dev): %v", err)
+	}
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/heads/dev")
+	cmd.Dir = repo
+	if err := cmd.Run(); err != nil {
+		t.Error("base branch dev was deleted by RemoveInPlace guard — must never happen")
+	}
+}

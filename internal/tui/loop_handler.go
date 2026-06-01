@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/zac15987/zpit/internal/git"
 	"github.com/zac15987/zpit/internal/locale"
 	"github.com/zac15987/zpit/internal/loop"
 	"github.com/zac15987/zpit/internal/platform"
@@ -69,12 +72,29 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		ls.ReportedCycleKey = cycleKey
 	}
 
-	// Check existing worktrees to detect resumed issues.
+	// Check existing worktrees (or, in in_project mode, the repo's current branch)
+	// to detect resumed issues.
 	project := m.findProject(msg.ProjectID)
+	inProject := project != nil && project.InProject()
 	var existingWorktrees []worktree.WorktreeInfo
+	var inProjectCurBranch string
+	var projectPath string
 	if project != nil {
-		projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-		existingWorktrees, _ = m.state.wtManager.List(projectPath)
+		projectPath = platform.ResolvePath(project.Path.Windows, project.Path.WSL)
+		if inProject {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			inProjectCurBranch, _ = git.CurrentBranch(ctx, projectPath)
+			cancel()
+		} else {
+			existingWorktrees, _ = m.state.wtManager.List(projectPath)
+		}
+	}
+
+	// in_project mode shares a single working tree, so the project is capped to 1
+	// concurrent slot regardless of max_per_project.
+	maxSlots := m.state.cfg.Worktree.MaxPerProject
+	if inProject {
+		maxSlots = 1
 	}
 
 	// Track which slots need cmd creation after unlock.
@@ -90,7 +110,7 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 		if _, exists := ls.Slots[key]; exists {
 			continue // already processing
 		}
-		if len(ls.Slots) >= m.state.cfg.Worktree.MaxPerProject {
+		if len(ls.Slots) >= maxSlots {
 			break // at capacity
 		}
 
@@ -113,8 +133,27 @@ func (m Model) handleLoopPoll(msg LoopPollMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Check if a worktree already exists for this issue (resumed from previous session).
-		if slot := findLoopSlotFromWorktree(msg.ProjectID, issue, existingWorktrees); slot != nil {
+		// Check if work already exists for this issue (resumed from previous session).
+		if inProject {
+			// in_project: the repo is parked on feat/<issueID>-<slug> if a prior run
+			// crashed before opening a PR.
+			if inProjectCurBranch != "" && strings.HasPrefix(inProjectCurBranch, "feat/"+issue.ID+"-") {
+				slot := &loop.Slot{
+					ProjectID:    msg.ProjectID,
+					IssueID:      issue.ID,
+					IssueTitle:   issue.Title,
+					BranchName:   inProjectCurBranch,
+					BaseBranch:   effectiveBase,
+					PRTarget:     effectivePRTarget,
+					WorktreePath: projectPath,
+					State:        loop.SlotCoding, // PR poll will determine next step
+				}
+				ls.Slots[key] = slot
+				m.state.logger.Printf("loop: resume in_project #%s (branch=%s)", issue.ID, inProjectCurBranch)
+				actions = append(actions, slotAction{issueID: issue.ID, isResume: true})
+				continue
+			}
+		} else if slot := findLoopSlotFromWorktree(msg.ProjectID, issue, existingWorktrees); slot != nil {
 			slot.BaseBranch = effectiveBase
 			slot.PRTarget = effectivePRTarget
 			ls.Slots[key] = slot
@@ -166,8 +205,16 @@ func (m Model) handleLoopWorktreeCreated(msg LoopWorktreeCreatedMsg) (tea.Model,
 	}
 
 	if msg.Err != nil {
-		slot.State = loop.SlotError
 		slot.Error = msg.Err
+		if msg.NeedsHuman {
+			slot.State = loop.SlotNeedsHuman
+			m.state.logger.Printf("loop: worktree needs human #%s: %s", msg.IssueID, msg.Err)
+			m.state.NotifyAll()
+			m.state.Unlock()
+			m.setStatus(fmt.Sprintf("Needs human #%s: %s", msg.IssueID, msg.Err))
+			return m, nil
+		}
+		slot.State = loop.SlotError
 		m.state.logger.Printf("loop: worktree error #%s: %s", msg.IssueID, msg.Err)
 		m.state.NotifyAll()
 		m.state.Unlock()

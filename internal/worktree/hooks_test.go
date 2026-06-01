@@ -312,6 +312,52 @@ func TestZpitIgnoreRules_ContainsAllDeployedArtifacts(t *testing.T) {
 	if strings.Contains(rules, ".zpit-children/") {
 		t.Error(".zpit-children/ must NOT be in zpitIgnoreRules — child worktrees now live under $HOME/.zpit/children/, outside the project")
 	}
+	// .gitignore self-ignore is in_project-only; it must NOT leak into the global
+	// rules (worktree / manual launches would then write a self-ignored .gitignore
+	// into the user's real repo).
+	for _, r := range zpitIgnoreRules {
+		if r == ".gitignore" {
+			t.Error(".gitignore self-ignore must NOT be in zpitIgnoreRules — it is in_project-only (see inProjectIgnoreRules)")
+		}
+	}
+}
+
+func TestEnsureGitignoreInProject_SelfIgnores(t *testing.T) {
+	dir := t.TempDir()
+	EnsureGitignoreInProject(dir)
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	content := string(data)
+	// Every base rule plus the .gitignore self-ignore must be present.
+	for _, rule := range zpitIgnoreRules {
+		if !strings.Contains(content, rule) {
+			t.Errorf("missing rule: %s", rule)
+		}
+	}
+	hasSelf := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == ".gitignore" {
+			hasSelf = true
+		}
+	}
+	if !hasSelf {
+		t.Errorf("EnsureGitignoreInProject did not self-ignore .gitignore:\n%s", content)
+	}
+}
+
+func TestEnsureGitignore_DoesNotSelfIgnore(t *testing.T) {
+	dir := t.TempDir()
+	EnsureGitignore(dir)
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == ".gitignore" {
+			t.Errorf("plain EnsureGitignore must NOT self-ignore .gitignore (in_project-only):\n%s", string(data))
+		}
+	}
 }
 
 // --- CleanSettingsHooks tests ---

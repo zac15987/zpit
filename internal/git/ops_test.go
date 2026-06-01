@@ -661,3 +661,18 @@ func TestSyncLocalBranch(t *testing.T) {
 		}
 	})
 }
+
+func TestCurrentBranch(t *testing.T) {
+	skipIfNoGit(t)
+	localDir, _ := initFetchTestRepo(t)
+	ctx := context.Background()
+
+	// initFetchTestRepo leaves HEAD on "main".
+	got, err := CurrentBranch(ctx, localDir)
+	if err != nil {
+		t.Fatalf("CurrentBranch: %v", err)
+	}
+	if got != "main" {
+		t.Errorf("CurrentBranch = %q, want %q", got, "main")
+	}
+}

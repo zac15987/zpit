@@ -17,6 +17,13 @@ type CodingParams struct {
 	BaseBranch     string // worktree fork base — informational; the orchestrator's worktree is already on a branch forked from this
 	PRTarget       string // PR target branch (the `--base` flag for `gh pr create` / Forgejo equivalent). Falls back to BaseBranch when empty.
 	ChannelEnabled bool   // true when cross-agent channel communication is active
+	// DisableParallelBatches forces every task to run sequentially, suppressing
+	// [P] parallel subagent batches (and their worktree forks). Set for in_project
+	// isolation, where a single working tree cannot host parallel child worktrees.
+	DisableParallelBatches bool
+	// InProject is true when the agent works directly in the project directory
+	// (isolation = "in_project") rather than an isolated git worktree.
+	InProject bool
 }
 
 // prTarget returns the effective PR target branch, falling back to BaseBranch
@@ -31,6 +38,22 @@ func (p CodingParams) prTarget() string {
 // BuildCodingPrompt assembles the full coding agent prompt from Issue Spec data.
 func BuildCodingPrompt(p CodingParams) string {
 	var b strings.Builder
+
+	// In in_project mode there is a single working tree, so [P] parallel batches
+	// (which fork child worktrees) cannot run. Normalize every task to sequential
+	// by repointing Spec at a copy with Parallel cleared — this makes groupTasks,
+	// hasParallelTasks, and the execution-order builder all emit sequential
+	// delegation without touching those functions. The caller's Spec is untouched.
+	if p.DisableParallelBatches && p.Spec != nil && len(p.Spec.Tasks) > 0 {
+		specCopy := *p.Spec
+		tasks := make([]tracker.TaskEntry, len(p.Spec.Tasks))
+		copy(tasks, p.Spec.Tasks)
+		for i := range tasks {
+			tasks[i].Parallel = false
+		}
+		specCopy.Tasks = tasks
+		p.Spec = &specCopy
+	}
 
 	b.WriteString(locale.ResponseInstruction())
 
@@ -75,6 +98,11 @@ func BuildCodingPrompt(p CodingParams) string {
 
 	if p.ChannelEnabled {
 		b.WriteString(channelToolsSection(p.Spec.CoordinatesWith))
+	}
+
+	if p.InProject {
+		b.WriteString("\n\n## In-Project Mode\n\n")
+		b.WriteString("You are working directly in the project directory (no isolated worktree). Do NOT stage or commit `.gitignore`, `.claude/`, or `.mcp.json` — these are zpit-managed deployment files, not part of your change. Keep your commits limited to the Allowed File Scope.")
 	}
 
 	if len(p.Spec.Tasks) > 0 {

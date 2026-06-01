@@ -20,6 +20,7 @@ const (
 	defaultReRemindMinutes = 2
 	defaultDirFormat       = "{project_id}/{issue_id}--{slug}"
 	defaultBaseBranch      = "dev"
+	defaultIsolation       = "worktree"
 
 	defaultBrokerPort = 17731
 
@@ -124,6 +125,7 @@ type ProjectConfig struct {
 	Git                string            `toml:"git"`
 	Repo               string            `toml:"repo"`
 	LogPolicy          string            `toml:"log_policy"` // "strict" | "standard" | "minimal"
+	Isolation          string            `toml:"isolation"`  // "worktree" (default) | "in_project"
 	BaseBranch         string            `toml:"base_branch"`
 	ChannelEnabled     bool              `toml:"channel_enabled"`
 	ChannelListen      []string          `toml:"channel_listen"`
@@ -131,6 +133,13 @@ type ProjectConfig struct {
 	Path               ProjectPathConfig `toml:"path"`
 	AutoMerge          bool              `toml:"auto_merge"`
 	MergeMethod        string            `toml:"merge_method"`
+}
+
+// InProject reports whether this project uses in-place isolation (work directly
+// in the project directory, no git worktree copy). Any value other than the exact
+// string "in_project" is treated as the default "worktree" mode.
+func (p ProjectConfig) InProject() bool {
+	return p.Isolation == "in_project"
 }
 
 type ProjectPathConfig struct {
@@ -234,6 +243,7 @@ desktop = "sonnet[1m]"      # desktop-control agent (window/keyboard/mouse) — 
 # id = "my-project"
 # profile = "machine"       # display tag: machine | desktop | web | android | terminal (for TUI icon)
 # log_policy = "standard"   # strict | standard | minimal
+# isolation = "worktree"    # worktree (default; copies repo into a git worktree per issue) | in_project (work directly in the project dir — disables [P] parallel batches, caps to 1 slot; use for huge repos where the worktree copy is too costly)
 # tracker = "my-github"
 # repo = "owner/repo"
 # base_branch = "dev"
@@ -392,8 +402,8 @@ func projectsChannelEqual(a, b []ProjectConfig) bool {
 	return true
 }
 
-// projectsMetaEqual checks if base_branch, log_policy, auto_merge, and
-// merge_method are identical across matching projects.
+// projectsMetaEqual checks if base_branch, log_policy, isolation, auto_merge,
+// and merge_method are identical across matching projects.
 func projectsMetaEqual(a, b []ProjectConfig) bool {
 	am := projectMap(a)
 	bm := projectMap(b)
@@ -404,6 +414,7 @@ func projectsMetaEqual(a, b []ProjectConfig) bool {
 		}
 		if ap.BaseBranch != bp.BaseBranch ||
 			ap.LogPolicy != bp.LogPolicy ||
+			ap.Isolation != bp.Isolation ||
 			ap.AutoMerge != bp.AutoMerge ||
 			ap.MergeMethod != bp.MergeMethod {
 			return false
@@ -548,6 +559,9 @@ func applyDefaults(cfg *Config) {
 		}
 		if cfg.Projects[i].LogPolicy == "" {
 			cfg.Projects[i].LogPolicy = "standard"
+		}
+		if cfg.Projects[i].Isolation == "" {
+			cfg.Projects[i].Isolation = defaultIsolation
 		}
 		if cfg.Projects[i].AutoMerge && cfg.Projects[i].MergeMethod == "" {
 			cfg.Projects[i].MergeMethod = "squash"

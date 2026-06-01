@@ -67,6 +67,24 @@ Issue 進入 In Progress
 
 兩層互不干涉：issue worktree 的 lifecycle（建→ agent 工作 → PR merge → 清理）在 Go 層；parallel-subagent worktree 的 lifecycle 在 coding agent 的 prompt 層（hook 建、orchestrator 清）。
 
+### in_project 隔離模式（無 worktree）
+
+當 project 設 `isolation = "in_project"`（預設 `"worktree"`），Loop **不開 worktree**，直接在專案目錄就地 checkout `feat/<id>-<slug>` branch 工作。動機：像 UE / 3D repo 把大量 binary 資產 commit 進 git 時，`git worktree add` 會把整個工作目錄（數百 MB tracked 檔）實體複製一份，成本過高；`[P]` child worktree 更會各複製一份。
+
+差異（vs worktree 模式）：
+
+| 面向 | worktree | in_project |
+|---|---|---|
+| 建立 | `Manager.Create`（fetch + `git worktree add`） | `Manager.CreateInPlace`（clean 檢查 + 就地 `git checkout -b`／checkout 既有 branch resume） |
+| 並行 slot | `max_per_project` | 固定 1（單一工作目錄） |
+| `[P]` 平行批次 | 啟用 | 停用（prompt 端 `DisableParallelBatches` 把 task 正規化為 sequential） |
+| hook 部署 | `DeployHooksToWorktree`（雙寫 settings.json + settings.local.json） | `DeployHooksToProject`（merge 進真實 repo settings.json） |
+| 清理 | `Manager.Remove`（`git worktree remove --force` + `branch -D`） | `Manager.RemoveInPlace`（`git checkout <base>` + `branch -D`；`branch==base` 時 no-op，絕不刪 base） |
+| dirty 工作目錄 | 不影響主 repo | dispatch 時 → `ErrWorkingTreeDirty` → `SlotNeedsHuman`（不自動 stash） |
+| 中斷 resume | 由既有 worktree list 偵測 | 由 repo 當前 `feat/<id>-…` branch 偵測（`git.CurrentBranch`） |
+
+⚠️ in_project loop 執行期間請勿開外部編輯器（如 Unreal Editor）或手動操作該 repo——背景 `git checkout` 會改寫工作目錄。`isolation` 為 enum，預留未來 `worktree_cow`（ReFS/Dev-Drive/APFS block-clone）、`worktree_shared_cache` 等策略。
+
 ---
 
 ## 7.3 Worktree Config

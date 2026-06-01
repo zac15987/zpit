@@ -118,6 +118,19 @@ var zpitIgnoreRules = func() []string {
 	return rules
 }()
 
+// inProjectIgnoreRules extends zpitIgnoreRules with a self-ignore for .gitignore
+// itself. Used ONLY for isolation = "in_project", where EnsureGitignore writes
+// the zpit block into the user's real repo. Without self-ignore, a freshly
+// created .gitignore (e.g. a repo that had none) stays untracked and is never
+// committed (the coding prompt forbids the agent committing it), so the next
+// in_project dispatch sees a dirty working tree and escalates to SlotNeedsHuman.
+// Self-ignoring keeps that untracked .gitignore invisible to `git status`.
+// This is deliberately NOT applied to worktree / manual-launch deploys, where a
+// self-ignored .gitignore would surprise users (it can no longer be `git add`ed
+// without -f). Note: self-ignore only helps an UNTRACKED .gitignore; a repo that
+// already tracks a .gitignore missing the zpit block still shows it modified.
+var inProjectIgnoreRules = append(append([]string{}, zpitIgnoreRules...), ".gitignore")
+
 // ensureFileRules appends missing rules to a file, using "# Zpit auto-deploy" as header.
 // Silently ignores errors (best-effort).
 func ensureFileRules(filePath string, rules []string) {
@@ -160,6 +173,14 @@ func ensureFileRules(filePath string, rules []string) {
 // EnsureGitignore appends missing Zpit gitignore rules to a project's .gitignore.
 func EnsureGitignore(projectPath string) {
 	ensureFileRules(filepath.Join(projectPath, ".gitignore"), zpitIgnoreRules)
+}
+
+// EnsureGitignoreInProject is EnsureGitignore for isolation = "in_project": it
+// additionally self-ignores .gitignore so a zpit-created .gitignore in the
+// user's real repo does not leave the working tree dirty for the next dispatch.
+// See inProjectIgnoreRules for the rationale and limitations.
+func EnsureGitignoreInProject(projectPath string) {
+	ensureFileRules(filepath.Join(projectPath, ".gitignore"), inProjectIgnoreRules)
 }
 
 // DeployHooksToProject writes hook scripts to .claude/hooks/ and merges hook config

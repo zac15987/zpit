@@ -209,22 +209,52 @@ func (m Model) loopCreateWorktreeCmd(projectID, issueID, issueTitle string) tea.
 	}
 	zpitBin := m.state.cfg.ZpitBin
 	logger := m.state.logger
+	inProject := project.InProject()
+	params := worktree.CreateParams{
+		RepoPath:   projectPath,
+		BaseBranch: baseBranch,
+		BranchName: branchName,
+		ProjectID:  projectID,
+		IssueID:    issueID,
+		Slug:       slug,
+	}
 
 	return func() tea.Msg {
-		wtPath, err := mgr.Create(worktree.CreateParams{
-			RepoPath:   projectPath,
-			BaseBranch: baseBranch,
-			BranchName: branchName,
-			ProjectID:  projectID,
-			IssueID:    issueID,
-			Slug:       slug,
-		})
-		if err != nil {
-			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		var wtPath string
+		var err error
+		if inProject {
+			// In-project mode: branch in place, no worktree copy. A dirty working
+			// tree escalates to human intervention instead of clobbering work.
+			wtPath, err = mgr.CreateInPlace(params)
+			if err != nil {
+				return LoopWorktreeCreatedMsg{
+					ProjectID:  projectID,
+					IssueID:    issueID,
+					Err:        err,
+					NeedsHuman: errors.Is(err, worktree.ErrWorkingTreeDirty),
+				}
+			}
+		} else {
+			wtPath, err = mgr.Create(params)
+			if err != nil {
+				return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+			}
 		}
-		worktree.EnsureGitignore(wtPath)
-		if err := worktree.DeployHooksToWorktree(wtPath, hookScripts); err != nil {
-			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: err}
+		// in_project writes .gitignore into the real repo, so self-ignore it
+		// (EnsureGitignoreInProject) to keep the working tree clean for the next
+		// dispatch; worktree mode uses the plain rules in the throwaway copy.
+		// Deploy: in_project merges into the real project's existing settings.json;
+		// worktree mode writes both settings.json + settings.local.json into the copy.
+		var deployErr error
+		if inProject {
+			worktree.EnsureGitignoreInProject(wtPath)
+			deployErr = worktree.DeployHooksToProject(wtPath, hookScripts)
+		} else {
+			worktree.EnsureGitignore(wtPath)
+			deployErr = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		}
+		if deployErr != nil {
+			return LoopWorktreeCreatedMsg{ProjectID: projectID, IssueID: issueID, Err: deployErr}
 		}
 
 		// Write .mcp.json for channel communication if enabled.
@@ -335,12 +365,18 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 	taskRunnerModel := m.state.cfg.AgentModels.TaskRunner
 	hookScripts := m.state.hookScripts
 	channelEnabled := project.ChannelEnabled
+	inProject := project.InProject()
 	logger := m.state.logger
 
 	return func() tea.Msg {
 		// Safety-net: ensure hooks + gitignore exist (handles resume from previous session)
-		worktree.EnsureGitignore(wtPath)
-		_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		if inProject {
+			worktree.EnsureGitignoreInProject(wtPath)
+			_ = worktree.DeployHooksToProject(wtPath, hookScripts)
+		} else {
+			worktree.EnsureGitignore(wtPath)
+			_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -362,13 +398,15 @@ func (m Model) loopWriteAgentCmd(projectID, issueID string) tea.Cmd {
 		}
 
 		promptText := prompt.BuildCodingPrompt(prompt.CodingParams{
-			IssueID:        issueID,
-			IssueTitle:     issue.Title,
-			Spec:           spec,
-			LogPolicy:      logPolicy,
-			BaseBranch:     baseBranch,
-			PRTarget:       prTarget,
-			ChannelEnabled: channelEnabled,
+			IssueID:                issueID,
+			IssueTitle:             issue.Title,
+			Spec:                   spec,
+			LogPolicy:              logPolicy,
+			BaseBranch:             baseBranch,
+			PRTarget:               prTarget,
+			ChannelEnabled:         channelEnabled,
+			DisableParallelBatches: inProject,
+			InProject:              inProject,
 		})
 
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
@@ -495,15 +533,23 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
 	reviewerDisallowed := prompt.FrontmatterField(m.state.reviewerMD, "disallowedTools")
+	inProject := project.InProject()
 	var trackerDocContent string
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
 		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, repo, provider.TokenEnv, project.BaseBranch)
 	}
 
 	return func() tea.Msg {
-		// Safety-net: ensure hooks + docs + gitignore exist
-		worktree.EnsureGitignore(wtPath)
-		_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		// Safety-net: ensure hooks + docs + gitignore exist. In in_project mode
+		// wtPath is the real repo, so merge settings.json (DeployHooksToProject)
+		// instead of overwriting it + writing settings.local.json.
+		if inProject {
+			worktree.EnsureGitignoreInProject(wtPath)
+			_ = worktree.DeployHooksToProject(wtPath, hookScripts)
+		} else {
+			worktree.EnsureGitignore(wtPath)
+			_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		}
 		deployDocs(wtPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
 
 		// Rewrite .mcp.json with reviewer agent type so SSE connection registers as "reviewer"
@@ -629,34 +675,51 @@ func (m Model) loopCleanupCmd(projectID, issueID string) tea.Cmd {
 	}
 	wtPath := slot.WorktreePath
 	baseBranch := slot.BaseBranch
+	branchName := slot.BranchName
 	m.state.RUnlock()
 
 	mgr := m.state.wtManager
 	client, ok := m.state.clients[project.Tracker]
 	repo := project.Repo
 	logger := m.state.logger
+	inProject := project.InProject()
 
 	return func() tea.Msg {
-		// Try worktree removal — failure is logged but does not block issue closing.
-		// On Windows, Remove() often fails because the agent process still holds the CWD lock.
-		removeErr := mgr.Remove(projectPath, wtPath, true)
-		if removeErr != nil {
-			logger.Printf("loop: worktree remove failed #%s: %v (will still close issue)", issueID, removeErr)
+		// Restore/clean the working tree — failure is logged but does not block
+		// issue closing (mirrors the original Windows-lock-tolerant philosophy).
+		var removeErr error
+		baseRestored := true
+		if inProject {
+			// In-project: switch back to base and delete the feature branch.
+			removeErr = mgr.RemoveInPlace(projectPath, baseBranch, branchName)
+			if removeErr != nil {
+				baseRestored = false
+				logger.Printf("loop: in_project cleanup left repo on feat branch #%s: %v (will still close issue)", issueID, removeErr)
+			}
+		} else {
+			// On Windows, Remove() often fails because the agent process still holds the CWD lock.
+			removeErr = mgr.Remove(projectPath, wtPath, true)
+			if removeErr != nil {
+				logger.Printf("loop: worktree remove failed #%s: %v (will still close issue)", issueID, removeErr)
+			}
 		}
 
 		// Sync the main project directory's local base branch ref.
 		// Use a separate 15-second timeout so a slow fetch does not eat into CloseIssue budget.
 		// fetchCancel is called explicitly (not deferred) so the context is released immediately
 		// after SyncLocalBranch returns, rather than lingering through CloseIssue.
-		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		_, _, fetchErr := git.SyncLocalBranch(fetchCtx, projectPath, baseBranch)
-		fetchCancel()
-		if fetchErr != nil {
-			logger.Printf("loop: base branch sync failed project=%s issue=#%s branch=%s: %v",
-				projectID, issueID, baseBranch, fetchErr)
-		} else {
-			logger.Printf("loop: synced base branch project=%s issue=#%s branch=%s",
-				projectID, issueID, baseBranch)
+		// Skip when in_project failed to return to base — pulling on the wrong (feat) branch is unsafe.
+		if baseRestored {
+			fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			_, _, fetchErr := git.SyncLocalBranch(fetchCtx, projectPath, baseBranch)
+			fetchCancel()
+			if fetchErr != nil {
+				logger.Printf("loop: base branch sync failed project=%s issue=#%s branch=%s: %v",
+					projectID, issueID, baseBranch, fetchErr)
+			} else {
+				logger.Printf("loop: synced base branch project=%s issue=#%s branch=%s",
+					projectID, issueID, baseBranch)
+			}
 		}
 
 		// Always close the issue regardless of worktree removal result.
@@ -688,16 +751,49 @@ func (m Model) loopCleanupMergedCmd(projectID string) tea.Cmd {
 	repo := project.Repo
 	mgr := m.state.wtManager
 	logger := m.state.logger
+	inProject := project.InProject()
+	baseBranch := project.BaseBranch
 
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// In-project mode has no worktrees to list: the merged branch (if any) is
+		// whatever feat/ branch the project repo is currently parked on.
+		if inProject {
+			cur, err := git.CurrentBranch(ctx, projectPath)
+			if err != nil || !strings.HasPrefix(cur, "feat/") {
+				return nil
+			}
+			pr, err := client.FindPRByBranch(ctx, repo, cur)
+			if err != nil || pr == nil || pr.State != "merged" {
+				return nil
+			}
+			cleaned, closed := 0, 0
+			if err := mgr.RemoveInPlace(projectPath, baseBranch, cur); err == nil {
+				cleaned++
+			} else {
+				logger.Printf("loop: merged in_project cleanup failed branch=%s: %v", cur, err)
+			}
+			if issueID := extractIssueID(cur); issueID != "" {
+				if err := client.CloseIssue(ctx, repo, issueID); err != nil {
+					logger.Printf("loop: failed to close issue #%s for merged branch %s: %v", issueID, cur, err)
+				} else {
+					closed++
+				}
+			}
+			if cleaned > 0 || closed > 0 {
+				return StatusMsg{Text: fmt.Sprintf("Cleaned merged in_project branch, closed %d issue(s)", closed)}
+			}
+			return nil
+		}
+
 		worktrees, err := mgr.List(projectPath)
 		if err != nil || len(worktrees) == 0 {
 			return nil
 		}
 
 		cleaned, closed := 0, 0
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 
 		for _, wt := range worktrees {
 			pr, err := client.FindPRByBranch(ctx, repo, wt.Branch)
@@ -866,11 +962,19 @@ func (m Model) loopWriteRevisionAgentCmd(projectID, issueID string) tea.Cmd {
 	hookScripts := m.state.hookScripts
 	agentGuidelines := m.state.agentGuidelinesMD
 	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
+	inProject := project.InProject()
 
 	return func() tea.Msg {
-		// Safety-net: ensure hooks + docs + gitignore exist
-		worktree.EnsureGitignore(wtPath)
-		_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		// Safety-net: ensure hooks + docs + gitignore exist. In in_project mode
+		// wtPath is the real repo, so merge settings.json (DeployHooksToProject)
+		// instead of overwriting it + writing settings.local.json.
+		if inProject {
+			worktree.EnsureGitignoreInProject(wtPath)
+			_ = worktree.DeployHooksToProject(wtPath, hookScripts)
+		} else {
+			worktree.EnsureGitignore(wtPath)
+			_ = worktree.DeployHooksToWorktree(wtPath, hookScripts)
+		}
 		deployDocs(wtPath, "", agentGuidelines, codeConstructionPrinciples)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

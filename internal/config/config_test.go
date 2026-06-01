@@ -85,6 +85,9 @@ func TestLoad(t *testing.T) {
 	if first.LogPolicy != "strict" {
 		t.Errorf("Projects[0].LogPolicy = %q, want %q", first.LogPolicy, "strict")
 	}
+	if first.Isolation != "worktree" {
+		t.Errorf("Projects[0].Isolation = %q, want %q", first.Isolation, "worktree")
+	}
 
 	// SSH
 	if !cfg.SSH.AutoServe {
@@ -304,6 +307,40 @@ func TestBaseBranchDefault(t *testing.T) {
 	for i, p := range cfg.Projects {
 		if p.BaseBranch != "dev" {
 			t.Errorf("Projects[%d].BaseBranch = %q, want %q", i, p.BaseBranch, "dev")
+		}
+	}
+}
+
+func TestIsolationDefault(t *testing.T) {
+	cfg, err := Load(testdataPath("config.toml"))
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	// Projects without explicit isolation should default to "worktree", and
+	// InProject() should agree.
+	for i, p := range cfg.Projects {
+		if p.Isolation != "worktree" {
+			t.Errorf("Projects[%d].Isolation = %q, want %q", i, p.Isolation, "worktree")
+		}
+		if p.InProject() {
+			t.Errorf("Projects[%d].InProject() = true, want false for default worktree mode", i)
+		}
+	}
+}
+
+func TestInProjectHelper(t *testing.T) {
+	for _, tc := range []struct {
+		isolation string
+		want      bool
+	}{
+		{"in_project", true},
+		{"worktree", false},
+		{"", false},
+		{"something-else", false},
+	} {
+		got := ProjectConfig{Isolation: tc.isolation}.InProject()
+		if got != tc.want {
+			t.Errorf("InProject(%q) = %v, want %v", tc.isolation, got, tc.want)
 		}
 	}
 }

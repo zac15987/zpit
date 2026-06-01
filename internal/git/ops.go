@@ -75,6 +75,12 @@ func SyncLocalBranch(ctx context.Context, cwd, branch string) (stdout, stderr st
 	return stdout, stderr, nil
 }
 
+// CurrentBranch returns the currently checked-out branch name in cwd, or "" if
+// HEAD is detached. Thin exported wrapper over currentBranchName.
+func CurrentBranch(ctx context.Context, cwd string) (string, error) {
+	return currentBranchName(ctx, cwd)
+}
+
 // LogGraph runs `git log --graph --oneline --all --decorate --color=always -n 50`.
 // Returns the raw (ANSI-colored) stdout. If stderr contains "does not have any commits yet"
 // or exit code indicates no commits, return ("", nil) so the caller can render a sentinel.
