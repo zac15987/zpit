@@ -26,7 +26,9 @@ Forbidden to modify:
 - `.claude/` directory (hooks, settings, docs — managed by Zpit)
 - `.git/` directory
 - `.env` files (secrets)
-- `CLAUDE.md` (project-owned, not agent-managed)
+- `CLAUDE.md` — project-owned. Do not modify unless the clarifier has
+  explicitly placed it in SCOPE (e.g. a `[modify] CLAUDE.md` entry for
+  stale-doc cleanup).
 
 Stay within your designated SCOPE. If you must modify files outside SCOPE,
 stop immediately and ask the user.
