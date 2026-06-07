@@ -620,6 +620,87 @@ func TestBashFirewall_Clarifier_AllowsRedirectToTmpTxt(t *testing.T) {
 	}
 }
 
+// ── bash-firewall.sh redirect classification ──
+// Discard devices and OS temp scratch are allowed; the worktree boundary still
+// holds; Windows reserved-name targets (nul/NUL) are blocked because git-bash
+// turns them into real, hard-to-delete files instead of a discard device.
+
+func TestBashFirewall_AllowsDevNullStderr(t *testing.T) {
+	// Regression guard: `2>/dev/null` must not be treated as a worktree escape.
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"command -v jq 2>/dev/null"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for 2>/dev/null, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_AllowsDevNullDiscardBoth(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"npm test > /dev/null 2>&1"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for > /dev/null 2>&1, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_AllowsTmpScratch(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo probe > /tmp/zpit_scratch"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for > /tmp/scratch, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_AllowsTmpdirEnvScratch(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo probe > $TMPDIR/zpit_scratch"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for > $TMPDIR/scratch, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_AllowsRelativeRedirect(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo log > ./build.log"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for relative redirect, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_BlocksEscapeOutsideWorktree(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo pwned > /etc/passwd"}}`,
+		agentEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for > /etc/passwd escape, got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_BlocksNulLower(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"command -v jq 2>nul"}}`,
+		agentEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for 2>nul, got %d: %s", code, msg)
+	}
+	if !strings.Contains(msg, "/dev/null") {
+		t.Errorf("expected nul block message to steer toward /dev/null, got: %s", msg)
+	}
+}
+
+func TestBashFirewall_BlocksNulUpper(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"echo x > NUL"}}`,
+		agentEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for > NUL, got %d: %s", code, msg)
+	}
+}
+
 // clarifier rm carve-out: allow `rm tmp_*.{md,txt}` so the clarifier can
 // clean up its own tracker temp file. The redirect carve-out lets it
 // create the file; the rm carve-out lets it delete it (matches
@@ -1073,6 +1154,59 @@ func TestPwshFirewall_NoType_StillAllowsRemoveItem(t *testing.T) {
 		agentEnv(nil))
 	if code != 0 {
 		t.Errorf("expected exit 0 when ZPIT_AGENT_TYPE unset, got %d: %s", code, msg)
+	}
+}
+
+// ── pwsh-firewall.sh redirect classification ──
+// PowerShell discards via `$null`; OS temp scratch via `$env:TEMP`; the
+// worktree boundary still holds; `nul`/`NUL` is blocked (PowerShell also makes
+// a real reserved-name file rather than discarding).
+
+func TestPwshFirewall_AllowsNullDiscard(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Get-Command jq > $null"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for > $null, got %d: %s", code, msg)
+	}
+}
+
+func TestPwshFirewall_AllowsNullDiscardStderr(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Get-Command jq 2>$null"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for 2>$null, got %d: %s", code, msg)
+	}
+}
+
+func TestPwshFirewall_AllowsEnvTempScratch(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"'probe' > $env:TEMP\\zpit_scratch"}}`,
+		agentEnv(worktreeEnv))
+	if code != 0 {
+		t.Errorf("expected exit 0 for > $env:TEMP\\scratch, got %d: %s", code, msg)
+	}
+}
+
+func TestPwshFirewall_BlocksEscapeOutsideWorktree(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"'pwned' > /etc/hosts"}}`,
+		agentEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for > /etc/hosts escape, got %d: %s", code, msg)
+	}
+}
+
+func TestPwshFirewall_BlocksNul(t *testing.T) {
+	code, msg := runHook(t, "pwsh-firewall.sh",
+		`{"tool_input":{"command":"Get-Command jq > nul"}}`,
+		agentEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for > nul, got %d: %s", code, msg)
+	}
+	if !strings.Contains(msg, "$null") {
+		t.Errorf("expected nul block message to steer toward $null, got: %s", msg)
 	}
 }
 

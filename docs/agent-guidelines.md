@@ -31,6 +31,18 @@ Forbidden to modify:
 Stay within your designated SCOPE. If you must modify files outside SCOPE,
 stop immediately and ask the user.
 
+### Output redirection
+
+- To discard output, use `/dev/null` (e.g. `cmd 2>/dev/null`, `cmd >/dev/null 2>&1`).
+  In PowerShell use `$null` (e.g. `cmd 2>$null`).
+- **Never use the Windows CMD form `nul`/`NUL`** (`2>nul`, `>NUL`). The Bash tool runs
+  under git-bash on Windows, which does NOT treat `nul` as a device — it creates a real,
+  reserved-name file that pollutes the repo and cannot be deleted normally. The firewall
+  blocks it.
+- Scratch/temporary output may go to the OS temp dir (`/tmp/...`, `$TMPDIR/...`) instead of
+  the repo — the firewall allows it. Prefer a unique name (`mktemp`) to avoid collisions
+  between parallel subagents.
+
 ## Decision Protocol
 
 You operate inside an automated loop. The default is to proceed; asking blocks the entire pipeline.

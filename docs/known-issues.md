@@ -592,3 +592,40 @@ The orchestrator hit a `[P]` batch (`[T1, T10]`), dispatched two `task-runner` s
 
 - §2 and §3 above describe the original `<parent>/.zpit-children/<slug>` design and its quirks — they remain accurate as historical context for the per-subagent worktree model.
 - `internal/prompt/coding.go` did NOT need changes: `worktreePath` is opaque to the orchestrator prompt, branch discovery uses `git -C "$path" rev-parse --abbrev-ref HEAD`, and cleanup uses `git worktree remove --force "$path"` + `git branch -D <branch>`.
+
+---
+
+## 10. Windows git-bash: `2>nul` / `>NUL` creates a real reserved-name junk file in the repo
+
+### Symptom
+
+An agent suppressing output with the Windows CMD-style discard `command 2>nul` (or `>NUL`) does **not** discard anything — instead a literal file named `nul` appears in the working directory, shows up in `git status`, and cannot be deleted by Explorer or a plain `rm`. In `in_project` mode this dirty file makes the next loop dispatch fail its clean-tree precheck → `SlotNeedsHuman`. Claude Code has many upstream reports of this (one session reportedly produced 1,290 `NUL` files).
+
+### Root Cause
+
+Claude Code's Bash tool runs under **git-bash** on Windows. Unlike `cmd.exe`, git-bash does **not** treat `nul` as the null device — it interprets `> nul` as "redirect to a file literally named `nul`". Because `nul` is a Windows *reserved device name*, the resulting file resists deletion (needs a `\\?\` path prefix) and breaks tools like OneDrive sync.
+
+The correct discard form on git-bash is `/dev/null` (`2>/dev/null`), which git-bash translates properly and never touches the filesystem.
+
+A compounding factor: the old redirect-escape detection in `bash-firewall.sh` **blocked** `/dev/null` (it only allowed literal `/tmp`) while **allowing** `2>nul` (not a `/`-absolute path). So the firewall pushed agents away from the safe form toward the junk-file-producing one.
+
+### Fix (2026-06-07)
+
+`hooks/bash-firewall.sh` and `hooks/pwsh-firewall.sh` redirect detection rewritten as a per-target classifier (see `docs/architecture/09-safety.md` §9.4.4):
+
+1. Redirect targets whose basename is `nul`/`NUL` (case-insensitive) are **blocked** with a message steering the agent to `/dev/null` (bash) / `$null` (PowerShell).
+2. `/dev/null` and the OS temp roots are now **allowed**, so agents no longer need to route scratch/discard output into the repo.
+
+Tests: `hooks/hooks_test.go` — `TestBashFirewall_BlocksNul*`, `TestBashFirewall_AllowsDevNull*`, `TestPwshFirewall_BlocksNul`, `TestPwshFirewall_AllowsNullDiscard*`.
+
+### Cleanup for existing junk files
+
+```powershell
+Get-ChildItem -Path . -Filter 'NUL' -File -Recurse -Force | ForEach-Object {
+    [System.IO.File]::Delete("\\?\$($_.FullName)")
+}
+```
+
+### Related
+
+- Upstream: anthropics/claude-code #23942, #15799 (NUL files on Windows git-bash).

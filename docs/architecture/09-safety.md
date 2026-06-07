@@ -165,7 +165,10 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
 - 網路風險：`curl|bash`、`wget|bash`、`npm publish`、`dotnet nuget push`
 - 全域套件安裝：`npm install -g`
 - 程序管理：`kill -9 1`、`killall`、`pkill -9`
-- **重導向逃逸偵測**：`>` 或 `>>` 指向 worktree 外的絕對路徑
+- **重導向分類（per-target classifier）**：抽出每個 `>`/`>>`/`2>`/`&>` 的目標逐一分類 —
+  - **放行**：discard 裝置（`/dev/null`、`/dev/stdout`、`/dev/stderr`、`/dev/fd/*`）、OS temp scratch（`/tmp`、`/var/tmp`、macOS `/var/folders`，以及未展開的 `$TMPDIR`/`$TMP`/`$TEMP` 形式）、worktree 內路徑（相對路徑或落在 `CLAUDE_PROJECT_DIR` 下的絕對路徑）
+  - **封鎖**：(1) worktree 外的絕對路徑（逃逸）；(2) basename 為 `nul`/`NUL`（大小寫不分）的目標 — git-bash 不把 `nul` 當 null 裝置，`2>nul` 會在工作目錄產生**真實的保留名檔案**，污染 `git status` 且難以刪除（`in_project` 模式下會讓下次派工 dirty → `SlotNeedsHuman`）；封鎖訊息引導 agent 改用 `/dev/null`
+  - 此分類取代了舊的 `(?!tmp)` / `[^t]` 啟發式（既誤擋 `/dev/null` 又漏掉 `nul`）。注意只檢查 `>`/`>>` 重導向；`curl -o`、`cp` 等非重導向寫入不在此範圍（由 path-guard 管 Write/Edit）
 - **Clarifier 角色額外封鎖**：所有 mutation verbs（`rm`/`mv`/`cp`/`mkdir`/`touch`/`sed -i`），但開放 `rm tmp_*.{md,txt}` 與 `>` 重導向到 `tmp_*.{md,txt}`，讓 clarifier 能管理自己的 tracker 暫存檔
 
 **grep 相容性：** 先嘗試 `-P`（PCRE），不支援則 fallback 到 `-E`（ERE）。
@@ -180,6 +183,7 @@ Hook 腳本透過 `go:embed` 嵌入 Zpit binary，每次 agent 啟動（`[c]`/`[
 - 網路風險：`Invoke-WebRequest|iex`、`iwr|iex`、`curl|iex`、`wget|iex`、`New-Object Net.WebClient` 等下載即執行模式
 - 套件 publish：`npm publish`、`dotnet nuget push`、`pip ... upload`、`npm install -g`
 - 破壞性檔案操作：`Remove-Item ... -Recurse ... /` / `~` / `..`
+- **重導向分類**：與 bash-firewall 同一套 per-target 分類，差異在 discard 集合加入 PowerShell 原生 `$null`、temp 集合加入 `$env:TEMP`/`$env:TMP`。`nul`/`NUL` 同樣封鎖（PowerShell 也不把 `nul` 當裝置，會生保留名檔），訊息引導改用 `$null`
 - **Clarifier 角色額外封鎖**：PS 寫入 cmdlets 與 aliases（`Remove-Item` / `rm` / `ri` / `del` / `Move-Item` / `mv` / `Copy-Item` / `cp` / `New-Item` / `mkdir` / `Set-Content` / `Add-Content` / `Out-File` / `Clear-Content`），同樣對 `tmp_*.{md,txt}` 開 carve-out（覆蓋 `Remove-Item` / `Set-Content` / `Out-File` 與 `>` 重導向三種寫入方式）
 
 ### 9.4.6 Hook 4: Git 操作守衛 (git-guard.sh)

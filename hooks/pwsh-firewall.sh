@@ -155,15 +155,54 @@ if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
   done <<< "$NORMALIZED"
 fi
 
-# Redirect escape detection — block writes outside the working directory.
-# PS shares `>` redirect syntax with bash, so reuse the same logic.
+# Redirect escape detection — confine `>`/`>>` writes to the worktree, while
+# (a) allowing discard targets (PowerShell `$null`, plus the /dev/null family
+# in case agents mix idioms) and OS temp scratch ($env:TEMP &c.), and
+# (b) blocking the Windows reserved name `nul`/`NUL`: PowerShell does NOT treat
+# `nul` as the null device either, so `> nul` creates a real, reserved-name
+# file that pollutes the repo and resists deletion. Mirrors bash-firewall.sh.
 ALLOWED_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-if echo "$COMMAND" | grep -qP '>+\s*/(?!tmp)' 2>/dev/null || echo "$COMMAND" | grep -qE '>+\s*/[^t]' 2>/dev/null; then
-  REDIRECT_TARGET=$(echo "$COMMAND" | grep -oP '>+\s*\K/[^\s;|&]+' 2>/dev/null | head -1 || echo "$COMMAND" | grep -oE '>\s*/[^ ;|&]+' | sed 's/>\s*//' | head -1)
-  if [ -n "$REDIRECT_TARGET" ] && [[ "$REDIRECT_TARGET" != "${ALLOWED_DIR}"/* ]]; then
-    echo "BLOCKED: Redirect target '$REDIRECT_TARGET' is outside the working directory." >&2
+
+# Extract every redirect target (the token after > >> 2> 2>> *> ...).
+if [ "$GREP_FLAG" = "-P" ]; then
+  REDIRECT_TARGETS=$(echo "$COMMAND" | grep -oP '(?:[0-9*]*|&)>>?\s*\K[^\s;|&<>]+' 2>/dev/null || true)
+else
+  REDIRECT_TARGETS=$(echo "$COMMAND" | grep -oE '([0-9*]*|&)>>?[[:space:]]*[^[:space:];|&<>]+' 2>/dev/null | sed -E 's/^([0-9*]*|&)>>?[[:space:]]*//' || true)
+fi
+
+while IFS= read -r tgt; do
+  [ -z "$tgt" ] && continue
+
+  # basename after stripping both / and \ path separators
+  base="${tgt##*/}"
+  base="${base##*\\}"
+  base_lc=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+
+  # 1. Windows reserved name → block, steering the agent to $null / /dev/null.
+  if [ "$base_lc" = "nul" ]; then
+    echo "BLOCKED: Redirect target '$tgt' resolves to the Windows reserved name 'nul'. PowerShell creates a real, hard-to-delete file instead of discarding output. Use '\$null' instead (e.g. '2>\$null')." >&2
     exit 2
   fi
-fi
+
+  # 2. Discard targets → allow.
+  case "$tgt" in
+    '$null'|'${null}'|/dev/null|/dev/stdout|/dev/stderr|/dev/fd/*) continue ;;
+  esac
+
+  # 3. OS temp scratch → allow. The hook sees the unexpanded command string,
+  #    so match literal env-var forms as well as the well-known temp roots.
+  case "$tgt" in
+    /tmp|/tmp/*|/var/tmp|/var/tmp/*|/var/folders/*) continue ;;
+    '$env:TEMP'*|'${env:TEMP}'*|'$env:TMP'*|'${env:TMP}'*|'$env:TMPDIR'*) continue ;;
+    '$TMPDIR'*|'${TMPDIR}'*|'$TMP'*|'${TMP}'*|'$TEMP'*|'${TEMP}'*) continue ;;
+  esac
+
+  # 4. Absolute path outside the worktree → block (escape). Relative targets
+  #    resolve inside the worktree and are allowed (path-guard covers Write/Edit).
+  if [[ "$tgt" == /* && "$tgt" != "${ALLOWED_DIR}"/* ]]; then
+    echo "BLOCKED: Redirect target '$tgt' is outside the working directory." >&2
+    exit 2
+  fi
+done <<< "$REDIRECT_TARGETS"
 
 exit 0
