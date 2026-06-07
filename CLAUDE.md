@@ -50,7 +50,7 @@ internal/
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
 ├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
 ├── worktree/            # Worktree Manager, Slugify(), DeployHooksToProject(), DeployHooksToWorktree(), settings.json merge
-└── tui/                 # Bubble Tea TUI — see "TUI Message Flow" below
+└── tui/                 # Bubble Tea TUI — see docs/architecture/02-tui-design.md + 10-appstate.md
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
     ├── channel.go       # Channel EventBus subscription and event reading
     ├── confirm.go       # Confirm dialogs, executePendingOp, undeploy, redeploy
@@ -73,248 +73,34 @@ internal/
 
 ## Architecture
 
-### go:embed Deployment Flow
-
-Agents, hooks, and docs are embedded in the binary and deployed at runtime to target projects:
-
-```
-main.go (go:embed vars)
-  → NewAppState(cfg, clarifierMD, reviewerMD, taskRunnerMD, efficiencyMD, guidelinesMD, principlesMD, hookScripts, logWriter)
-    → stored in AppState fields
-      → DeployHooksToProject()/DeployHooksToWorktree() on every agent launch ([c]/[r]/[l]) or redeploy ([d]) — [f] uses deployAndLaunchAgentLite (no hooks)
-        → writes to target project's .claude/hooks/, .claude/agents/, .claude/docs/
-        → merges hook config into .claude/settings.json (or settings.local.json for worktrees)
-      → loopWriteAgentCmd() deploys task-runner.md when Issue Spec contains TASKS
-```
-
-This means changes to `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md` require a rebuild to take effect.
-
-### TUI Message Flow (Bubble Tea Pattern)
-
-The TUI follows Bubble Tea's Elm architecture with a consistent pattern across all features:
-
-1. **msg.go** — defines all `tea.Msg` types (data carriers, no logic)
-2. **loop_cmds.go** / session.go / launch.go / tracker_ops.go / channel.go — `tea.Cmd` functions that perform async work (API calls, file I/O, polling), return messages. These acquire `RLock` for reads.
-3. **loop_handler.go** / session.go / launch.go / tracker_ops.go / confirm.go / channel.go — message handlers dispatched from model.go `Update()` (one-line dispatch). These acquire `Lock` for writes + call `NotifyAll`.
-4. **view_projects.go** / view_status.go / view_channel.go — pure rendering functions, acquire `RLock` for reads.
-
-Loop engine example: `loopPollCmd` (cmd) → `LoopPollMsg` (msg) → handler creates worktree cmd → `LoopWorktreeCreatedMsg` → handler writes agent file → `LoopAgentWrittenMsg` → handler launches agent → `LoopAgentLaunchedMsg` → handler starts label polling → `LoopLabelPollMsg` → handler detects "review" label → launches reviewer...
-
-**Tick-driven poll heartbeat**: The three periodic poll chains (todo poll, PR poll, label poll) use `tea.Tick` with reschedule logic owned by the *tick* handlers (`handleLoopPollTick` / `handleLoopPRPollTick` / `handleLoopLabelPollTick` in `loop_handler.go`), not the business handlers (`handleLoopPoll` / `handleLoopPRStatus` / `handleLoopLabelPoll`). Each tick handler checks a gate (loop `Active` + slot in the expected state) and returns `tea.Batch(pollCmd, scheduleNextTick)` up-front, so any nil/error path in the poll cmd or business handler cannot silently break the chain. Business handlers must NOT call `loopSchedule{Poll,PRPoll,LabelPoll}` mid-chain — those functions are reserved for **kickoff** (loop start, state transitions into a new polling state, resume). Adding a new `return m, m.loopSchedule*Poll(...)` inside a business handler would create two competing tick chains; the regression tests in `loop_tick_test.go` guard this invariant.
-
-**Focus panel system + Dock layout**: The main view (`ViewProjects`) uses a lazygit-style dock — left column stacks Projects / Active Terminals / Loop Engine; right column is the Hotkeys reference panel. Each panel owns its own `viewport.Model` (`projectsVP` / `terminalsVP` / `loopVP` / `hotkeysVP` on `Model`) so scrolling is independent; only the focused panel reacts to `↑↓/PgUp/PgDn`, and mouse-wheel dispatches to whichever panel the cursor hovers via `hitTestDockPanel`. Three panels are focusable via `FocusedPanel` enum (`FocusProjects` → `FocusTerminals` → `FocusLoopSlots`); Tab cycles through those with content (terminals skipped if no active terminals, loop skipped if no loop slots) and Hotkeys stays docked but non-focusable. Each focusable panel has its own cursor (`cursor` for projects, `termCursor`, `loopCursor`); terminals/loop rebuild `termLineStarts` / `loopLineStarts` during sync to drive variable-stride cursor-follow. The `x` key kills the selected terminal when `FocusTerminals` is active (with confirm dialog, force-kills the process). Visual treatment: Catppuccin Mocha palette (see `styles.go`), single-column `▎` mauve bar on the focused panel's chrome only — it is *not* rendered on body rows. Panels stacked below the first in a column get a 1-row gutter (`panelChromeRows(stacked)` returns 3 vs 2). Layout sizing lives in `computePanelRects` (70/30 ideal split, min widths `dockMinLeftWidth`/`dockMinRightWidth`, weight-based height split); `TestComputePanelRects` is the regression guard. `FocusedPanel` is per-Model (per-connection UI state), not shared in AppState.
-
-### Session Log Monitoring
-
-The TUI monitors Claude Code sessions via JSONL log files:
-
-1. `EncodeCwd()` converts project path to Claude's directory name (non-alphanumeric → `-`)
-2. Session discovery: scans `~/.claude/sessions/{pid}.json` for matching project + alive PID
-3. Two-phase startup: finds PID immediately (enables liveness check), then waits for JSONL file creation
-4. State detection: parses `stop_reason` from assistant messages — `"end_turn"` = waiting, `"tool_use"` = working
-5. Permission detection: `notify-permission.sh` hook writes signal file to `~/.zpit/signals/`, TUI polls every 2s
-6. Liveness check every 5s; `/resume` detection re-reads `{pid}.json` for session ID changes
-
-### Session Sync ([h] History)
-
-The `[h]` History view (`internal/tui/view_sessions.go` + `sessions.go` + `internal/sessionsync/`) lets users move Claude Code conversations between machines so `claude --resume <session-id>` works on the destination.
-
-**Bundle format** (`sessionsync.Manifest`): a zip with `manifest.json` at the root + one `<session-id>.jsonl` per session + optional `<session-id>/subagents/` subtrees + optional `memory/` subtree. Manifest captures `format_version`, `source_os`, `source_cwd`, `source_encoded_cwd`, `sessions[]`, `exported_at`, `include_memory`.
-
-**Cross-OS path rewrite**: each session JSONL is re-streamed at import time. Lines that parse as JSON objects with a `"cwd"` string field equal to the bundle's `source_cwd` are re-marshalled with the new destination cwd; every other line passes through verbatim. Path-shaped strings inside `text` / `message.content` are NEVER rewritten — the rewrite only touches the JSON `cwd` field.
-
-**`[h]` view (`internal/tui/view_sessions.go`)**: full-screen view with two states — folder list (every directory under `~/.claude/projects/`) and drilled-in session list (multi-select with `Space` / `[a]`, export via `[e]`, import via `[i]` or `[+] Import bundle...`). Modal stack handles active-session warning, export confirm, import wizard (path → preview → dest → final → run → summary), and per-session collision prompts.
-
-**Active-session detection**: reads `~/.claude/sessions/*.json` and matches by SessionID + alive PID via `watcher.IsClaudeProcess`. Used to flag the 🟢 marker in the session list and warn at export time when a selected session is mid-conversation.
-
-**Memory bundling is opt-in** (default off) — memory may contain user-private notes (email, dated reminders) that are not strictly required for `/resume` continuity.
-
-### AppState + Multi-Client Architecture
-
-`AppState` (`internal/tui/appstate.go`) holds all shared mutable state. Multiple `tea.Program` instances share one `*AppState`:
-
-```
-zpit serve  (or zpit with auto_serve=true)
-  └─ AppState (one instance)
-       ├─ cfg, env, clients, broker   (read-only after init — no locks needed)
-       ├─ activeTerminals, loops,    (mutable — protected by sync.RWMutex)
-       │  channelEvents, channelSubs
-       └─ Subscribe/NotifyAll        (pub/sub — separate sync.Mutex)
-            ├─ SSH Client A → Model { state: *AppState, isRemote: true }
-            ├─ SSH Client B → Model { state: *AppState, isRemote: true }
-            └─ Local TUI    → Model { state: *AppState, isRemote: false }
-```
-
-**Auto-serve mode** (`ssh.auto_serve = true`): When `zpit` is run without subcommand and `auto_serve` is enabled, it automatically starts the SSH server in-process via `StartServerAsync()`, then connects to itself via `ssh localhost -p <port>`. The user sees the same TUI but over SSH — allowing seamless mobile access. When the local SSH session ends, the server shuts down automatically. Implementation: `runAutoServe()` in `main.go`, which uses `ServerHandle` from `internal/ssh/server.go` for lifecycle management.
-
-**Concurrency model:**
-- Two independent mutexes: `mu` (RWMutex) for state, `subMu` (Mutex) for subscribers — avoids deadlock when `NotifyAll` is called while `mu` is held
-- Copy-before-closure pattern: cmd closures never hold references to AppState fields; mutable data copied to locals before lock release
-- Action-defer pattern: handlers collect actions under write lock, create cmds after unlock to avoid nested lock acquisition
-- Buffered channel (size 1): coalesces rapid state changes into single notification per subscriber
-
-### Config Hot-Reload
-
-The `[e]` key opens a sub-menu for config editing:
-- `[1]` Toggle channel — instant on/off for `channel_enabled` with broker lazy start
-- `[2]` Edit channel_listen — multi-select list of other projects + `_global`
-- `[3]` Open config in editor — `$EDITOR` launch via `tea.ExecProcess`, auto-reload on close
-
-**Hot-reloadable fields** (applied immediately): `language`, `notification.*`, `worktree.poll_seconds/pr_poll_seconds/max_review_rounds`, `terminal.*`, `agent_models.*` (picked up on the next agent launch — already-running sessions keep their original model), per-project `channel_enabled/channel_listen/base_branch/log_policy/isolation` (isolation reload applies to the next issue dispatch — an in-flight slot keeps its allocated working tree).
-
-**Restart-required fields** (status bar warning): `broker_port`, `ssh.*` (including `auto_serve`), `providers.*`, new/removed `[[projects]]`, `worktree.base_dir_*/dir_format/max_per_project`.
-
-Channel quick-toggle uses targeted TOML writing (`internal/config/toml_writer.go`) — locates the matching `[[projects]]` block by `id` and updates only the `channel_enabled` or `channel_listen` line, preserving all other content including comments.
-
-SSH remote mode: `[3]` shows the config file path instead of launching an editor; `[r]` triggers manual reload.
-
-### Cross-Agent Channel (Broker + MCP)
-
-When `channel_enabled = true` for a project, agents can communicate in real time via a local HTTP broker. Supports same-project, cross-project, and global broadcast communication:
-
-```
-Agent A (Project X)            Agent B (Project Y)
-  └─ MCP stdio server            └─ MCP stdio server
-       ↓ HTTP POST                     ↓ HTTP POST
-     ┌──────────────────────────────────────────┐
-     │ Broker (HTTP on 127.0.0.1:broker_port)   │
-     │ ├─ POST /api/artifacts/{project}/{issue_id} │
-     │ ├─ GET  /api/artifacts/{project}           │
-     │ ├─ POST /api/messages/{project}/{to}       │
-     │ ├─ GET  /api/messages/{project}/{issue_id} │
-     │ ├─ GET  /api/events/{project} (SSE)        │
-     │ └─ GET  /api/projects (discovery)          │
-     └──────────────────────────────────────────┘
-       ↓ EventBus (in-memory pub/sub, keyed by project)
-     TUI: AppState.channelEvents → ViewChannel ([m] key)
-```
-
-**Cross-project targeting model** — agents choose communication scope via `target_project`:
-
-| `target_project` | `to` | Effect |
-|---|---|---|
-| omitted (default) | `"3"` | Same project, specific issue |
-| `"project-a"` | `"5"` | Cross-project, specific issue |
-| `"project-a"` | `"_project"` | Broadcast to all agents in target project |
-| `"_global"` | `"_all"` | Global broadcast to all listening agents |
-
-`_global` and cross-project keys are regular project keys in the EventBus — no special broker logic.
-
-**Broker** (`internal/broker/`): Lightweight HTTP server with REST endpoints for artifacts + messages, SSE streaming, and project discovery. In-memory storage, non-blocking publish (buffered channels, drop-on-full). Tracks SSE connections per project per agent type for discovery. SSE endpoint accepts optional `?agent_type=X` query parameter. Started in `NewAppState()` only if any project has `channel_enabled`.
-
-**AgentName**: Each agent gets a human-readable name (`AgentName` field on `Message` and `Artifact` structs, json tag `agent_name`). Format: `{type}-{4hex}` for manual launches (e.g. `clarifier-a3f7`, `efficiency-a3f7`), `{role}-#{issueID}` for loop launches (e.g. `coding-#42`). Generated by TUI at launch time via `crypto/rand`, passed through `ZPIT_AGENT_NAME` env var → `ServerConfig.AgentName` → HTTP POST body → broker storage → SSE → Channel view display as `[agent-name]` tag.
-
-**MCP Server** (`internal/mcp/`): Stdio server invoked by agents via `.mcp.json`. Exposes seven tools: `publish_artifact`, `list_artifacts`, `send_message`, `list_projects`, `subscribe_project`, `unsubscribe_project`, `list_subscriptions`. Tools accept optional `target_project` parameter for cross-project communication. Includes `AgentName` in HTTP POST bodies for `publish_artifact` and `send_message`. Spawns one SSE listener goroutine per subscribed project (own + `ListenProjects`), with self-echo filtering via per-instance UUID. Supports runtime dynamic subscription management via `subscribe_project`/`unsubscribe_project`/`list_subscriptions` tools (per-project context with mutex-protected cancel map). Entry point: `zpit serve-channel` subcommand.
-
-**Meeting Protocol**: When multiple clarifier agents are launched for the same project, they auto-discover each other via `list_projects` (checking `agents.clarifier` count) and enter meeting mode with Facilitator/Advisor roles. The first agent to broadcast `[Joining Meeting]` becomes Facilitator (drives the workflow, asks questions, drafts issues); subsequent agents become Advisors (provide analysis, follow Facilitator's rhythm). See `agents/clarifier.md` Meeting Protocol section for the full role assignment rules and message format.
-
-**TUI integration**: Loop start / manual launch calls `channelSubscribeCmd()` for own project + each `channel_listen` entry → subscribes to EventBus → `channelReadNextCmd()` blocks on channel → `ChannelEventMsg` appended to `AppState.channelEvents[projectID]` → `ViewChannel` merges events from own + listen projects, sorted by timestamp, with `[source]` tag for cross-project events. Loop stop unsubscribes all related channels (own + listen).
-
-**Config**: `channel_enabled` (per-project), `channel_listen` (per-project, list of additional project keys to subscribe, e.g. `["_global"]`), `broker_port` (global, default 17731), `zpit_bin` (global, explicit binary path for `.mcp.json` generation). Env var `ZPIT_LISTEN_PROJECTS` (comma-separated) passes listen config to MCP server. Env var `ZPIT_AGENT_NAME` passes the generated agent name to MCP server. Env var `ZPIT_AGENT_TYPE` passes the agent type (e.g. `clarifier`, `coding`, `reviewer`, `efficiency`, `claude`) to MCP server for SSE registration.
-
-### Desktop Agent
-
-A standalone Claude Code session that controls the OS via `zpit-desktop-mcp` (zpit's fork of `@zavora-ai/computer-use-mcp`, carrying Windows AUMID launch + entrypoint fixes — repo at `github.com/zac15987/computer-use-mcp`). Unlike project-scoped agents, it is global (no `project.Path`; cwd is `$HOME`/`%USERPROFILE%`) and limited to one active instance at a time.
-
-**Policy file**: `~/.zpit/desktop-policy.toml` — auto-created on first `zpit serve-desktop-proxy` invocation. Contains `deny_keys` (blocked keyboard shortcuts) and `allow_bundles` (named shortcut groups the user pre-approves).
-
-**Proxy architecture**:
-
-```
-Claude Code (desktop agent) ─── stdio ──> zpit serve-desktop-proxy (Go)
-                                                     │
-                                                     ├── policy gate (allow/deny per call)
-                                                     └── stdio ──> npx zpit-desktop-mcp (Node subprocess)
-                                                                              │
-                                                                              └── OS APIs (CGEvent / UIA / AX)
-```
-
-The proxy intercepts every JSON-RPC `tools/call` frame. Calls not on the tool allowlist are rejected before reaching the upstream process. For allowed tools, parameter-level policy is applied (`deny_keys`, `allow_bundles`, focus-strategy override). Hard-blocked tools include `run_script`, `filesystem`, `process_kill`, `registry`, `notification`, `scrape`, `snapshot`, all virtual-desktop tools, and `resize_window`. See `docs/architecture/desktop-agent.md` for the full allowlist justification and default `deny_keys` table.
-
-**Single-instance lock**: `AppState.activeDesktopAgent` enforces at most one desktop agent across all connected TUI clients. A second `[w]` invocation is rejected with a status toast; the lock is cleared when the agent process exits.
-
-**Launch hotkey**: `[w]` (W for Window control; `[g]` was unavailable due to GitStatus). Launched from the main view (`ViewProjects`) without requiring a project selection. On `runtime.GOOS == "linux"`, `[w]` is a no-op (status toast shown) because `computer-use-mcp` declares `os: ["darwin", "win32"]` in its `package.json`. The hotkey is also omitted from the hotkeys panel on Linux.
-
-**Deliberate convention deviations**:
-- Single-instance enforcement — every other agent type can be launched in parallel; the desktop agent cannot.
-- Global scope — no `project.Path`; no per-project hooks deployed; cwd is the user home directory.
-- No hook deployment — path-guard, bash-firewall, and git-guard are meaningless when the agent has SendInput over the whole desktop. The proxy policy is the safety layer.
-
-### TrackerClient
-
-Dual-backend REST API abstraction (`internal/tracker/`):
-
-```
-TrackerClient interface
-  ├─ ForgejoClient → Forgejo/Gitea REST API v1
-  └─ GitHubClient  → GitHub REST API
-```
-
-- Auth via `token_env` (env var name, never stored directly)
-- TUI uses TrackerClient for status display + label polling
-- Agents interact with trackers via MCP (separate from TrackerClient)
-
-### Loop Engine State Machine
-
-The loop automates: poll todo → create worktree → coding agent → reviewer → PR merge → cleanup.
-
-State transitions are **label-driven** (poll issue labels, not PID monitoring). Agents set labels to signal completion:
-- Coding agent sets `review` → reviewer starts
-- Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry up to `max_review_rounds`)
-
-States defined in `internal/loop/types.go`: `SlotCreatingWorktree` → `SlotWritingAgent` → `SlotLaunchingCoder` → `SlotCoding` → `SlotLaunchingReviewer` → `SlotReviewing` → (fork on `auto_merge`) → `SlotAutoMerging` | `SlotWaitingPRMerge` → `SlotCleaningUp` → `SlotDone`. Error/human-intervention states: `SlotNeedsHuman`, `SlotError`.
-
-**`auto_merge` fork** (at the `ai-review` transition):
-- `auto_merge = false` (default) → `SlotWaitingPRMerge` → polls PR status every `pr_poll_seconds` until human merges on GitHub/Forgejo.
-- `auto_merge = true` → `SlotAutoMerging` → Zpit calls the tracker's merge API (one-shot with 3 retries on transient errors, backoff 1s/4s/16s). On permanent failure or transient-exhausted, slot escalates to `SlotNeedsHuman`; on auth error, to `SlotError`. On success, proceeds to `SlotCleaningUp`.
-
-### Task Execution Model (Sequential + Parallel Subagents)
-
-When an Issue Spec contains `## TASKS`, the coding agent acts as an **orchestrator** — it delegates each task to a `task-runner` subagent instead of implementing tasks itself. This provides context isolation between tasks.
-
-Note on terminology: zpit uses **regular Claude Code subagents** (the `subagent_type: "task-runner"` path, with `isolation: "worktree"` for `[P]` tasks). This is distinct from Claude Code's *Agent Team* feature (the `team_name + name` teammate path in `AgentTool.tsx`) — we do not use Agent Teams. Earlier versions of this doc called the parallel path "Agent Team" which was misleading; the current terminology is "parallel subagent batch".
-
-**Execution strategy:**
-- **Sequential tasks** (no `[P]`): Delegated one at a time to `task-runner` subagent via the Agent tool. Each subagent runs in its own context window, implements the task, and commits.
-- **Parallel tasks** (`[P]` marked): Consecutive `[P]` tasks form a parallel batch. When all dependencies for the batch are satisfied, the orchestrator dispatches a **parallel subagent batch** — one `task-runner` subagent per task, each spawned with `isolation: "worktree"` so they work in their own child worktrees. **Marking rule:** adjacent tasks sharing the same dependency set and touching different files must ALL be `[P]`; omitting `[P]` on any one breaks the batch.
-- **Mixed**: Groups execute in dependency order — sequential tasks and parallel batches interleave as the dependency graph demands.
-- **No tasks**: `buildStandardWorkflow()` generates the same prompt as before (no delegation).
-- **in_project isolation override**: When a project sets `isolation = "in_project"` (see Config), `[P]` parallel batches are force-disabled — `BuildCodingPrompt` normalizes every task to sequential (`DisableParallelBatches`), so even `[P]`-marked tasks run as sequential `task-runner` delegations. A single working tree cannot host parallel child worktrees, so the parallel path is unavailable in that mode.
-
-**Prompt generation** (`internal/prompt/coding.go`):
-- `groupTasks()` partitions tasks into sequential singletons and parallel batches
-- `buildSubagentDelegation()` generates Agent tool delegation instructions for sequential tasks
-- `buildParallelSubagentDelegation()` generates parallel-batch instructions + worktree-isolation hand-off (only when `[P]` tasks exist) — the orchestrator calls the Agent tool with `isolation: "worktree"` per subagent so Claude Code forks a child worktree via the `WorktreeCreate` hook
-- Task Execution Order section sequences the groups correctly and emits the post-batch integration block for each `[P]` group: (1) `git -C <path> rev-parse --abbrev-ref HEAD` per subagent to discover branch names (CC doesn't propagate `worktreeBranch` — see known-issues §3), (2) `git cherry-pick` in task-ID order, (3) cleanup as TWO SEPARATE Bash calls — `git worktree remove --force <path>` then `git branch -D <branch>` (never chained with `&&`, so a hook block on one cannot nuke the other — see known-issues §4)
-
-**task-runner subagent** (`agents/task-runner.md`): Restricted tools (`Read, Write, Edit, Bash, Glob, Grep`), reads CLAUDE.md + agent-guidelines on startup, commits with `[ISSUE-ID] T{N}: {description}` format, stays within assigned file scope. The `model:` field in its frontmatter is injected at deploy time from `cfg.AgentModels.TaskRunner` (see `injectFrontmatterModel()` in `launch.go`), so task-runner subagents can run on a different model from the orchestrator.
-
-**Per-Subagent Worktree Model** (replaces the historical Parallel Commit Protocol). For `[P]` batches, the orchestrator calls the Agent tool with `isolation: "worktree"` per subagent. Claude Code fires zpit's `WorktreeCreate` hook (`hooks/worktree-create.sh`), which forks a child worktree from the orchestrator's *current HEAD* under `$HOME/.zpit/children/<8-hex-sha256(parent_cwd+slug)>` (bypassing Claude Code's built-in `origin/<defaultBranch>` fork — that would miss any sequential task commits landed earlier in the loop; the flat path also dodges Windows MAX_PATH that nested `<parent>/.zpit-children/<slug>` layouts kept tripping — see known-issues §9), creates the branch `<parent-branch>-<slug>`, and copies `.claude/` + `.mcp.json` into the child so hooks and agent docs are available there. The subagent commits normally in its child worktree — no shared index, no shared ref-lock, no race. The Agent tool returns `{worktreePath}` per subagent; `worktreeBranch` is NOT set on the hook-based path (Claude Code limitation — see known-issues §3). After all subagents return, the orchestrator (a) discovers each branch via `git -C <worktreePath> rev-parse --abbrev-ref HEAD`, (b) cherry-picks them onto the parent branch in task-ID order, (c) cleans up as **TWO SEPARATE Bash calls** — `git worktree remove --force` (always `--force` from the start because the copied `.claude/` makes plain remove fail) and `git branch -D` (never chained with `&&`; if one is hook-blocked the other must still run). Cherry-pick conflicts surface as `cherry-pick --abort` → NeedsHuman instead of silent file reverts. Sequential tasks skip all of this (no race; commit directly in parent worktree). See `docs/known-issues.md` §2 for the three Parallel Commit Protocol iterations (v1 `mkdir`-lock, v2 isolated `GIT_INDEX_FILE`, v3 orchestrator resync) this model replaces, and §3/§4/§5 for the bugs that surfaced during the migration's smoke tests. Claude Code's `isolation` is a runtime Agent-tool parameter, not a subagent-frontmatter key, so the orchestrator prompt drives activation; the `model:` injected into `task-runner.md` frontmatter sets the default subagent model but does not affect `isolation`.
-
-### Hook-Based Safety System (5 Layers)
-
-1. **agent-guidelines.md** (soft — deployed to `.claude/docs/`, agents read on startup)
-2. **--allowedTools per agent role** (medium — Claude Code enforced)
-3. **PreToolUse hooks** (hard — enforced even with `--bypass-all-permissions`):
-   - `path-guard.sh` — Write/Edit confined to worktree dir; denies `.claude/agents/`, `.claude/settings`, `.git/`, `.env`
-   - `bash-firewall.sh` — blocks destructive Bash commands (rm -rf, curl|bash, force push, etc.); clarifier-role blocks all mutation verbs except `rm tmp_*.{md,txt}` (its own tracker temp file)
-   - `pwsh-firewall.sh` — PowerShell-tool counterpart of bash-firewall (`Remove-Item` / `Stop-Computer` / `iwr|iex`, etc.); same clarifier carve-out for `tmp_*.{md,txt}`. Without it, agents on Windows could bypass bash-firewall via the PowerShell tool.
-   - `git-guard.sh` — push whitelist (only `feat/*`), blocks merge/rebase/branch-delete
-   - `notify-permission.sh` — not safety; writes signal file for TUI permission detection
-4. **Git worktree isolation** (physical) — **only in the default `isolation = "worktree"` mode.** When a project sets `isolation = "in_project"` (see Config) this physical layer is absent: the agent edits the real project files on a `feat/` branch checked out in place. `path-guard.sh` still confines writes to the project root (it resolves scope via `git rev-parse --show-toplevel`), but there is no separate worktree copy. Use in_project only for repos where the worktree copy is prohibitively expensive (e.g. a 3D/Unreal repo with hundreds of MB of tracked binary assets).
-5. **Final merge gate** — conditional:
-   - When `auto_merge = false` (default), Human PR review is the final gate; nothing merges without you.
-   - When `auto_merge = true`, the AI Reviewer PASS label (`ai-review`) replaces the human gate and triggers the tracker's merge API (via Go code, not via a git-guard-covered push).
-
-   Only enable `auto_merge` when you trust the reviewer model's quality on your repo — it removes the last line of defense before code lands on `dev`.
-
-Every zpit-managed project and worktree receives the same complete hook set (`path-guard` + `bash-firewall` + `pwsh-firewall` + `git-guard` + `notify-permission` + `worktree-create`). There is no `hook_mode` knob — the prior strict/standard/relaxed distinction was removed because `ZPIT_AGENT=1` already prevents the hooks from affecting non-zpit Claude Code sessions, so per-project weakening provided no real flexibility, only footguns. Legacy `hook_mode = "..."` keys in `config.toml` are parsed and ignored with a one-time deprecation warning on startup.
-
-**in_project hook deploy**: When `isolation = "in_project"`, the loop deploys hooks via `DeployHooksToProject` (which *merges* the hook config into the real repo's existing `.claude/settings.json`) instead of `DeployHooksToWorktree` (which overwrites + adds `settings.local.json`). The in_project repo is the main worktree, so it resolves project settings normally — no dual-write needed, and merging preserves any user-side `settings.json` keys. **All four deploy sites** (`loopCreateWorktreeCmd`, `loopWriteAgentCmd`, `loopWriteAndLaunchReviewerCmd`, `loopWriteRevisionAgentCmd`) branch on `project.InProject()` — using `DeployHooksToWorktree` on a real repo would clobber the user's `settings.json` and leave an untracked `settings.local.json`. Instead of `EnsureGitignore`, in_project calls **`EnsureGitignoreInProject`**, which additionally **self-ignores `.gitignore`** (`inProjectIgnoreRules`): a zpit-created `.gitignore` in the real repo is never committed (the coding prompt forbids it), so without self-ignore it would stay untracked and trip the dirty-tree check on the *next* dispatch → `SlotNeedsHuman`. Self-ignore is in_project-only (worktree/manual launches keep plain `EnsureGitignore` so they don't write a hard-to-`git add` self-ignored file into a normal repo). Caveat: self-ignore only helps an *untracked* `.gitignore`; a repo that already tracks a `.gitignore` missing the zpit block will show it modified after the first deploy — commit that block once to clear it. The coding prompt also carries an explicit "do not stage/commit `.gitignore`, `.claude/`, `.mcp.json`" note.
-
-**Worktree dual-write (since the Issue #39 fix)**: `DeployHooksToWorktree` writes BOTH `.claude/settings.json` and `.claude/settings.local.json` into every worktree. Claude Code resolves project settings via `getSettingsRootPathForSource()` against process CWD, so a linked git worktree does NOT inherit settings from the main repo — without an explicit file in the worktree, the `WorktreeCreate` hook (and every other hook) silently misfires, which is the root cause of Issue #39's wrong-base subagent worktrees. Writing both files belt-and-suspenders the project layer (settings.json) and the local-override layer (settings.local.json) so a user-side override does not displace the zpit-managed hooks.
-
-**ZPIT_AGENT=1**: Hook scripts check this env var — if absent, they `exit 0` (allow everything). This ensures hooks only restrict Zpit-launched agents, not plain Claude Code sessions. On Windows, injected via `zpit-env.cmd` wrapper; on Unix, inline-prefixed to command.
+Full architecture lives in `docs/architecture/` (English, one file per topic — start at `docs/architecture/README.md`). **Read the relevant doc before changing a subsystem.** This section is just the map plus the invariants worth keeping in front of every agent.
+
+### Subsystem map
+
+| Doc | Covers |
+|---|---|
+| `01-vision.md` | Dispatch-mode design principle; per-environment terminal launch (wt.exe / tmux) |
+| `02-tui-design.md` | Per-view screen mockups; Bubble Tea Elm pattern (msg → cmd → handler → view); lazygit-style focus-panel dock; `[h]` session-sync browser |
+| `03-system-architecture.md` | Architecture diagram; terminal launcher; session-log watcher (encoded cwd, two-phase startup, `stop_reason` state, 5s liveness, `notify-permission.sh` → `~/.zpit/signals/` 2s poll) |
+| `04-config.md` | `config.toml` structure, TrackerClient, Profile, config hot-reload (hot vs restart-required fields, targeted TOML writer) |
+| `05-issue-spec.md` | Issue Spec format, validation logic, prompt templates |
+| `06-agents.md` | Clarifier/Reviewer/Task-Runner agents; go:embed deployment; i18n; orchestrator → task-runner delegation; per-subagent worktree model |
+| `07-worktree-and-loop.md` | Worktree architecture; label-driven Loop slot state machine; issue status flow; `auto_merge` fork + retry/backoff |
+| `08-notification.md` | Agent blocking detection; notification channels (cooldown, Windows Toast, sound) |
+| `09-safety.md` | 5-layer safety system; PreToolUse hooks; ZPIT_AGENT |
+| `10-appstate.md` | One AppState shared across SSH clients + local TUI; two-mutex concurrency; pub/sub; auto-serve mode |
+| `11-milestone.md` | Milestone log (M1–M4c completion records, M5 planning) |
+| `12-channel.md` | Cross-agent channel: broker + MCP; same/cross/global targeting; AgentName; Meeting Protocol; TUI integration |
+| `desktop-agent.md` | Desktop agent: proxied MCP, policy gate, tool allowlist + `deny_keys`, single-instance lock, `[w]` hotkey |
+
+### Invariants (don't rediscover these)
+
+- **TrackerClient** (`internal/tracker/`) — dual backend: `ForgejoClient` (Forgejo/Gitea REST v1) + `GitHubClient` (GitHub REST). Auth via `token_env` (the env-var *name*, never the token itself). The TUI uses it for status display + label polling; agents talk to trackers via MCP instead, never TrackerClient.
+- **Loop tick chains** — the three polling chains (todo / PR / label) reschedule *only* inside their tick handlers (`handleLoop*Tick`), never inside business handlers. A business handler that calls `loopSchedule*Poll` mid-chain spawns a second competing chain; `loop_tick_test.go` guards this. Those scheduler fns are kickoff-only (loop start, state transition into a polling state, resume).
+- **AppState concurrency** — two mutexes: `mu` (RWMutex, state) and `subMu` (Mutex, subscribers), so `NotifyAll` can fire while `mu` is held. Copy mutable fields to locals before releasing the lock (copy-before-closure); collect actions under the write lock and build cmds after unlock (action-defer); never hold `mu` while calling a cmd that takes its own `RLock`.
+- **Parallel `[P]` task batches** — the orchestrator spawns one `task-runner` per task with `isolation: "worktree"`. After they return: discover each branch with `git -C <path> rev-parse --abbrev-ref HEAD` (CC doesn't propagate `worktreeBranch` — known-issues §3), cherry-pick in task-ID order, then clean up as **TWO separate Bash calls** — `git worktree remove --force` then `git branch -D`, never chained with `&&` (a hook block on one must not skip the other — §4). `isolation = "in_project"` force-disables `[P]` (one working tree can't host parallel children).
+- **Hook gate** — every hook `exit 0`s unless `ZPIT_AGENT=1`, so non-zpit Claude Code sessions are untouched. Worktrees get a dual-write of `.claude/settings.json` + `settings.local.json` (a linked worktree doesn't inherit the main repo's settings — Issue #39); `in_project` instead *merges* into the real repo's `settings.json` and self-ignores a zpit-created `.gitignore`.
+- **go:embed deploy** — agents/hooks/docs are embedded in the binary and redeployed to the target project/worktree on every launch, so editing `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md` requires a rebuild to take effect. `[f]` (efficiency) launches without hooks.
 
 ## Config
 
