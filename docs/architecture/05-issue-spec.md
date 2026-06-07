@@ -1,128 +1,128 @@
-# 5. Issue Spec — Agent 間的結構化合約
+# 5. Issue Spec — Structured Contract Between Agents
 
 ---
 
-## 5.1 為什麼需要嚴格格式
+## 5.1 Why a Strict Format Is Required
 
-Issue 是 Clarifier → Coding Agent → Reviewer 之間的**唯一通訊介面**。
-三個 agent 不會直接對話，它們只透過 Issue Spec 傳遞意圖。
+The Issue is the **only communication interface** between Clarifier → Coding Agent → Reviewer.
+The three agents never talk directly; they pass intent solely through the Issue Spec.
 
 ```
-Clarifier ──寫入──▸ Issue Spec ──讀取──▸ Coding Agent
-                        │
-                        └──讀取──▸ Reviewer（比對 AC 是否達成）
+Clarifier ──writes──▸ Issue Spec ──reads──▸ Coding Agent
+                          │
+                          └──reads──▸ Reviewer (verifies whether AC is met)
 ```
 
-如果格式模糊，Coding Agent 可能：
-- 搞錯問題是什麼（`CONTEXT` 缺失 → 改錯地方）
-- 搞錯要怎麼做（`APPROACH` 缺失 → 自己選一個方案）
-- 搞錯做到什麼程度算完成（`ACCEPTANCE_CRITERIA` 模糊 → 少做或多做）
-- 搞錯可以碰哪些檔案（`SCOPE` 缺失 → 改到不該改的地方）
+If the format is ambiguous, the Coding Agent may:
+- Misunderstand what the problem is (`CONTEXT` missing → edits the wrong place)
+- Misunderstand how to solve it (`APPROACH` missing → picks its own solution)
+- Misunderstand when it is done (`ACCEPTANCE_CRITERIA` vague → under- or over-delivers)
+- Misunderstand which files it may touch (`SCOPE` missing → modifies things it should not)
 
-因此 Issue Spec 的每個 section 都用 `## SECTION_NAME` 作為明確的 marker，
-不允許省略，不允許合併，不允許改名。
+Therefore every section of the Issue Spec uses `## SECTION_NAME` as an explicit marker.
+Omitting, merging, or renaming sections is not allowed.
 
 ---
 
-## 5.2 Issue Spec 格式定義
+## 5.2 Issue Spec Format Definition
 
-以下是寫進 Tracker issue body 的完整格式。
-Clarifier 產出時必須嚴格遵守，Zpit 讀取時按 `##` 標記解析。
+The following is the complete format written into the Tracker issue body.
+The Clarifier must follow this strictly when producing output; Zpit parses it using `##` markers.
 
 ```markdown
 ## CONTEXT
-<!-- 問題現狀：目前的行為是什麼、為什麼有問題 -->
-<!-- 必須包含：具體的檔案名稱、方法名稱、行為描述 -->
+<!-- Current state of the problem: what the existing behavior is and why it is a problem -->
+<!-- Must include: specific file names, method names, behavior descriptions -->
 
 ## APPROACH
-<!-- 選定的實作方案：怎麼做、為什麼選這個方案 -->
-<!-- 如果比較過多個方案，簡述排除原因 -->
+<!-- Chosen implementation plan: how to do it, and why this approach was selected -->
+<!-- If multiple approaches were considered, briefly explain why the others were rejected -->
 
 ## ACCEPTANCE_CRITERIA
-<!-- 每條格式：AC-序號: 具體描述（不允許模糊詞如「適當的」「合理的」） -->
+<!-- Each entry format: AC-N: specific description (vague words like "appropriate" or "reasonable" are not allowed) -->
 AC-1: ...
 AC-2: ...
 
 ## SCOPE
-<!-- 格式：[modify|create|delete] 檔案路徑 (修改原因) -->
-[modify] src/Services/EtherCatService.cs (主要修改)
-[modify] src/Alarms/AlarmManager.cs (新增 alarm code)
+<!-- Format: [modify|create|delete] file-path (reason for change) -->
+[modify] src/Services/EtherCatService.cs (primary modification)
+[modify] src/Alarms/AlarmManager.cs (add alarm code)
 
 ## CONSTRAINTS
-<!-- 實作時的硬性限制 -->
-<!-- 沒有限制則寫「無額外限制，遵循 CLAUDE.md」 -->
+<!-- Hard constraints during implementation -->
+<!-- If there are none, write "No additional constraints; follow CLAUDE.md" -->
 
 ## REFERENCES
-<!-- 可選。相關的參考資料 -->
+<!-- Optional. Related reference material -->
 
 ## BASE_BRANCH
-<!-- 必填。Orchestrator worktree 從這個 branch fork。99% 案例與 PR_TARGET 相同。 -->
+<!-- Required. The orchestrator worktree forks from this branch. In 99% of cases identical to PR_TARGET. -->
 dev
 
 ## PR_TARGET
-<!-- 必填。PR 合併進這個 branch。99% 案例與 BASE_BRANCH 相同；少數場景（從 feature branch fork、PR 回 integration branch）才會不同。 -->
+<!-- Required. The PR merges into this branch. In 99% of cases identical to BASE_BRANCH; the two differ only in the rare asymmetric scenario (fork from a feature branch, PR back to an integration branch). -->
 dev
 
-<!-- 舊 issue 仍使用單一 `## BRANCH` 區段；parser 同時接受兩種寫法，舊寫法會在 Loop 啟動時印一次 deprecation warning（map 到 BASE_BRANCH=PR_TARGET）。 -->
+<!-- Legacy issues still using a single `## BRANCH` section are also accepted; the parser handles both forms and logs a deprecation warning at Loop startup (mapping to BASE_BRANCH=PR_TARGET). -->
 
 ## TASKS
-<!-- 可選。任務分解，用於大型 issue 的有序執行 -->
-<!-- 格式：T{N}: [P] 描述 [action] 檔案路徑 (depends: T{M}, T{N}) -->
+<!-- Optional. Task breakdown for ordered execution of large issues -->
+<!-- Format: T{N}: [P] description [action] file-path (depends: T{M}, T{N}) -->
 T1: [P] Add retry backoff to ReconnectAsync [modify] src/Services/EtherCatService.cs (depends: none)
 T2: [P] Add alarm code constant [modify] src/Alarms/AlarmManager.cs (depends: none)
 T3: Wire alarm trigger into retry flow [modify] src/Services/EtherCatService.cs (depends: T1, T2)
 
 ## COORDINATES_WITH
-<!-- 可選。並行協作對象的 issue 編號 -->
+<!-- Optional. Issue numbers of parallel collaborating counterparts -->
 #42
 #43
 ```
 
 ---
 
-## 5.3 Section 規則總覽
+## 5.3 Section Rules Overview
 
-| Section | 必填 | 消費者 | 用途 |
-|---------|------|--------|------|
-| CONTEXT | ✓ | Coding Agent | 理解問題是什麼 |
-| APPROACH | ✓ | Coding Agent | 理解該怎麼做 |
-| ACCEPTANCE_CRITERIA | ✓ | Coding Agent + Reviewer | 做到什麼算完成 |
-| SCOPE | ✓ | Coding Agent + Hook（路徑守衛） | 限制改動範圍 |
-| CONSTRAINTS | ✓ | Coding Agent | 不可違反的限制 |
-| REFERENCES | 可選 | Coding Agent | 參考資料 |
-| BRANCH | 可選 | Coding Agent + Reviewer | PR target branch（覆蓋專案預設） |
-| TASKS | 可選 | Coding Agent | 大型 issue 的任務分解與執行順序 |
-| COORDINATES_WITH | 可選 | Coding Agent | 並行協作對象（觸發 channel 協調協議） |
+| Section | Required | Consumer | Purpose |
+|---------|----------|----------|---------|
+| CONTEXT | ✓ | Coding Agent | Understand what the problem is |
+| APPROACH | ✓ | Coding Agent | Understand how to solve it |
+| ACCEPTANCE_CRITERIA | ✓ | Coding Agent + Reviewer | Understand when the work is done |
+| SCOPE | ✓ | Coding Agent + Hook (path-guard) | Constrain the range of changes |
+| CONSTRAINTS | ✓ | Coding Agent | Hard limits that must not be violated |
+| REFERENCES | Optional | Coding Agent | Reference material |
+| BRANCH | Optional | Coding Agent + Reviewer | PR target branch (overrides project default) |
+| TASKS | Optional | Coding Agent | Task breakdown and execution order for large issues |
+| COORDINATES_WITH | Optional | Coding Agent | Parallel collaborating counterparts (triggers channel coordination protocol) |
 
-**TASKS section 格式規則：**
-- `T{N}:` — 任務 ID（T 加數字）
-- `[P]` — 平行標記。連續多個 task 擁有相同 dependency set 且修改不同檔案時，全部標記 `[P]`；引擎將連續 `[P]` task 合為一組平行批次
-- `[modify|create|delete] path` — 涉及的檔案（可多個）
-- `(depends: T{M}, ...)` — 相依關係；`(depends: none)` 表示無相依
-- TASKS 中的檔案路徑會與 SCOPE 交叉驗證
+**TASKS section format rules:**
+- `T{N}:` — task ID (T followed by a number)
+- `[P]` — parallel marker. When consecutive tasks share the same dependency set and modify different files, all of them must be marked `[P]`; the engine groups consecutive `[P]` tasks into a single parallel batch
+- `[modify|create|delete] path` — file(s) involved (multiple allowed)
+- `(depends: T{M}, ...)` — dependency list; `(depends: none)` means no dependencies
+- File paths in TASKS are cross-validated against SCOPE
 
-**COORDINATES_WITH section 格式規則：**
-- 每行 `#N`，N 為並行協作對象的 issue 編號
-- 非阻塞：Loop 引擎不對 COORDINATES_WITH 做任何等待（與 DEPENDS_ON 的串行阻塞相反）
-- 純 prompt 層信號：存在時觸發 Dependency Coordination Protocol（見 12-channel.md）
-- 與 DEPENDS_ON 可共存——語意不同（DEPENDS_ON = 串行阻塞，COORDINATES_WITH = 並行協調）
-- 驗證：非 `#N` 格式的行產生 warning
+**COORDINATES_WITH section format rules:**
+- One `#N` per line, where N is the issue number of the parallel collaborating counterpart
+- Non-blocking: the Loop engine does not wait on any entry in COORDINATES_WITH (contrast with DEPENDS_ON's sequential blocking)
+- Pure prompt-layer signal: when present, it triggers the Dependency Coordination Protocol (see 12-channel.md)
+- Can coexist with DEPENDS_ON — the semantics differ (DEPENDS_ON = sequential blocking, COORDINATES_WITH = parallel coordination)
+- Validation: lines that are not in `#N` format produce a warning
 
-**格式執行規則：**
-- Clarifier 產出的 issue body 必須包含所有必填 section
-- Section 標題用 `## SECTION_NAME`（全大寫英文），不允許改名或翻譯
-- Clarifier 透過 MCP tools 直接推上 Tracker，推送前必須先讓使用者在終端中確認內容
-- Zpit 的 `[s]` status 畫面從 Tracker 拉取 issue，可驗證格式
+**Format enforcement rules:**
+- The issue body produced by the Clarifier must include all required sections
+- Section headings use `## SECTION_NAME` (uppercase English); renaming or translating them is not allowed
+- The Clarifier pushes directly to the Tracker via MCP tools; the user must confirm the content in the terminal before the push
+- Zpit's `[s]` status screen fetches issues from the Tracker and can be used to verify the format
 
 ---
 
-## 5.4 Issue Spec 驗證
+## 5.4 Issue Spec Validation
 
-實作位於 `internal/tracker/issuespec.go`。
+Implementation is in `internal/tracker/issuespec.go`.
 
-驗證分兩個層級：
-- **Errors**（硬阻擋）：Loop 引擎拒絕執行
-- **Warnings**（軟提示）：TUI 顯示，Loop 仍會執行
+Validation has two levels:
+- **Errors** (hard block): the Loop engine refuses to execute
+- **Warnings** (soft notice): displayed in the TUI; the Loop still executes
 
 ```go
 type ValidationResult struct {
@@ -133,101 +133,101 @@ type ValidationResult struct {
 func ValidateIssueSpec(body string) ValidationResult
 ```
 
-**Error 檢查項：**
-- 缺少必填 section（CONTEXT, APPROACH, ACCEPTANCE_CRITERIA, SCOPE, CONSTRAINTS）
-- `[UNRESOLVED: ...]` marker 未解決
-- SCOPE 格式錯誤（缺少 `[modify]`/`[create]`/`[delete]` 前綴、未關閉的括號、無效 action）
+**Error checks:**
+- Missing required section (CONTEXT, APPROACH, ACCEPTANCE_CRITERIA, SCOPE, CONSTRAINTS)
+- Unresolved `[UNRESOLVED: ...]` marker
+- Malformed SCOPE entry (missing `[modify]`/`[create]`/`[delete]` prefix, unclosed parenthesis, invalid action)
 
-**Warning 檢查項：**
-- AC 中出現模糊詞（"appropriate", "reasonable", "sufficient", "when necessary"）
-- AC 編號有間隙（例如 AC-1, AC-3 但缺 AC-2）
-- SCOPE 列出的檔案未被任何 AC 提及
-- TASKS 中的檔案路徑未出現在 SCOPE 中
-- COORDINATES_WITH 中非 `#N` 格式的行
+**Warning checks:**
+- Vague words in AC ("appropriate", "reasonable", "sufficient", "when necessary")
+- Gaps in AC numbering (e.g. AC-1, AC-3 but AC-2 missing)
+- Files listed in SCOPE not mentioned by any AC
+- File paths in TASKS not present in SCOPE
+- Lines in COORDINATES_WITH not in `#N` format
 
-**解析函數：**
+**Parse function:**
 
 ```go
 func ParseIssueSpec(body string) (*IssueSpec, error)
 ```
 
-解析 `## SECTION_NAME` 標記，回傳結構化的 `IssueSpec`（含 Context、Approach、AcceptanceCriteria、Scope、Constraints、References、Branch、Tasks、DependsOn、CoordinatesWith）。
+Parses `## SECTION_NAME` markers and returns a structured `IssueSpec` (containing Context, Approach, AcceptanceCriteria, Scope, Constraints, References, Branch, Tasks, DependsOn, CoordinatesWith).
 
 ---
 
-## 5.5 Coding Agent Prompt 模板
+## 5.5 Coding Agent Prompt Template
 
-Loop 啟動 coding agent 時，由 `BuildCodingPrompt()` 組裝 prompt（`internal/prompt/coding.go`）。
-Issue Spec 的每個 section 注入到明確的位置，coding agent 不需要自己解析。
+When the Loop launches a coding agent, the prompt is assembled by `BuildCodingPrompt()` (`internal/prompt/coding.go`).
+Each section of the Issue Spec is injected at a well-defined position; the coding agent does not need to parse it itself.
 
-**Prompt 結構：**
+**Prompt structure:**
 
-1. 語言指示（由 `locale.ResponseInstruction()` 注入）
-2. Issue ID + 標題
+1. Language instruction (injected by `locale.ResponseInstruction()`)
+2. Issue ID + title
 3. **Problem to Solve** ← CONTEXT
 4. **Implementation Approach** ← APPROACH
-5. **Acceptance Criteria** ← AC 列表
-6. **Allowed File Scope** ← SCOPE（超出範圍必須停下問使用者）
+5. **Acceptance Criteria** ← AC list
+6. **Allowed File Scope** ← SCOPE (must stop and ask the user if scope is exceeded)
 7. **Constraints** ← CONSTRAINTS
-8. **References** ← REFERENCES（可選）
-9. **Logging Policy** ← 依 project 的 `log_policy` 生成文字
-10. **Task Decomposition** ← TASKS（可選，有 TASKS 時切換為任務導向工作流）
-11. **Your Workflow** — 工作流程步驟（讀 CLAUDE.md → 讀 tracker.md → 讀 guidelines → 實作 → 自檢 → commit → label 更新 → 開 PR）
-12. **When to Stop and Ask** — 需要停下問使用者的情境
-13. **Tracker Operation Notes** — MCP/API 操作提示
+8. **References** ← REFERENCES (optional)
+9. **Logging Policy** ← generated text from the project's `log_policy`
+10. **Task Decomposition** ← TASKS (optional; switches to task-oriented workflow when present)
+11. **Your Workflow** — workflow steps (read CLAUDE.md → read tracker.md → read guidelines → implement → self-check → commit → update labels → open PR)
+12. **When to Stop and Ask** — situations that require stopping to ask the user
+13. **Tracker Operation Notes** — MCP/API operation hints
 
-**有 TASKS 時的差異：**
-- 額外注入 **Task Decomposition** 和 **Execution Strategy** sections
-- Coding agent 作為 **orchestrator**，不自行實作——將每個 task 委派給 `task-runner` subagent（context 隔離）
-- 循序 task（無 `[P]`）：透過 Agent tool 依序委派給 `task-runner` subagent
-- 平行 task（有 `[P]`）：派發一個「平行 subagent batch」，每個 `[P]` task 分配一個 `task-runner` subagent（走 Claude Code 的一般 subagent 路徑 + `isolation: "worktree"`，而不是 Claude Code 的 Agent Team 機制）
-- 平行 subagent 各自擁有一個 child worktree（orchestrator 呼叫 Agent tool 時帶 `isolation: "worktree"`，觸發 zpit 的 `WorktreeCreate` hook 從 orchestrator 的 HEAD 分叉出 `.zpit-children/<slug>`），在自己的 branch 上正常 commit。Agent tool 回傳值只含 `worktreePath`（Claude Code 不 propagate `worktreeBranch`，見 known-issues §3），所以 orchestrator 先用 `git -C <path> rev-parse --abbrev-ref HEAD` 查各 subagent 的分支名，再 cherry-pick 回父 branch。Cleanup 分兩個獨立 Bash call：`git worktree remove --force <path>` 與 `git branch -D <branch>`（絕不串 `&&`，避免 hook 擋下其中一個連累另一個；詳見 known-issues §4）。Cherry-pick 衝突（spec bug：兩個 `[P]` task 寫同檔）會被 `cherry-pick --abort` 當面擋下，不會靜默回寫。詳見 `docs/architecture/06-agents.md` §6.3
-- 混合場景：按 dependency order 排列——循序與平行 batch 交錯派發
-- Commit 格式：`[ISSUE-ID] T{N}: {描述}`
-- 每個 subagent 完成後 orchestrator 驗證 commit，失敗重試一次，仍失敗則停下通知（不開 PR）
-- 所有 tasks 完成後，orchestrator 執行完整 ACCEPTANCE_CRITERIA 自我檢查再開 PR
+**Differences when TASKS is present:**
+- Additional **Task Decomposition** and **Execution Strategy** sections are injected
+- The coding agent acts as an **orchestrator** — it does not implement tasks itself; instead it delegates each task to a `task-runner` subagent (context isolation)
+- Sequential tasks (no `[P]`): delegated one by one to `task-runner` subagents via the Agent tool
+- Parallel tasks (with `[P]`): dispatched as a "parallel subagent batch" — one `task-runner` subagent per `[P]` task (using the standard Claude Code subagent path + `isolation: "worktree"`, not the Claude Code Agent Team mechanism)
+- Each parallel subagent gets its own child worktree (the orchestrator calls the Agent tool with `isolation: "worktree"`, which triggers zpit's `WorktreeCreate` hook to fork a child worktree from the orchestrator's HEAD under `.zpit-children/<slug>`), and commits normally on its own branch. The Agent tool return value only contains `worktreePath` (Claude Code does not propagate `worktreeBranch` — see known-issues §3), so the orchestrator first resolves each subagent's branch name via `git -C <path> rev-parse --abbrev-ref HEAD`, then cherry-picks onto the parent branch. Cleanup is split into two independent Bash calls: `git worktree remove --force <path>` and `git branch -D <branch>` (never chained with `&&`, to prevent a hook blocking one from taking down the other; see known-issues §4). Cherry-pick conflicts (spec bug: two `[P]` tasks writing the same file) are caught immediately by `cherry-pick --abort` and not silently reverted. See `docs/architecture/06-agents.md` §6.3
+- Mixed scenarios: dispatched in dependency order — sequential tasks and parallel batches interleave
+- Commit format: `[ISSUE-ID] T{N}: {description}`
+- After each subagent completes, the orchestrator verifies the commit; retries once on failure; stops and notifies (does not open a PR) if it still fails
+- After all tasks are complete, the orchestrator performs a full ACCEPTANCE_CRITERIA self-check before opening the PR
 
 ---
 
-## 5.6 Reviewer 驗收模板
+## 5.6 Reviewer Acceptance Template
 
-由 `BuildReviewerPrompt()` 組裝（`internal/prompt/reviewer.go`）。
-支援兩種模式：首次 review 和 revision review。
+Assembled by `BuildReviewerPrompt()` (`internal/prompt/reviewer.go`).
+Supports two modes: initial review and revision review.
 
-**首次 Review（ReviewRound == 0）：**
+**Initial Review (ReviewRound == 0):**
 
-1. 語言指示
-2. Issue ID + 標題
+1. Language instruction
+2. Issue ID + title
 3. **Original Requirements** ← CONTEXT
 4. **Expected Approach** ← APPROACH
-5. **Acceptance Criteria** ← AC 列表（逐條 PASS / FAIL）
+5. **Acceptance Criteria** ← AC list (PASS / FAIL per item)
 6. **Allowed File Scope** ← SCOPE
 7. **Constraints** ← CONSTRAINTS
 8. **Logging Policy**
-9. **Your Review Process** — 讀 CLAUDE.md → 讀 issue/PR comments → `git diff base...HEAD` → 逐條驗 AC → 檢查 SCOPE 越界 → 驗 PR target branch → 檢查 CONSTRAINTS → 檢查 logging → 讀 code-construction-principles → 產出 Report
-10. **Verdict**：任何 AC ❌ 或 SCOPE/CONSTRAINTS 違反 → NEEDS CHANGES；全部 ✅ → PASS
-11. **Label 更新**：PASS → remove "review" add "ai-review"；NEEDS CHANGES → remove "review" add "needs-changes"
+9. **Your Review Process** — read CLAUDE.md → read issue/PR comments → `git diff base...HEAD` → verify each AC → check SCOPE violations → verify PR target branch → check CONSTRAINTS → check logging → read code-construction-principles → produce Report
+10. **Verdict**: any AC ❌ or SCOPE/CONSTRAINTS violation → NEEDS CHANGES; all ✅ → PASS
+11. **Label update**: PASS → remove "review" add "ai-review"; NEEDS CHANGES → remove "review" add "needs-changes"
 
-**Revision Review（ReviewRound > 0）：**
+**Revision Review (ReviewRound > 0):**
 
-聚焦在差異而非全面重新 review：
-1. 讀取前次 MUST FIX (🔴) items
-2. 只看 revision commits 的 delta
-3. 逐條驗證前次 MUST FIX 是否修復
-4. Spot-check 全 diff 確認無 regression
-5. 產出 Revision Review Report
+Focuses on the delta rather than a full re-review:
+1. Read the MUST FIX (🔴) items from the previous review
+2. Inspect only the delta from the revision commits
+3. Verify item-by-item whether each previous MUST FIX has been addressed
+4. Spot-check the full diff to confirm no regressions
+5. Produce a Revision Review Report
 
 ---
 
-## 5.7 Revision Coding Prompt 模板
+## 5.7 Revision Coding Prompt Template
 
-由 `BuildRevisionPrompt()` 組裝（`internal/prompt/revision.go`）。
-當 reviewer 判定 NEEDS CHANGES 且未超過 `max_review_rounds` 時啟動。
+Assembled by `BuildRevisionPrompt()` (`internal/prompt/revision.go`).
+Activated when the reviewer determines NEEDS CHANGES and `max_review_rounds` has not been exceeded.
 
-**與首次 coding prompt 的差異：**
-- 明確標注是修正輪（round N）
-- Workflow 先讀 PR 上的 Review Report，列出 MUST FIX items
-- 讀不懂 reviewer feedback 時必須停下問使用者
-- 認為 reviewer feedback 不正確時也要停下，不盲從
-- Commit 格式：`[ISSUE-ID] fix: {描述}`
-- Label 更新：修正前 remove "needs-changes" add "wip"，修正後 remove "wip" add "review"
+**Differences from the initial coding prompt:**
+- Explicitly marked as a revision round (round N)
+- Workflow begins by reading the Review Report on the PR and listing MUST FIX items
+- Must stop and ask the user if the reviewer feedback is unclear
+- Must also stop if the reviewer feedback appears incorrect — do not follow it blindly
+- Commit format: `[ISSUE-ID] fix: {description}`
+- Label update: before fixing, remove "needs-changes" add "wip"; after fixing, remove "wip" add "review"

@@ -1,23 +1,23 @@
-# Zpit 架構文件索引
+# Zpit Architecture Document Index
 
-> 版本: 2.2 | 日期: 2026-04-19
+> Version: 2.2 | Date: 2026-04-19
 
-Zpit 是一個 TUI 調度中心，用 Go + Bubble Tea 打造，負責選專案、啟動 Claude Code agent、監控進度、協調完整的 issue 生命週期。
+Zpit is a TUI dispatch center built with Go + Bubble Tea. It selects projects, launches Claude Code agents, monitors their progress, and coordinates the full issue lifecycle.
 
 ---
 
-| # | 文件 | 內容 |
-|---|------|------|
-| 01 | [願景](01-vision.md) | 調度模式設計原則、終端啟動方式 |
-| 02 | [TUI 介面設計](02-tui-design.md) | 各畫面 mockup（含已實作/未實作標注） |
-| 03 | [系統架構](03-system-architecture.md) | 架構圖、Terminal Launcher、Session Log Watcher |
-| 04 | [設定檔與 Provider](04-config.md) | config.toml 結構、TrackerClient、Profile |
-| 05 | [Issue Spec](05-issue-spec.md) | 格式定義、驗證邏輯、Prompt 模板 |
-| 06 | [Agent 定義與 i18n](06-agents.md) | Clarifier/Reviewer/Task-Runner agent、go:embed 部署、i18n |
-| 07 | [Worktree + Loop + 狀態流](07-worktree-and-loop.md) | Worktree 架構、Loop 狀態機、Issue 狀態流 |
-| 08 | [阻塞與通知](08-notification.md) | Agent 阻塞偵測、通知管道 |
-| 09 | [安全與管控](09-safety.md) | 5 層安全、Hook 系統、ZPIT_AGENT |
-| 10 | [AppState 與多客戶端](10-appstate.md) | SSH Server、併發安全、Pub/Sub |
-| 11 | [Milestone 紀錄](11-milestone.md) | M1-M4c 完成紀錄、M5 規劃 |
-| 12 | [跨 Agent Channel 通訊](12-channel.md) | Broker + MCP + 跨專案通訊、TUI 整合 |
+| # | Document | Contents |
+|---|----------|----------|
+| 01 | [Vision](01-vision.md) | Dispatch model design principles, terminal launch strategy |
+| 02 | [TUI Interface Design](02-tui-design.md) | Screen mockups for each view (with implemented/unimplemented annotations) |
+| 03 | [System Architecture](03-system-architecture.md) | Architecture diagram, Terminal Launcher, Session Log Watcher |
+| 04 | [Config & Providers](04-config.md) | config.toml structure, TrackerClient, Profile |
+| 05 | [Issue Spec](05-issue-spec.md) | Format definition, validation logic, prompt templates |
+| 06 | [Agent Definitions & i18n](06-agents.md) | Clarifier/Reviewer/Task-Runner agents, go:embed deployment, i18n |
+| 07 | [Worktree + Loop + State Flow](07-worktree-and-loop.md) | Worktree architecture, Loop state machine, issue status flow |
+| 08 | [Blocking & Notifications](08-notification.md) | Agent blocking detection, notification channels |
+| 09 | [Safety & Control](09-safety.md) | 5-layer safety system, hook system, ZPIT_AGENT |
+| 10 | [AppState & Multi-Client](10-appstate.md) | SSH server, concurrency safety, pub/sub |
+| 11 | [Milestone Log](11-milestone.md) | M1–M4c completion records, M5 planning |
+| 12 | [Cross-Agent Channel Communication](12-channel.md) | Broker + MCP + cross-project communication, TUI integration |
 | 13 | [Desktop Agent](desktop-agent.md) | Proxy MCP architecture, policy model, tool allowlist, deny_keys; backed by `zpit-desktop-mcp` (fork of `@zavora-ai/computer-use-mcp`) |

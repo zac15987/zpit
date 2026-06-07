@@ -1,89 +1,88 @@
-# 7. Git Worktree 平行開發 + 自動化 Loop + Issue 狀態流
+# 7. Git Worktree Parallel Development + Automated Loop + Issue Status Flow
 
 ---
 
-## 7.1 為什麼需要 Worktree
+## 7.1 Why Worktrees Are Needed
 
-同一個專案同時跑多個 agent（各做不同 issue）時，它們不能共用
-同一個 working directory。Git worktree 讓每個 agent 有自己獨立的
-工作目錄，各自在不同 branch 上，互不干擾。
+When multiple agents work on the same project simultaneously (each handling a different issue), they cannot share the same working directory. Git worktrees give each agent its own isolated working directory, each on a different branch, with no interference between them.
 
 ```
-D:/Projects/ASE_Inspection/             ← 主 repo (dev branch)
-  ├── .git/                             ← 唯一的 .git 目錄
+D:/Projects/ASE_Inspection/             ← main repo (dev branch)
+  ├── .git/                             ← single .git directory
   ├── src/
   └── ...
 
-D:/Projects/.worktrees/                 ← 所有 worktree 集中管理
+D:/Projects/.worktrees/                 ← centralized worktree storage
   └── ASE_Inspection/
-      ├── ASE-47--ethercat-reconnect/   ← Agent A 的工作目錄
+      ├── ASE-47--ethercat-reconnect/   ← Agent A's working directory
       │   ├── src/                        (branch: feat/ASE-47-ethercat-reconnect)
       │   └── ...
-      ├── ASE-48--vision-timeout/       ← Agent B 的工作目錄
+      ├── ASE-48--vision-timeout/       ← Agent B's working directory
       │   ├── src/                        (branch: feat/ASE-48-vision-timeout)
       │   └── ...
-      └── ASE-49--z-axis-homing/        ← Agent C 的工作目錄
+      └── ASE-49--z-axis-homing/        ← Agent C's working directory
           ├── src/                        (branch: feat/ASE-49-z-axis-homing)
           └── ...
 ```
 
 ---
 
-## 7.2 Worktree 生命週期
+## 7.2 Worktree Lifecycle
 
 ```
-Issue 進入 In Progress
+Issue enters In Progress
     │
-    ├─ 1. 從 base branch 建立 feature branch（統一 feat/ 前綴）
+    ├─ 1. Create feature branch from base branch (unified feat/ prefix)
     │     git branch feat/ISSUE-ID-slug {base_branch}
-    │     base branch 來源：Issue Spec ## BASE_BRANCH（或舊 ## BRANCH 回退）> project config base_branch
-    │     PR target 來源：Issue Spec ## PR_TARGET（或舊 ## BRANCH 回退）> project config base_branch
+    │     base branch source: Issue Spec ## BASE_BRANCH (or legacy ## BRANCH fallback) > project config base_branch
+    │     PR target source:   Issue Spec ## PR_TARGET  (or legacy ## BRANCH fallback) > project config base_branch
     │
-    ├─ 2. 建立 worktree
+    ├─ 2. Create worktree
     │     git worktree add <worktree-path> feat/ISSUE-ID-slug
     │
-    ├─ 3. 部署 hooks + agents + docs 到 worktree
+    ├─ 3. Deploy hooks + agents + docs to worktree
     │     DeployHooksToWorktree() → .claude/hooks/ + settings.json + settings.local.json
-    │     （雙寫；CC 不會從主 repo 繼承 settings，所以兩份都要在 worktree 內顯式存在）
+    │     (dual-write; CC does not inherit settings from the main repo, so both files
+    │      must be explicitly present inside the worktree)
     │
-    ├─ 4. 在新終端中啟動 Claude Code（可見，使用者可隨時介入）
-    │     工作目錄 = worktree 路徑（path override）
-    │     ZPIT_AGENT=1 環境變數注入（啟用 hook 強制執行）
+    ├─ 4. Launch Claude Code in a new terminal (visible; user can intervene at any time)
+    │     working directory = worktree path (path override)
+    │     ZPIT_AGENT=1 env var injected (enables hook enforcement)
     │
-    ├─ 5. Agent 實作 + Review + 開 PR
+    ├─ 5. Agent implements + reviews + opens PR
     │
-    ├─ 6. PR merge 後清理
+    ├─ 6. Clean up after PR merge
     │     git worktree remove <worktree-path>
     │     git branch -d feat/ISSUE-ID-slug
-    │     git fetch origin <base>:<base>  （更新主目錄本地 base branch ref）
+    │     git fetch origin <base>:<base>  (update local base branch ref in main directory)
     │
     └─ 7. Issue → Done
 ```
 
-**Zpit 有兩層 worktree**（本節描述的是 **issue 層**）：
+**Zpit has two layers of worktrees** (this section describes the **issue layer**):
 
-- **Issue 層**（本節）：每個 Loop slot / issue 一個 worktree，由 `internal/worktree/Manager` 在 Go 端管理，掛在 `base_dir_*` 下。這是 coding agent / reviewer 的工作目錄。
-- **Parallel subagent 層**（Task Execution Model）：`[P]` 平行批次時，orchestrator 透過 `WorktreeCreate` hook（`hooks/worktree-create.sh`）建立 child worktree — 路徑 `$HOME/.zpit/children/<8-hex-sha256(parent_cwd+slug)>`（扁平短路徑，避開 Windows MAX_PATH；早期 `<issue-wt>/.zpit-children/<slug>` 巢狀路徑會在深層 parent 下踩到 260 字元上限——詳見 known-issues §9），不走 Go Manager。Child 路徑不在 project 內，所以不需要 gitignore rule。Batch 結束後 orchestrator 自己 `git worktree remove --force` + `git branch -D`。詳見 `06-agents.md §6.3`。
+- **Issue layer** (this section): one worktree per Loop slot / issue, managed on the Go side by `internal/worktree/Manager`, mounted under `base_dir_*`. This is the working directory for the coding agent and reviewer.
+- **Parallel subagent layer** (Task Execution Model): for `[P]` parallel batches, the orchestrator creates child worktrees via the `WorktreeCreate` hook (`hooks/worktree-create.sh`) — path `$HOME/.zpit/children/<8-hex-sha256(parent_cwd+slug)>` (flat short path, avoids Windows MAX_PATH; the earlier `<issue-wt>/.zpit-children/<slug>` nested layout would hit the 260-character limit under deep parents — see known-issues §9). This does not go through the Go Manager. Child paths are outside the project, so no gitignore rule is needed. After the batch completes, the orchestrator cleans up with `git worktree remove --force` + `git branch -D`. See `06-agents.md §6.3`.
 
-兩層互不干涉：issue worktree 的 lifecycle（建→ agent 工作 → PR merge → 清理）在 Go 層；parallel-subagent worktree 的 lifecycle 在 coding agent 的 prompt 層（hook 建、orchestrator 清）。
+The two layers do not interfere with each other: the issue worktree lifecycle (create → agent work → PR merge → cleanup) lives in the Go layer; the parallel-subagent worktree lifecycle lives in the coding agent's prompt layer (hook creates, orchestrator cleans).
 
-### in_project 隔離模式（無 worktree）
+### in_project Isolation Mode (No Worktree)
 
-當 project 設 `isolation = "in_project"`（預設 `"worktree"`），Loop **不開 worktree**，直接在專案目錄就地 checkout `feat/<id>-<slug>` branch 工作。動機：像 UE / 3D repo 把大量 binary 資產 commit 進 git 時，`git worktree add` 會把整個工作目錄（數百 MB tracked 檔）實體複製一份，成本過高；`[P]` child worktree 更會各複製一份。
+When a project sets `isolation = "in_project"` (default `"worktree"`), the Loop **does not create a worktree** — it checks out a `feat/<id>-<slug>` branch directly in the project directory and works in place. The motivation: in repos like UE / 3D projects that commit large binary assets into git, `git worktree add` would physically copy the entire working directory (hundreds of MB of tracked files), which is prohibitively expensive; `[P]` child worktrees would each require their own copy.
 
-差異（vs worktree 模式）：
+Differences (vs worktree mode):
 
-| 面向 | worktree | in_project |
+| Aspect | worktree | in_project |
 |---|---|---|
-| 建立 | `Manager.Create`（fetch + `git worktree add`） | `Manager.CreateInPlace`（clean 檢查 + 就地 `git checkout -b`／checkout 既有 branch resume） |
-| 並行 slot | `max_per_project` | 固定 1（單一工作目錄） |
-| `[P]` 平行批次 | 啟用 | 停用（prompt 端 `DisableParallelBatches` 把 task 正規化為 sequential） |
-| hook 部署 | `DeployHooksToWorktree`（雙寫 settings.json + settings.local.json） | `DeployHooksToProject`（merge 進真實 repo settings.json） |
-| 清理 | `Manager.Remove`（`git worktree remove --force` + `branch -D`） | `Manager.RemoveInPlace`（`git checkout <base>` + `branch -D`；`branch==base` 時 no-op，絕不刪 base） |
-| dirty 工作目錄 | 不影響主 repo | dispatch 時 → `ErrWorkingTreeDirty` → `SlotNeedsHuman`（不自動 stash） |
-| 中斷 resume | 由既有 worktree list 偵測 | 由 repo 當前 `feat/<id>-…` branch 偵測（`git.CurrentBranch`） |
+| Creation | `Manager.Create` (fetch + `git worktree add`) | `Manager.CreateInPlace` (dirty-tree check + in-place `git checkout -b` / checkout existing branch for resume) |
+| Concurrent slots | `max_per_project` | Fixed 1 (single working directory) |
+| `[P]` parallel batches | Enabled | Disabled (`DisableParallelBatches` on the prompt side normalizes all tasks to sequential) |
+| Hook deployment | `DeployHooksToWorktree` (dual-write settings.json + settings.local.json) | `DeployHooksToProject` (merges into the real repo's settings.json) |
+| Cleanup | `Manager.Remove` (`git worktree remove --force` + `branch -D`) | `Manager.RemoveInPlace` (`git checkout <base>` + `branch -D`; no-op when `branch == base`, never deletes base) |
+| Dirty working directory | Does not affect main repo | At dispatch → `ErrWorkingTreeDirty` → `SlotNeedsHuman` (never auto-stashed) |
+| Crash resume | Detected via existing worktree list | Detected via the repo's current `feat/<id>-…` branch (`git.CurrentBranch`) |
 
-⚠️ in_project loop 執行期間請勿開外部編輯器（如 Unreal Editor）或手動操作該 repo——背景 `git checkout` 會改寫工作目錄。`isolation` 為 enum，預留未來 `worktree_cow`（ReFS/Dev-Drive/APFS block-clone）、`worktree_shared_cache` 等策略。
+⚠️ Do not open external editors (e.g. Unreal Editor) or manually run git in the project while an in_project loop is active — the background `git checkout` rewrites the working directory. `isolation` is an enum that leaves room for future strategies such as `worktree_cow` (ReFS/Dev-Drive/APFS block-clone) and `worktree_shared_cache`.
 
 ---
 
@@ -93,134 +92,133 @@ Issue 進入 In Progress
 [worktree]
 base_dir_windows = "D:/Projects/.worktrees"
 base_dir_wsl = "/mnt/d/Projects/.worktrees"
-dir_format = "{project_id}/{issue_id}--{slug}"   # slug 由 issue title 自動產生
-auto_cleanup = true           # PR merge 後自動清理
-max_per_project = 5           # 每個專案最大同時 worktree 數量
-max_review_rounds = 3         # coding↔review 最大循環次數（超過進入 NeedsHuman）
-poll_seconds = 10             # todo issue polling 間隔
-pr_poll_seconds = 10          # PR/label 狀態 polling 間隔
+dir_format = "{project_id}/{issue_id}--{slug}"   # slug auto-generated from issue title
+auto_cleanup = true           # auto-cleanup after PR merge
+max_per_project = 5           # maximum concurrent worktrees per project
+max_review_rounds = 3         # max coding↔review cycles (exceeding this enters NeedsHuman)
+poll_seconds = 10             # todo issue polling interval
+pr_poll_seconds = 10          # PR/label status polling interval
 
-# base_branch 在各 project 中設定（預設 "dev"）
+# base_branch is set per project (default "dev")
 ```
 
-**注意事項：**
-- CLAUDE.md 和 .claude/ 存在主 repo 中，worktree 會自動繼承
-- worktree 不是 clone：共用同一個 .git，同一份歷史
-- 機台電腦不用 worktree：一次只看一個 branch，不需要平行化
-- 如果多個 agent 改到同一檔案導致衝突，人工處理
+**Notes:**
+- CLAUDE.md and .claude/ live in the main repo; worktrees inherit them automatically
+- Worktrees are not clones: they share the same .git and the same history
+- Machine-control computers do not need worktrees: they work on one branch at a time, no parallelism needed
+- If multiple agents modify the same file and cause a conflict, handle it manually
 
 ---
 
-## 7.4 自動化 Loop 流程
+## 7.4 Automated Loop Flow
 
-TUI 按 [l] 後，在 TUI 內以 goroutine 啟動 loop（非獨立子命令）。
-支援同一專案多個 agent 平行工作，每個 agent 在自己的 worktree 中運行。
-TUI 關閉時 loop 停止，但已啟動的 Claude Code agent 不受影響（獨立 process）。
+After pressing [l] in the TUI, the loop starts as a goroutine inside the TUI (not a separate subcommand). Multiple agents can work in parallel on the same project, each running in its own worktree. When the TUI closes, the loop stops, but any already-launched Claude Code agent processes are unaffected (they are independent processes).
 
-**核心原則：Zpit 只負責調度，不介入 agent 工作內容。**
-Build、test、review、開 PR、更新 tracker status 都是 agent 自己的職責。
+**Core principle: Zpit is responsible only for dispatch — it does not intervene in the agent's work.**
+Building, testing, reviewing, opening PRs, and updating tracker status are all the agent's own responsibilities.
 
 ```
-TUI 按 [l]
+[l] pressed in TUI
 │
-│  ┌── loop 在 TUI goroutine 中運行（純調度）──────────────┐
-│  │                                                        │
-│  │ 1. 查詢 Tracker API: 抓此專案 status=Todo 的最高優先   │
-│  │    issue，如果沒有 → 定期 poll（每 10 秒）             │
-│  │                                                        │
-│  │ 2. 檢查此專案目前有幾個活躍 worktree                   │
-│  │    如果 >= max_per_project → 等待                      │
-│  │                                                        │
-│  │ 3. Zpit 建立 branch + worktree + 部署 hooks           │
-│  │    base = Issue Spec ## BASE_BRANCH (或舊 BRANCH) ||   │
-│  │           project config base_branch                    │
-│  │    git branch feat/ISSUE-ID-slug {base_branch}         │
-│  │    git worktree add <path> feat/ISSUE-ID-slug          │
-│  │    DeployHooksToWorktree() 寫 settings.json +          │
-│  │      settings.local.json 兩份到 worktree              │
-│  │                                                        │
-│  │ 4. 寫入臨時 agent 檔案到 worktree                      │
-│  │    .claude/agents/coding-{issue-id}.md                 │
-│  │    （由 BuildCodingPrompt 組裝 Issue Spec → prompt）   │
-│  │    若 Issue Spec 含 TASKS → 同時部署 task-runner.md    │
-│  │    （subagent 定義，供 coding agent 委派 task 使用）   │
-│  │                                                        │
-│  │ 5. 啟動 coding agent（新終端，可見）                   │
-│  │    工作目錄 = worktree 路徑，ZPIT_AGENT=1              │
-│  │                                                        │
-│  │ 6. 輪詢 issue labels（每 10 秒 GetIssue）              │
-│  │    偵測到 "review" label = coding agent 完成            │
-│  │    （label 驅動，非 PID 驅動，終端保留不關）           │
-│  │                                                        │
-│  │ 7. 啟動 reviewer agent（同一 worktree，唯讀）          │
-│  │                                                        │
-│  │ 8. 輪詢 issue labels                                   │
-│  │    ├─ ai-review → PASS → 等待 PR merge                │
-│  │    ├─ needs-changes → NEEDS CHANGES                    │
-│  │    │  └─ round < max_review_rounds?                    │
-│  │    │     ├─ 是 → 寫修正版 prompt，重跑 coding agent   │
-│  │    │     └─ 否 → NeedsHuman 狀態，通知你介入          │
-│  │    └─ label 未變 → 繼續輪詢                            │
-│  │                                                        │
-│  │ 9. 偵測 PR merged → 清理 worktree + branch             │
-│  │    + 同步本地 base branch（git fetch origin <base>:<base>）│
-│  │    失敗時 log warning，不中斷 issue 關閉流程             │
-│  │                                                        │
-│  │ 10. 回到步驟 1 抓下一個 issue                          │
-│  │                                                        │
-│  └────────────────────────────────────────────────────────┘
+│  ┌── loop runs in TUI goroutine (pure dispatch) ──────────────┐
+│  │                                                              │
+│  │ 1. Query Tracker API: fetch the highest-priority            │
+│  │    status=Todo issue for this project;                       │
+│  │    if none → poll periodically (every 10 seconds)           │
+│  │                                                              │
+│  │ 2. Check how many active worktrees this project has         │
+│  │    if >= max_per_project → wait                             │
+│  │                                                              │
+│  │ 3. Zpit creates branch + worktree + deploys hooks           │
+│  │    base = Issue Spec ## BASE_BRANCH (or legacy BRANCH) ||   │
+│  │           project config base_branch                         │
+│  │    git branch feat/ISSUE-ID-slug {base_branch}              │
+│  │    git worktree add <path> feat/ISSUE-ID-slug               │
+│  │    DeployHooksToWorktree() writes settings.json +           │
+│  │      settings.local.json (both) into the worktree           │
+│  │                                                              │
+│  │ 4. Write temporary agent file into the worktree             │
+│  │    .claude/agents/coding-{issue-id}.md                      │
+│  │    (assembled by BuildCodingPrompt: Issue Spec → prompt)    │
+│  │    if Issue Spec contains TASKS → also deploy task-runner.md│
+│  │    (subagent definition for the coding agent to delegate to)│
+│  │                                                              │
+│  │ 5. Launch coding agent (new terminal, visible)              │
+│  │    working directory = worktree path, ZPIT_AGENT=1          │
+│  │                                                              │
+│  │ 6. Poll issue labels (GetIssue every 10 seconds)            │
+│  │    "review" label detected = coding agent finished          │
+│  │    (label-driven, not PID-driven; terminal stays open)      │
+│  │                                                              │
+│  │ 7. Launch reviewer agent (same worktree, read-only)         │
+│  │                                                              │
+│  │ 8. Poll issue labels                                        │
+│  │    ├─ ai-review → PASS → wait for PR merge                 │
+│  │    ├─ needs-changes → NEEDS CHANGES                         │
+│  │    │  └─ round < max_review_rounds?                         │
+│  │    │     ├─ yes → write revision prompt, rerun coding agent │
+│  │    │     └─ no  → NeedsHuman state, notify for intervention │
+│  │    └─ label unchanged → continue polling                     │
+│  │                                                              │
+│  │ 9. PR merged detected → clean up worktree + branch          │
+│  │    + sync local base branch (git fetch origin <base>:<base>)│
+│  │    failure → log warning, does not interrupt issue close    │
+│  │                                                              │
+│  │ 10. Return to step 1 to fetch the next issue                │
+│  │                                                              │
+│  └──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 7.5 Loop 狀態機
+## 7.5 Loop State Machine
 
-所有狀態定義在 `internal/loop/types.go`：
+All states are defined in `internal/loop/types.go`:
 
 ```
-SlotCreatingWorktree    建立 worktree 中
+SlotCreatingWorktree    creating worktree
        ↓
-SlotWritingAgent        準備 agent prompt 檔案
+SlotWritingAgent        preparing agent prompt file
        ↓
-SlotLaunchingCoder      啟動 coding agent 中
+SlotLaunchingCoder      launching coding agent
        ↓
-SlotCoding              coding agent 工作中（poll labels 等待 "review"）
+SlotCoding              coding agent working (polling labels, waiting for "review")
        ↓
-SlotLaunchingReviewer   啟動 reviewer agent 中
+SlotLaunchingReviewer   launching reviewer agent
        ↓
-SlotReviewing           reviewer 工作中（poll labels 等待 "ai-review" 或 "needs-changes"）
+SlotReviewing           reviewer working (polling labels, waiting for "ai-review" or "needs-changes")
        ↓                           ↓
-  (ai-review fork)     SlotCoding (needs-changes → 重跑，round++)
+  (ai-review fork)     SlotCoding (needs-changes → rerun, round++)
        │
-       ├─ auto_merge=false → SlotWaitingPRMerge   （poll PR 狀態等人工 merge）
-       └─ auto_merge=true  → SlotAutoMerging      （呼叫 tracker merge API）
+       ├─ auto_merge=false → SlotWaitingPRMerge   (poll PR status, waiting for manual merge)
+       └─ auto_merge=true  → SlotAutoMerging      (call tracker merge API)
                                   ↓
-                            SlotCleaningUp       清理 worktree + branch + 同步本地 base branch ref
+                            SlotCleaningUp       clean up worktree + branch + sync local base branch ref
                                   ↓
-                            SlotDone             完成
+                            SlotDone             complete
 
-異常狀態:
-SlotNeedsHuman          超過 max_review_rounds，或 auto-merge 永久失敗/transient 重試用盡
-SlotError               流程中發生錯誤（含 auto-merge 的 auth 錯誤）
+Error states:
+SlotNeedsHuman          exceeded max_review_rounds, or auto-merge permanent failure / transient retries exhausted
+SlotError               error during pipeline (including auto-merge auth errors)
 ```
 
-狀態轉換是 **label 驅動**（poll issue labels，非 PID 監控）：
-- Coding agent 設定 `review` label → reviewer 啟動
-- Reviewer 設定 `ai-review` (PASS) 或 `needs-changes` (auto-retry)
+State transitions are **label-driven** (polling issue labels, not PID monitoring):
+- Coding agent sets `review` label → reviewer launches
+- Reviewer sets `ai-review` (PASS) or `needs-changes` (auto-retry)
 
-**Polling chain 的心跳實作（tick-driven）：** 三個等待型狀態各自對應一條獨立的 `tea.Tick` 心跳鏈：
+**Polling chain heartbeat (tick-driven):** Each of the three waiting states has its own independent `tea.Tick` heartbeat chain:
 
-| 狀態 | Poll 內容 | 下一個 tick 由誰排 |
+| State | Polls | Next tick scheduled by |
 |---|---|---|
-| 任何 Active loop | 抓 todo issues | `handleLoopPollTick` |
-| `SlotCoding` / `SlotReviewing` | 抓 issue labels | `handleLoopLabelPollTick` |
-| `SlotWaitingPRMerge` | 抓 PR 狀態 | `handleLoopPRPollTick` |
+| Any Active loop | fetch todo issues | `handleLoopPollTick` |
+| `SlotCoding` / `SlotReviewing` | fetch issue labels | `handleLoopLabelPollTick` |
+| `SlotWaitingPRMerge` | fetch PR status | `handleLoopPRPollTick` |
 
-**關鍵不變量：心跳的 reschedule 只發生在 `model.go` 的 tick case（`loop_handler.go` 的 `handleLoop*Tick` 系列），不發生在 business handler（`handleLoopPoll` / `handleLoopLabelPoll` / `handleLoopPRStatus`）。** 每個 tick handler 在入口檢查 gate（loop `Active` + slot state 正確），通過就 `tea.Batch(pollCmd, scheduleNextTick)` 預先排好下一跳；不通過就 return nil，心跳自然停止。business handler 只負責 state transition，不得自行 reschedule。
+**Critical invariant: heartbeat rescheduling only happens in the tick cases in `model.go` (the `handleLoop*Tick` family in `loop_handler.go`), never in the business handlers (`handleLoopPoll` / `handleLoopLabelPoll` / `handleLoopPRStatus`).** Each tick handler checks a gate at entry (loop `Active` + correct slot state); if the gate passes, it returns `tea.Batch(pollCmd, scheduleNextTick)` to pre-schedule the next hop; if the gate fails, it returns nil and the heartbeat naturally stops. Business handlers are responsible only for state transitions and must not reschedule on their own.
 
-這個設計避免了「handler return nil 路徑漏寫 reschedule 導致整條 poll 鏈永久啞掉」的 bug（2026-04-18 log 觀察到）。新增狀態或 poll 鏈時：`loopSchedulePoll` / `loopSchedulePRPoll` / `loopScheduleLabelPoll` 只能在 **kickoff** 時機呼叫（loop 啟動、transition 進入等待狀態、resume），禁止在 business handler 的 mid-chain 呼叫。`internal/tui/loop_tick_test.go` 覆蓋這個不變量。
+This design prevents the bug where "a nil return path in a handler silently kills the entire poll chain forever" (observed in the 2026-04-18 log). When adding new states or poll chains: `loopSchedulePoll` / `loopSchedulePRPoll` / `loopScheduleLabelPoll` may only be called at **kickoff** moments (loop start, transition into a new waiting state, resume) — calling them mid-chain inside a business handler is forbidden. `internal/tui/loop_tick_test.go` covers this invariant.
 
-`Slot` struct 追蹤每個 issue 在 pipeline 中的狀態：
+The `Slot` struct tracks each issue's position in the pipeline:
 
 ```go
 type Slot struct {
@@ -231,7 +229,7 @@ type Slot struct {
     BaseBranch   string    // PR target branch
     WorktreePath string
     State        SlotState
-    ReviewRound  int       // 0-based; NEEDS CHANGES 時遞增
+    ReviewRound  int       // 0-based; incremented on NEEDS CHANGES
     Error        error
     SessionPID   int
     LaunchedAt   int64     // unix timestamp
@@ -240,56 +238,58 @@ type Slot struct {
 
 ---
 
-### Auto-Merge 分支
+### Auto-Merge Branch
 
-當專案的 `auto_merge = true`（per-project，預設 false），reviewer 設 `ai-review` label 後不進入 `SlotWaitingPRMerge`，改進入 `SlotAutoMerging`：由 Go 端直接呼叫 tracker 的 merge API。
+When a project has `auto_merge = true` (per-project, default false), after the reviewer sets the `ai-review` label, the slot does not enter `SlotWaitingPRMerge` — it enters `SlotAutoMerging` instead, where Go directly calls the tracker's merge API.
 
-**重試策略（transient error）：**
-- 最多 3 次嘗試，backoff 1s / 4s / 16s。
-- Transient 分類：HTTP 5xx / 408 / 429、`context.DeadlineExceeded`、`net.Error.Timeout() == true`。
-- 每次嘗試使用獨立的 30 秒 context timeout。
+**Retry strategy (transient errors):**
+- Up to 3 attempts, backoff 1s / 4s / 16s.
+- Transient classification: HTTP 5xx / 408 / 429, `context.DeadlineExceeded`, `net.Error.Timeout() == true`.
+- Each attempt uses an independent 30-second context timeout.
 
-**Short-circuit（立刻跳出不重試）：**
-- Permanent：HTTP 409（衝突）/ 405（不允許）/ 422（不可合併）或 PR 回傳 state=`closed` 未 merge → 轉入 `SlotNeedsHuman`，保留 worktree 和 branch 供人工處理。
-- Auth：HTTP 401 / 403 → 轉入 `SlotError`，這是一次性的 config 問題（token 失效或權限不足），重試沒意義。
+**Short-circuit (exit immediately, no retry):**
+- Permanent: HTTP 409 (conflict) / 405 (not allowed) / 422 (not mergeable), or PR returns state=`closed` without being merged → transitions to `SlotNeedsHuman`, preserving the worktree and branch for manual handling.
+- Auth: HTTP 401 / 403 → transitions to `SlotError`; this is a one-time config issue (expired token or insufficient permissions), retrying is pointless.
 
-**Commit title：** `[<IssueID>] <IssueTitle>`（使用 slot.IssueTitle，不再另外呼叫 API）。
+**Commit title:** `[<IssueID>] <IssueTitle>` (uses slot.IssueTitle; no additional API call).
 
-**Merge method：** 由 `project.merge_method` 決定（`squash` | `merge` | `rebase`），空值預設 `squash`。
+**Merge method:** determined by `project.merge_method` (`squash` | `merge` | `rebase`); empty value defaults to `squash`.
 
-**安全考量：** merge API 由 Go 程式直接呼叫，不經過 `git-guard.sh` 的 push whitelist。這是刻意設計 — Layer 5 安全閘門從「人工審查」變成「AI reviewer PASS 判斷」，使用者須評估 reviewer model 的品質是否值得信任才啟用。詳見 `09-safety.md`。
+**Security consideration:** the merge API is called directly by the Go process and does not go through `git-guard.sh`'s push whitelist. This is intentional — the Layer 5 safety gate shifts from "human review" to "AI reviewer PASS judgment". Users must evaluate whether they trust the reviewer model's quality before enabling this. See `09-safety.md`.
 
 ---
 
-## 7.6 Issue 狀態流（所有 Tracker 通用）
+## 7.6 Issue Status Flow (Universal Across All Trackers)
 
 ```
                           ┌─────────────────────────────────┐
                           ▼                                 │
-┌────────┐  ┌──────┐  ┌──────────┐  ┌───────────┐  ┌──────┴──────┐
-│待確認  │─▸│ Todo │─▸│ AI 實作中 │─▸│ AI Review │─▸│等待你Review │
-│(Clarify│  │      │  │          │  │           │  │             │
-│ 產出)  │  │(你按 │  │(Loop自動)│  │(自動)     │  │(PR 已開)    │
-└────────┘  │ 確認)│  └──────────┘  └───────────┘  └──────┬──────┘
-    │       └──────┘       ▲                              │
-    │ (你拒絕/要修改)       │ (needs-changes)               │
-    ▼                      └──────────────────────────────┘
-  (刪除或                                                  │ (approve)
-   回到 Clarify)                                   ┌───────▼───────┐
-                                   (純軟體專案) ───▸│     Done      │
-                                                   └───────────────┘
-                                                           ▲
-                                                           │ (驗證通過)
-                                                   ┌───────┴───────┐
-                                   (機台/Android)─▸│  待實體驗證    │
-                                                   └───────────────┘
+┌──────────┐  ┌──────┐  ┌──────────┐  ┌───────────┐  ┌────┴────────┐
+│ Pending  │─▸│ Todo │─▸│ AI Impl  │─▸│ AI Review │─▸│ Waiting for │
+│ Confirm  │  │      │  │          │  │           │  │ Your Review │
+│(Clarifier│  │(you  │  │(Loop     │  │(automatic)│  │(PR opened)  │
+│ output)  │  │confirm│  │automatic)│  │           │  │             │
+└──────────┘  └──────┘  └──────────┘  └───────────┘  └──────┬──────┘
+    │                        ▲                               │
+    │ (you reject/revise)    │ (needs-changes)               │
+    ▼                        └───────────────────────────────┘
+  (delete or                                                 │ (approve)
+   back to Clarify)                                  ┌───────▼───────┐
+                                  (software only) ──▸│     Done      │
+                                                     └───────────────┘
+                                                             ▲
+                                                             │ (verification passed)
+                                                     ┌───────┴───────┐
+                              (machine/Android) ────▸│ Pending       │
+                                                     │ Physical      │
+                                                     │ Verification  │
+                                                     └───────────────┘
 ```
 
-**關鍵設計：「待確認」門檻**
+**Key design: the "Pending Confirm" gate**
 
-Clarifier Agent 產出的 issue 預設進入「待確認」狀態（label: pending），不是「Todo」。
-Loop 只會抓 Todo（label: todo）的 issue，所以沒有你明確確認，agent 不會開始動手。
+Issues produced by the Clarifier Agent enter the "Pending Confirm" state by default (label: pending), not "Todo". The Loop only picks up issues with the Todo label (label: todo), so no agent will start working without your explicit confirmation.
 
-確認方式：
-- 在 TUI 的 Status 畫面按 [y] 確認 → pending → todo
-- 在 Tracker 網頁上手動改 label
+How to confirm:
+- Press [y] on the Status screen in the TUI → pending → todo
+- Manually change the label on the Tracker web interface

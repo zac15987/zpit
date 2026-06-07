@@ -1,276 +1,276 @@
-# model.go God Class 重構討論紀錄
+# model.go God Class Refactoring Discussion Record
 
-> 日期：2026-04-03
-> 對應 Issue：[#24](https://github.com/zac15987/zpit/issues/24) model.go 大檔案程式碼拆分評估
-> 方法：3 人 Agent Team 專家討論（3 輪）
-> **狀態：已完成** — Phase 1 via [PR #59](https://github.com/zac15987/zpit/pull/59) merged（2026-04-03）；Phase 2 評估後決定不執行。
-
----
-
-## 參與者
-
-| 角色 | 代號 | 關注焦點 |
-|------|------|----------|
-| 資深技術架構師 | **Alex** | 設計原則、抽象邊界、資訊隱藏、Code Construction Principles |
-| 資深 Go 語言工程師 | **Bo** | Go 慣用法、interface 設計、可測試性、並發安全 |
-| 系統 Terminal 工程師 | **Carmen** | Bubble Tea 框架限制、TUI 生命週期、即時性、value copy 語義 |
+> Date: 2026-04-03
+> Related Issue: [#24](https://github.com/zac15987/zpit/issues/24) model.go large file code split evaluation
+> Method: 3-agent expert discussion (3 rounds)
+> **Status: Complete** — Phase 1 via [PR #59](https://github.com/zac15987/zpit/pull/59) merged (2026-04-03); Phase 2 evaluated and decided against.
 
 ---
 
-## 問題背景
+## Participants
 
-`internal/tui/model.go` 有 **2433 行、50+ 方法、6 種職責**混合在一個 `Model` struct 上，違反 Code Construction Principles 的多項原則。
-
-### 6 大職責區塊
-
-| 區塊 | 行數 (約) | 函式數 | Model UI 依賴 |
-|------|----------|--------|--------------|
-| Core（types/Init/Update routing/View） | ~650 | 12 | 核心骨架 |
-| Key Handlers | ~300 | 6 | 深度依賴（cursor, currentView, viewport） |
-| Session Lifecycle | ~500 | 12 | **零依賴** — 只存取 `m.state`（AppState） |
-| Launch & Deploy | ~450 | 17 | `m.cursor` 可參數化 |
-| Tracker & Label Ops | ~350 | 11 | 混合：cmd factory 只需 AppState，confirm 需 Model UI |
-| Channel | ~30 | 2 | 最小 |
-
-### 現有的成功拆分模式
-
-專案已有按職責分檔的先例：
-- `loop_cmds.go`（856 行）— loop 相關 tea.Cmd factory
-- `loop_handler.go`（483 行）— loop 訊息處理器
-- `view_projects.go`（458 行）— 專案列表渲染
-- `view_channel.go`（229 行）— channel 事件時間軸
+| Role | Handle | Focus Area |
+|------|--------|------------|
+| Senior Technical Architect | **Alex** | Design principles, abstraction boundaries, information hiding, Code Construction Principles |
+| Senior Go Engineer | **Bo** | Go idioms, interface design, testability, concurrency safety |
+| Systems Terminal Engineer | **Carmen** | Bubble Tea framework constraints, TUI lifecycle, real-time behavior, value copy semantics |
 
 ---
 
-## 第一輪：問題診斷與初步提案
+## Problem Background
 
-### Alex 的分析
+`internal/tui/model.go` has **2433 lines, 50+ methods, and 6 distinct responsibilities** mixed on a single `Model` struct, violating multiple Code Construction Principles.
 
-**核心診斷**：model.go 違反三項 Code Construction Principles：
-1. **§3 God Class** — Model 承擔 6 種不同職責，每種的資訊隱藏邊界完全不同
-2. **§2 抽象層次不一致** — `update()` 的 switch 同時混合高層 one-line dispatch 和低層 30+ 行 inline handler
-3. **§2 核心信念** — 修改 permission detection 需要在 2434 行中跳轉三個方法，隱性耦合
+### 6 Major Responsibility Blocks
 
-**依賴分析三層分類**：
-- **第一層（零 UI 依賴）**：Session 方法 ~430 行，只存取 `m.state`，不碰任何 Model UI field
-- **第二層（可參數化）**：Launch 方法 ~245 行，唯一依賴 `m.cursor` 可改為接收參數
-- **第三層（深度 UI 綁定）**：Key handlers + confirm ~630 行，不建議第一步抽離
+| Block | Lines (approx) | Function Count | Model UI Dependency |
+|-------|---------------|----------------|---------------------|
+| Core (types/Init/Update routing/View) | ~650 | 12 | Core skeleton |
+| Key Handlers | ~300 | 6 | Deeply coupled (cursor, currentView, viewport) |
+| Session Lifecycle | ~500 | 12 | **Zero dependency** — only accesses `m.state` (AppState) |
+| Launch & Deploy | ~450 | 17 | `m.cursor` can be parameterized |
+| Tracker & Label Ops | ~350 | 11 | Mixed: cmd factory needs only AppState; confirm needs Model UI |
+| Channel | ~30 | 2 | Minimal |
 
-**提案**：Phase 1 做 same-package file split，Phase 2 等有測試後抽取 `SessionManager` struct。
+### Existing Successful Split Patterns
 
-### Bo 的回應
-
-- **同意 file split 符合 Go 慣用法**，引用 `net/http` 的 `server.go`/`request.go`/`response.go` 先例
-- **補充 field 問題**：Model 有 24 個 field，§3 建議 7±2。Field 形成清晰聚類（核心、StatusView、Confirm、LoopFocus），Phase 2 可用 embedded struct 組合
-- **挑戰 session.go 範圍**：內部混合 Discovery（one-shot cmd chain）和 Monitoring（tick-driven），但不堅持拆成兩檔
-- **建議每個新檔案加 lock protocol doc comment**（§10：Comments explain why, not what）
-
-### Carmen 的回應
-
-**Bubble Tea 框架角度的三類 session 方法分類**：
-1. **Cmd 工廠**（scanExistingSessionsCmd 等）— 回傳 tea.Cmd，goroutine 執行，搬走完全安全
-2. **Msg handler**（existingSessionsMsg 等）— 修改 activeTerminals，遵循 action-defer pattern
-3. **Tick-driven**（checkSessionLiveness 等）— pointer receiver，side-effect + cmd collector
-
-**對 Phase 2 SessionManager struct 發出關鍵警告**：
-1. Bubble Tea Model 是 value type，`*SessionManager` 指標會被多個 Model 副本共享
-2. 如果 SessionManager 有自己的 mutex → 雙層鎖（Go 無可重入鎖），死鎖風險增加
-3. `handleLaunchResult` 在**同一個 Lock 區間**同時操作 `activeTerminals`（session）和 `channelSubs`（channel）→ 拆 struct 破壞原子性
-4. 如果共用 `AppState.mu` → 只是 facade，無真正隔離
-
-**Carmen 的立場**：Phase 1 file split 全力支持（擴大到 session.go + launch.go + tracker_ops.go），Phase 2 struct 抽取先觀望（§2 No speculative generality）。
+The project already has precedent for splitting files by responsibility:
+- `loop_cmds.go` (856 lines) — loop-related tea.Cmd factories
+- `loop_handler.go` (483 lines) — loop message handlers
+- `view_projects.go` (458 lines) — project list rendering
+- `view_channel.go` (229 lines) — channel event timeline
 
 ---
 
-## 第二輪：核心爭議交鋒
+## Round 1: Problem Diagnosis and Initial Proposals
 
-### 爭議焦點：File split 是否足以解決 God Class？
+### Alex's Analysis
 
-**Alex 修正立場**：
+**Core diagnosis**: model.go violates three Code Construction Principles:
+1. **§3 God Class** — Model carries 6 distinct responsibilities, each with completely different information hiding boundaries
+2. **§2 Inconsistent abstraction levels** — `update()` switch mixes high-level one-line dispatches with low-level 30+ line inline handlers
+3. **§2 Core belief** — modifying permission detection requires jumping across three methods in 2434 lines; implicit coupling
 
-接受 Carmen 的 `handleLaunchResult` 原子性論證，**放棄 Phase 2 SessionManager struct**。
+**Three-tier dependency classification**:
+- **Tier 1 (zero UI dependency)**: Session methods ~430 lines; only accesses `m.state`, never touches any Model UI field
+- **Tier 2 (parameterizable)**: Launch methods ~245 lines; sole dependency `m.cursor` can be converted to a parameter
+- **Tier 3 (deeply UI-bound)**: Key handlers + confirm ~630 lines; not recommended for extraction in the first step
 
-提出新觀點：「在 Bubble Tea 約束下，God Class 的解法不是拆 struct，而是分檔降低認知負載 + field 聚類降低 field 數量。Bubble Tea 的 Elm 架構本質上就是把所有 mutable state 集中在一個 Model 裡——這是 architectural decision，不是 code smell。」
+**Proposal**: Phase 1 does a same-package file split; Phase 2 extracts a `SessionManager` struct once test coverage exists.
 
-**Bo 的 `database/sql.DB` 類比**：
+### Bo's Response
 
-Go 標準庫的 `database/sql.DB` 也是一個「大 struct」（25+ field），有 connection pool、statement cache、stats 等多種職責。Go 的做法是：struct 不拆（API contract 要求）、方法按職責分散在多個檔案。Bubble Tea 的 `tea.Model` interface 就像 `database/sql` 的 public API——不能拆。
+- **Agrees file split matches Go idioms**, citing the `net/http` precedent of `server.go`/`request.go`/`response.go`
+- **Adds field concern**: Model has 24 fields; §3 recommends 7±2. Fields form clear clusters (Core, StatusView, Confirm, LoopFocus); Phase 2 can use embedded struct composition
+- **Challenges session.go scope**: internally mixes Discovery (one-shot cmd chain) and Monitoring (tick-driven), but does not insist on splitting into two files
+- **Recommends adding a lock protocol doc comment to the top of each new file** (§10: Comments explain why, not what)
 
-**Bo 區分 Phase 2 兩條路徑**：
-- **路徑 A（推薦）**：純 UI state 的 embedded struct（StatusViewState, ConfirmState）— 不引入新鎖，不改變並發語意
-- **路徑 B（否決）**：SessionManager struct 管理共享 mutable state — Carmen 的論證決定性
+### Carmen's Response
 
-**Carmen 對 handleLaunchResult 歸屬的分析**：
+**Three categories of session methods from a Bubble Tea framework perspective**:
+1. **Cmd factories** (scanExistingSessionsCmd, etc.) — return tea.Cmd, goroutine-executed; fully safe to move
+2. **Msg handlers** (existingSessionsMsg, etc.) — mutate activeTerminals; follow action-defer pattern
+3. **Tick-driven** (checkSessionLiveness, etc.) — pointer receiver; side-effect + cmd collector
+
+**Critical warnings about Phase 2 SessionManager struct**:
+1. Bubble Tea Model is a value type; a `*SessionManager` pointer would be shared across multiple Model copies
+2. If SessionManager has its own mutex → two-level lock (Go has no reentrant locks), increasing deadlock risk
+3. `handleLaunchResult` operates on both `activeTerminals` (session) and `channelSubs` (channel) **within the same Lock/Unlock region** → splitting the struct breaks atomicity
+4. If sharing `AppState.mu` → it becomes just a facade with no real isolation
+
+**Carmen's position**: Full support for Phase 1 file split (extending to session.go + launch.go + tracker_ops.go); wait-and-see on Phase 2 struct extraction (§2 No speculative generality).
+
+---
+
+## Round 2: Core Debate
+
+### Central Dispute: Is File Split Enough to Resolve the God Class?
+
+**Alex revises position**:
+
+Accepts Carmen's atomicity argument for `handleLaunchResult`, **drops Phase 2 SessionManager struct**.
+
+New perspective: "Under Bubble Tea constraints, the solution to a God Class is not struct splitting, but file splitting to reduce cognitive load + field clustering to reduce field count. Bubble Tea's Elm architecture is fundamentally designed to centralize all mutable state in a single Model — this is an architectural decision, not a code smell."
+
+**Bo's `database/sql.DB` analogy**:
+
+Go's `database/sql.DB` is also a "large struct" (25+ fields), carrying multiple responsibilities including connection pool, statement cache, and stats. Go's approach: don't split the struct (API contract requires it), scatter methods across multiple files by responsibility. Bubble Tea's `tea.Model` interface is like `database/sql`'s public API — it cannot be split.
+
+**Bo distinguishes two Phase 2 paths**:
+- **Path A (recommended)**: Embedded structs for pure UI state (StatusViewState, ConfirmState) — no new locks, no change to concurrency semantics
+- **Path B (rejected)**: SessionManager struct managing shared mutable state — Carmen's argument is decisive
+
+**Carmen's analysis of `handleLaunchResult` ownership**:
 
 ```
-handleLaunchResult 在一次 Lock/Unlock 區間內做了：
-1. nextTrackingKey()         — session 職責
-2. 建立 ActiveTerminal       — session 職責
-3. trackedPIDs()             — session 職責
-4. 讀取 channelSubs          — channel 職責
-(Unlock 後)
-5. startWatcherDirCmd()      — session 職責
-6. channelSubscribeCmd()     — channel 職責
+handleLaunchResult performs the following within a single Lock/Unlock region:
+1. nextTrackingKey()         — session responsibility
+2. construct ActiveTerminal  — session responsibility
+3. trackedPIDs()             — session responsibility
+4. read channelSubs          — channel responsibility
+(after Unlock)
+5. startWatcherDirCmd()      — session responsibility
+6. channelSubscribeCmd()     — channel responsibility
 ```
 
-結論：它是 **orchestrator**——協調多個子系統，本身不屬於任何單一子系統。應留在 model.go。
+Conclusion: it is an **orchestrator** — coordinating multiple subsystems, belonging to no single subsystem itself. It should stay in model.go.
 
 ---
 
-## 第三輪：收斂與定稿
+## Round 3: Convergence and Final Decision
 
-### Alex 的「編譯器即測試」劃線
+### Alex's "Compiler as Test" Boundary
 
-§8 說「Tests are a prerequisite」，但在 Go 靜態類型語境下需要精確解讀：
+§8 says "Tests are a prerequisite", but in Go's statically typed context this requires precise interpretation:
 
-| 操作 | Compiler 保證 | 需要測試 |
-|------|--------------|---------|
-| 方法從 A.go 搬到 B.go（同 package） | 完全等價 | 不需要 |
-| Field 改名（`m.statusCursor` → `m.status.Cursor`） | 所有 call site 必須更新，否則 compile error | 不需要（但建議 review） |
-| Inline code 抽成 named method | 完全等價 | 不需要 |
-| 方法改為接收參數而非讀 struct field | Compiler 檢查類型，但不檢查語意 | **需要測試** |
-| 引入新 interface | Compiler 檢查 method set，但不檢查行為 | **需要測試** |
+| Operation | Compiler Guarantee | Test Required |
+|-----------|-------------------|---------------|
+| Move method from A.go to B.go (same package) | Fully equivalent | No |
+| Rename field (`m.statusCursor` → `m.status.Cursor`) | All call sites must update or compile error | No (but review recommended) |
+| Extract inline code into named method | Fully equivalent | No |
+| Change method to accept parameter instead of reading struct field | Compiler checks types, not semantics | **Yes** |
+| Introduce new interface | Compiler checks method set, not behavior | **Yes** |
 
-**Phase 1 的全部操作都在「Compiler 保證區」**。
+**All Phase 1 operations fall within the "compiler-guaranteed zone".**
 
-### Bo 的 Embedded Struct 風險量化
+### Bo's Embedded Struct Risk Quantification
 
-- `statusProjectID` — 至少 8 處引用
-- `statusIssues` — 至少 7 處引用
-- `statusCursor` — 至少 10 處引用
-- `confirmForm/Result/Action` — 至少 15 處引用
-- 合計：**40+ 處 call site 改動**
+- `statusProjectID` — at least 8 references
+- `statusIssues` — at least 7 references
+- `statusCursor` — at least 10 references
+- `confirmForm/Result/Action` — at least 15 references
+- Total: **40+ call site changes**
 
-技術上 compiler 保證正確性，但應與 file split 分開 commit（§8 小步原則 + git blame 可追溯性）。
+Technically the compiler guarantees correctness, but this should be a separate commit from the file split (§8 small steps principle + git blame traceability).
 
-### Carmen 對 Embedded Struct 的 Bubble Tea 警告
+### Carmen's Bubble Tea Warning on Embedded Structs
 
-- Embedded value struct 的 copy 語意安全（Bubble Tea 複製 Model 時完整複製）
-- `ConfirmState` 裡的 `*huh.Form` 是 pointer，copy 後多副本共享——**但這是現有行為**，不改變語意
-- **關鍵警告**：embedded struct **不要加任何方法**（不要有自己的 `Update()`），否則 Bubble Tea 可能混淆
-- `StatusViewState.Issues` 是 `[]tracker.Issue`（slice），value copy 只複製 header，底層 array 共享——目前安全（只做整體替換），但未來需注意
+- Value struct embedding is copy-safe (Bubble Tea fully copies the Model when copying)
+- `*huh.Form` inside `ConfirmState` is a pointer; after copy, multiple copies share it — **but this is the existing behavior** and semantics do not change
+- **Key warning**: embedded structs **must not have any methods** (no own `Update()`), or Bubble Tea may get confused
+- `StatusViewState.Issues` is `[]tracker.Issue` (slice); value copy only copies the header, underlying array is shared — currently safe (only whole-replacement is done), but worth noting for the future
 
 ---
 
-## 最終共識方案
+## Final Consensus
 
-### Phase 1：Same-package file split（零風險，立即可執行）
+### Phase 1: Same-package file split (zero risk, immediately actionable)
 
-| 新檔案 | 內容 | 預估行數 |
-|--------|------|----------|
-| `session.go` | `ActiveTerminal` type + session msg types（`sessionFoundMsg`, `existingSessionsMsg`, `watcherReadyMsg`, `existingSessionEntry`, `permissionSignal`）+ handlers（`handleExistingSessions/Found/WatcherReady`）+ cmd factories（`scan/startWatcher/waitForLog/watchNext`）+ tick methods（`checkLiveness/Permission/NewSessions`）+ helpers（`trackedPIDs`, `nextTrackingKey`, `signalDir`, `deletePermissionSignal`） | ~500 |
+| New File | Contents | Estimated Lines |
+|----------|----------|-----------------|
+| `session.go` | `ActiveTerminal` type + session msg types (`sessionFoundMsg`, `existingSessionsMsg`, `watcherReadyMsg`, `existingSessionEntry`, `permissionSignal`) + handlers (`handleExistingSessions/Found/WatcherReady`) + cmd factories (`scan/startWatcher/waitForLog/watchNext`) + tick methods (`checkLiveness/Permission/NewSessions`) + helpers (`trackedPIDs`, `nextTrackingKey`, `signalDir`, `deletePermissionSignal`) | ~500 |
 | `launch.go` | `launchClaudeCmd`, `launchClarifier/ReviewerCmd`, `deployAndLaunchAgent`, `launchFocusClaudeCmd`, `openFolderCmd`, `openSlotFolderCmd/IssueCmd`, `openTrackerCmd`, `openInBrowser`, `deployDocs`, `injectLangInstruction`, `launchableSlotStates` | ~400 |
 | `tracker_ops.go` | `checkLabelsCmd`, `ensureLabelsCmd`, `loadIssuesCmd`, `confirmIssueCmd`, `openIssueURLCmd`, `startWithLabelCheck`, `showLabelConfirm` | ~200 |
 | `confirm.go` | `showDeployConfirm`, `showReviewerDeployConfirm`, `showUndeployConfirm`, `showIssueConfirm`, `executePendingOp`, `undeployFiles` | ~200 |
 | `channel.go` | `channelSubscribeCmd`, `channelReadNextCmd` | ~40 |
 
-**留在 model.go（~800 行）**：
-- Model struct 定義 + enums + constants
+**Remaining in model.go (~800 lines)**:
+- Model struct definition + enums + constants
 - `NewModelWithState` / `NewModel`
 - `Init` / `Update` routing / `View` routing
 - `handleKey`, `handleProjectsKey`, `handleStatusKey`, `handleChannelKey`
 - `handleFocusSwitch`, `handleLoopSlotsKey`, `sortedSlotKeys`
-- `handleLaunchResult`, `handleAgentEvent`（跨領域 orchestrator）
+- `handleLaunchResult`, `handleAgentEvent` (cross-domain orchestrators)
 - `setStatus`, `findProject`, `syncViewportContent`, `ensureCursorVisible`
 - `tickCmd`, `waitForStateRefresh`, `RunServerInit`, `serverInitCmds`
-- `update()` 中的 confirm form routing
+- confirm form routing inside `update()`
 
-**額外要求**：
-- `update()` 中所有 inline handler 抽為 named method（one-line dispatch）
-- 每個新檔案頂部加 lock protocol doc comment（三級標注：Handler / Cmd factory / Tick-driven）
-- session.go 內部用 section comments 分區
-- 分檔順序：session.go → launch.go → tracker_ops.go → confirm.go → channel.go，每檔一個 commit
-- 驗證：`go build ./...` + `go test ./...` + `go vet ./...`
+**Additional requirements**:
+- All inline handlers in `update()` extracted into named methods (one-line dispatch)
+- Lock protocol doc comment at the top of each new file (three-tier annotation: Handler / Cmd factory / Tick-driven)
+- Section comments inside session.go to delineate areas
+- Split order: session.go → launch.go → tracker_ops.go → confirm.go → channel.go, one commit per file
+- Validation: `go build ./...` + `go test ./...` + `go vet ./...`
 
-### Phase 2（分檔後評估，需測試覆蓋）
+### Phase 2 (evaluate after file split, requires test coverage)
 
-- **路徑 A（推薦）**：Model field embedded struct 聚類
-  - `StatusViewState`（5 field：ProjectID, Issues, Cursor, Loading, Error）
-  - `ConfirmState`（4 field：Form, Result, Action + PendingOp）
-  - `LoopFocusState`（3 field：Panel, Cursor, ProjectID）
-  - `ChannelViewState` 暫不做（只有 1 field，§2 No speculative generality）
-  - Model 直接 field 從 24 降到 ~14
-- **路徑 B（排除）**：不做 SessionManager/LaunchManager 獨立 struct
-- `launch.go` 方法參數化（`m.cursor` → `config.ProjectConfig`）— 跨線需先寫測試
+- **Path A (recommended)**: Model field embedded struct clustering
+  - `StatusViewState` (5 fields: ProjectID, Issues, Cursor, Loading, Error)
+  - `ConfirmState` (4 fields: Form, Result, Action + PendingOp)
+  - `LoopFocusState` (3 fields: Panel, Cursor, ProjectID)
+  - `ChannelViewState` deferred (only 1 field; §2 No speculative generality)
+  - Model direct fields reduced from 24 to ~14
+- **Path B (excluded)**: No SessionManager/LaunchManager independent struct
+- `launch.go` method parameterization (`m.cursor` → `config.ProjectConfig`) — requires tests before crossing the line
 
-### 明確排除
+### Explicitly Excluded
 
-- 不引入 interface（無多態需求）
-- 不新增 package（tui 內部耦合合理）
-- 不新增 mutex 層（單一 `AppState.mu` 是正確設計）
-
----
-
-## 關鍵決策記錄
-
-| # | 決策 | 結論 | 決定性論點 | 提出者 |
-|---|------|------|-----------|--------|
-| 1 | Phase 2 是否抽 SessionManager struct | **否** | `handleLaunchResult` 跨 session/channel 的原子性需要單一 Lock；雙層鎖死鎖風險 | Carmen |
-| 2 | File split 是否足以解決 God Class | **是**（在 Bubble Tea 約束下） | Elm 架構的 single-Model 設計本質上要求集中 state；`database/sql.DB` 先例 | Carmen + Bo |
-| 3 | Embedded struct 是否 Phase 1 做 | **否，延後到 Phase 2** | §8 小步原則：分檔和 field rename 不同改動不應混合；40+ call site 應分開 commit | Bo + Carmen |
-| 4 | `handleLaunchResult` 歸屬 | **留 model.go** | 跨 session/channel 的 orchestrator，不屬於任何單一子系統 | 三人一致 |
-| 5 | `ActiveTerminal` type 歸屬 | **放 session.go** | 主要操作者都在 session.go；Go 慣用法：type 跟主要操作走 | Bo（Alex/Carmen 同意）|
-| 6 | 無測試能做到什麼程度 | **分檔 + named method 抽取** | Go compiler 保證等價性 = 第零層測試；call site 改動才跨線 | Alex（Bo/Carmen 同意）|
-| 7 | session.go 內部是否拆兩檔 | **否，單檔 + section comments** | Discovery 和 Monitoring 共享 `activeTerminals` 和 `trackedPIDs`，拆開增加認知負擔 | Carmen |
-| 8 | confirm.go 納入 Phase 1 | **是** | 自成一體的模態邏輯，跟 key handling / view rendering 正交 | Alex（Carmen 同意）|
+- No new interfaces (no polymorphism requirement)
+- No new packages (internal tui coupling is appropriate)
+- No additional mutex layers (single `AppState.mu` is the correct design)
 
 ---
 
-## 實作結果
+## Key Decision Log
 
-### Phase 1：已完成 ✅
+| # | Decision | Conclusion | Decisive Argument | Raised By |
+|---|----------|------------|-------------------|-----------|
+| 1 | Whether to extract SessionManager struct in Phase 2 | **No** | `handleLaunchResult` atomicity across session/channel requires a single Lock; double-lock deadlock risk | Carmen |
+| 2 | Whether file split is sufficient to resolve the God Class | **Yes** (under Bubble Tea constraints) | Elm architecture's single-Model design inherently requires centralized state; `database/sql.DB` precedent | Carmen + Bo |
+| 3 | Whether embedded struct goes in Phase 1 | **No, defer to Phase 2** | §8 small steps: file split and field rename are different changes and must not be mixed; 40+ call sites should be a separate commit | Bo + Carmen |
+| 4 | `handleLaunchResult` ownership | **Stays in model.go** | Cross-domain orchestrator for session/channel; belongs to no single subsystem | All three agreed |
+| 5 | `ActiveTerminal` type ownership | **Goes in session.go** | Primary operators are all in session.go; Go idiom: type follows its primary operator | Bo (Alex/Carmen agreed) |
+| 6 | How far can we go without tests | **File split + named method extraction** | Go compiler equivalence guarantee = zeroth-level test; call site changes cross the line | Alex (Bo/Carmen agreed) |
+| 7 | Whether session.go is split into two files internally | **No, single file + section comments** | Discovery and Monitoring share `activeTerminals` and `trackedPIDs`; splitting increases cognitive load | Carmen |
+| 8 | Including confirm.go in Phase 1 | **Yes** | Self-contained modal logic, orthogonal to key handling / view rendering | Alex (Carmen agreed) |
 
-[PR #59](https://github.com/zac15987/zpit/pull/59) merged（2026-04-03）
+---
 
-| 檔案 | 行數 | 說明 |
-|------|------|------|
-| `model.go` | 860（從 2433 降） | Core routing + key handling + orchestrators |
-| `session.go` | 733 | Session lifecycle：handlers + cmds + tick + types |
-| `launch.go` | 479 | Launch & Deploy：launch cmds + slot ops + utilities |
-| `tracker_ops.go` | 242 | Tracker & Label：label check/ensure + issue ops |
+## Implementation Results
+
+### Phase 1: Complete
+
+[PR #59](https://github.com/zac15987/zpit/pull/59) merged (2026-04-03)
+
+| File | Lines | Notes |
+|------|-------|-------|
+| `model.go` | 860 (down from 2433) | Core routing + key handling + orchestrators |
+| `session.go` | 733 | Session lifecycle: handlers + cmds + tick + types |
+| `launch.go` | 479 | Launch & Deploy: launch cmds + slot ops + utilities |
+| `tracker_ops.go` | 242 | Tracker & Label: label check/ensure + issue ops |
 | `confirm.go` | 208 | Confirm dialogs + executePendingOp + undeploy |
 | `channel.go` | 78 | Channel subscription + event reading |
 
-`update()` 的所有 message case 均為 one-line dispatch，每個新檔案頂部有 lock protocol doc comment。
+All message cases in `update()` are one-line dispatches; each new file has a lock protocol doc comment at the top.
 
-### Phase 2：評估後決定不執行 ✅
+### Phase 2: Evaluated and Decided Against
 
-Phase 1 完成後，以 Bo 提出的三項 God Class 測試重新評估 model.go：
+After Phase 1 completed, model.go was re-evaluated against the three God Class tests proposed by Bo:
 
-| 測試 | 拆分前 | 拆分後 |
-|------|--------|--------|
-| ①「一個修改是否牽動不相關的程式碼？」 | ❌ 改 session 要翻 2433 行 | ✅ 只開 session.go |
-| ②「理解一個功能是否需要讀完所有方法？」 | ❌ 50+ 方法混在一起 | ✅ 17 方法，全是 routing/key handling |
-| ③「struct 是否有大量方法不使用的 field 子集？」 | ❌ statusIssues 只被 10% 方法用 | ⚠️ 仍存在，但影響已小 |
+| Test | Before Split | After Split |
+|------|-------------|-------------|
+| "Does a single change disturb unrelated code?" | Changing session required navigating 2433 lines | Only session.go needs to be opened |
+| "Does understanding one feature require reading all methods?" | 50+ methods mixed together | 17 methods, all routing/key handling |
+| "Does the struct have a large subset of fields unused by most methods?" | `statusIssues` used by only ~10% of methods | Still exists, but impact is minor |
 
-**結論：God Class 症狀已基本消除。**
+**Conclusion: God Class symptoms are substantially eliminated.**
 
-- model.go 860 行、17 方法——規模與 `loop_cmds.go`（856 行）同級，是正常的 Bubble Tea root Model
-- model.go 現在的職責為 **TUI application state machine**（routing + key handling + cross-domain orchestration），是 Bubble Tea Elm 架構下合法的單一抽象
-- 24 個 field 是 Bubble Tea 的結構性限制（single source of truth），不是設計缺陷
-- Embedded struct field 聚類（StatusViewState, ConfirmState, LoopFocusState）技術上可行，但屬於 §2 No speculative generality——目前結構已足夠清晰，無需強行重構
+- model.go is 860 lines with 17 methods — comparable in scale to `loop_cmds.go` (856 lines); a normal Bubble Tea root Model
+- model.go's responsibility is now **TUI application state machine** (routing + key handling + cross-domain orchestration) — a legitimate single abstraction under Bubble Tea's Elm architecture
+- 24 fields are a structural constraint of Bubble Tea (single source of truth), not a design defect
+- Embedded struct field clustering (StatusViewState, ConfirmState, LoopFocusState) is technically feasible but falls under §2 No speculative generality — the current structure is clear enough, no forced refactoring needed
 
-Phase 2 的 embedded struct 聚類和 launch 方法參數化保留為「已知可選改善」，未來如有實際痛點再重新評估。
+The Phase 2 embedded struct clustering and launch method parameterization are retained as "known optional improvements" to be re-evaluated if concrete pain points emerge in the future.
 
-| # | 決策 | 結論 | 理由 |
-|---|------|------|------|
-| 9 | Phase 2 是否執行 | **否（不需要）** | Phase 1 後 God Class 症狀已消除；24 field 是 Bubble Tea 結構性限制；§2 No speculative generality |
-
----
-
-## 風險提醒
-
-1. **已知耦合點**：`handleLaunchResult` 同時操作 `activeTerminals` + `channelSubs` 是架構級耦合。若 channel 功能擴展，此 handler 可能需要重構。
-2. **Slice 共享**：`StatusViewState.Issues`（`[]tracker.Issue`）在 Bubble Tea value copy 時只複製 slice header。目前安全（整體替換），但未來若有 in-place mutation 需注意。
-3. **Embedded struct 不加方法**：若未來做 embedded struct 聚類，純粹是 field 分組，不要加 `Init/Update/View` 方法，否則 Bubble Tea 可能混淆。
+| # | Decision | Conclusion | Rationale |
+|---|----------|------------|-----------|
+| 9 | Whether to execute Phase 2 | **No (not needed)** | God Class symptoms eliminated after Phase 1; 24 fields are a Bubble Tea structural constraint; §2 No speculative generality |
 
 ---
 
-## 引用的原則
+## Risk Notes
 
-- **§2 Design**：Managing complexity is the central goal; High cohesion, low coupling; Information hiding; No speculative generality
-- **§3 Classes**：Avoid God Classes; Keep data members at roughly 7±2
-- **§6 Control Structures**：Table-driven methods（update switch → one-line dispatch）
-- **§8 Refactoring**：Tests are a prerequisite; Small steps
-- **§10 Layout**：Comments explain why, not what（lock protocol doc comments）
-- **Core Belief**：Enable the developer to work correctly while holding the minimum amount of code in mind
+1. **Known coupling point**: `handleLaunchResult` operating on both `activeTerminals` and `channelSubs` simultaneously is an architecture-level coupling. If channel functionality expands significantly, this handler may need refactoring.
+2. **Slice sharing**: `StatusViewState.Issues` (`[]tracker.Issue`) only copies the slice header during Bubble Tea value copy. Currently safe (whole-replacement only), but in-place mutation must be handled carefully in the future.
+3. **No methods on embedded structs**: If embedded struct clustering is done in the future, it must be purely a field grouping — do not add `Init/Update/View` methods, or Bubble Tea may get confused.
+
+---
+
+## Referenced Principles
+
+- **§2 Design**: Managing complexity is the central goal; High cohesion, low coupling; Information hiding; No speculative generality
+- **§3 Classes**: Avoid God Classes; Keep data members at roughly 7±2
+- **§6 Control Structures**: Table-driven methods (update switch → one-line dispatch)
+- **§8 Refactoring**: Tests are a prerequisite; Small steps
+- **§10 Layout**: Comments explain why, not what (lock protocol doc comments)
+- **Core Belief**: Enable the developer to work correctly while holding the minimum amount of code in mind

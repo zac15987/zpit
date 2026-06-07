@@ -1,10 +1,10 @@
-# 10. AppState 與多客戶端架構
+# 10. AppState and Multi-Client Architecture
 
 ---
 
-## 10.1 AppState 分離
+## 10.1 AppState Separation
 
-`AppState`（`internal/tui/appstate.go`）持有所有共享可變狀態。多個 `tea.Program` 實例共享同一個 `*AppState`：
+`AppState` (`internal/tui/appstate.go`) holds all shared mutable state. Multiple `tea.Program` instances share a single `*AppState`:
 
 ```
 AppState (shared, one instance)
@@ -20,24 +20,24 @@ AppState (shared, one instance)
   └── lastSessionScan                         (mutable)
 ```
 
-- `NewAppState()` 接管初始化邏輯（logger 建立、tracker client 建立、map 初始化）
-- `NewModel(appState)` 只設定 viewport 和 keymap
-- `main.go` 先建立 `appState`，再傳給 `NewModel(appState)` 或 SSH session handler
+- `NewAppState()` owns the initialization logic (logger creation, tracker client creation, map initialization)
+- `NewModel(appState)` only sets up viewports and keymaps
+- `main.go` creates `appState` first, then passes it to `NewModel(appState)` or the SSH session handler
 
 ---
 
-## 10.2 SSH Server Mode（Wish）
+## 10.2 SSH Server Mode (Wish)
 
-四個路徑透過 `os.Args` routing：
+Four paths are routed via `os.Args`:
 
 ```
-zpit           → runLocalTUI()     # 本機 TUI（auto_serve=false 時）
-zpit           → runAutoServe()    # 自動 serve + connect（auto_serve=true 時）
-zpit serve     → runServe()        # 無頭 SSH daemon
-zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
+zpit           → runLocalTUI()     # local TUI (when auto_serve=false)
+zpit           → runAutoServe()    # auto serve + connect (when auto_serve=true)
+zpit serve     → runServe()        # headless SSH daemon
+zpit connect   → runConnect()      # convenience wrapper: ssh localhost -p <port>
 ```
 
-**架構圖：**
+**Architecture diagram:**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -61,8 +61,8 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 │    │                                               │    │
 │    └── (each session: NewModelWithState(state,true))│   │
 │                                                    │    │
-│  RunServerInit(state) — 啟動時同步執行一次 (session.go)│   │
-│    ├── session scan (找已跑的 Claude Code)          │    │
+│  RunServerInit(state) — runs once synchronously at startup (session.go)│   │
+│    ├── session scan (finds already-running Claude Code) │    │
 │    ├── .gitignore check                            │    │
 │    └── provider validation                         │    │
 │                                                    │    │
@@ -70,7 +70,7 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Auto-serve 模式（`auto_serve = true`）：**
+**Auto-serve mode (`auto_serve = true`):**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -89,46 +89,46 @@ zpit connect   → runConnect()      # 便利包裝: ssh localhost -p <port>
 └─────────────────────────────────────────────────────────┘
 ```
 
-與 `zpit serve` 的差異：auto_serve 的 server 生命週期由本地 SSH 連線控制——斷線即關閉。`zpit serve` 則持續運行直到收到 SIGINT/SIGTERM。兩者共用 `StartServerAsync()` 和 `ServerHandle`。
+Difference from `zpit serve`: in auto_serve mode the server lifecycle is controlled by the local SSH connection — the server shuts down when the connection drops. `zpit serve` runs continuously until it receives SIGINT/SIGTERM. Both modes share `StartServerAsync()` and `ServerHandle`.
 
-**SSH Config（`[ssh]` section in config.toml）：**
+**SSH Config (`[ssh]` section in config.toml):**
 
 ```toml
 [ssh]
-port = 2200                                    # 預設
+port = 2200                                    # default
 host = "0.0.0.0"
-host_key_path = "~/.zpit/ssh/host_ed25519"     # 支援 ~/ 展開
-password_env = "ZPIT_SSH_PASSWORD"              # env var 名稱，選配
-authorized_keys_path = "~/.ssh/authorized_keys" # 選配
-auto_serve = false                             # true 時 zpit 自動啟動 server + 連入
+host_key_path = "~/.zpit/ssh/host_ed25519"     # supports ~/ expansion
+password_env = "ZPIT_SSH_PASSWORD"              # env var name, optional
+authorized_keys_path = "~/.ssh/authorized_keys" # optional
+auto_serve = false                             # when true, zpit auto-starts server + connects
 ```
 
-**認證機制：**
-- Public key auth: 讀取 `authorized_keys_path` 檔案
-- Password auth: 從 `password_env` 指向的環境變數讀取密碼
-- 兩者至少啟用一個，否則啟動時 hard error
+**Authentication:**
+- Public key auth: reads the `authorized_keys_path` file
+- Password auth: reads the password from the environment variable named by `password_env`
+- At least one must be enabled; otherwise startup produces a hard error
 
-**Remote vs Local session 差異：**
+**Remote vs Local session differences:**
 
-| 行為 | Local (`isRemote=false`) | Remote (`isRemote=true`) |
+| Behavior | Local (`isRemote=false`) | Remote (`isRemote=true`) |
 |------|--------------------------|--------------------------|
 | `Init()` | `serverInitCmds()` + `tickCmd()` (both in session.go) | `tickCmd()` only |
-| Quit (`q`) | 停 watchers + loops + `tea.Quit` | `tea.Quit` only |
-| Server init | 在 `Init()` 中執行 | `zpit serve` / `runAutoServe` 啟動時同步執行一次 |
+| Quit (`q`) | stops watchers + loops + `tea.Quit` | `tea.Quit` only |
+| Server init | executed inside `Init()` | runs once synchronously at `zpit serve` / `runAutoServe` startup |
 
-> **Note:** auto_serve 模式下的 SSH session 同樣是 `isRemote=true`，行為與 `zpit serve` 建立的 session 完全一致。
+> **Note:** SSH sessions under auto_serve mode are also `isRemote=true` and behave exactly the same as sessions created by `zpit serve`.
 
 ---
 
-## 10.3 多客戶端併發安全
+## 10.3 Multi-Client Concurrency Safety
 
-**問題：** 多個 SSH 客戶端（tea.Program）共享同一個 `AppState`，Bubble Tea 的 `Update` 在各自 goroutine 執行，會造成 race condition。
+**Problem:** Multiple SSH clients (`tea.Program`) share a single `AppState`. Bubble Tea's `Update` runs in each client's own goroutine, which creates race conditions.
 
-**解決方案：** `sync.RWMutex` + channel-based pub/sub
+**Solution:** `sync.RWMutex` + channel-based pub/sub
 
 ```
 AppState
-  ├── mu (sync.RWMutex)     ← 保護 mutable fields
+  ├── mu (sync.RWMutex)     ← protects mutable fields
   │     ├── activeTerminals
   │     ├── loops
   │     ├── channelEvents
@@ -137,15 +137,15 @@ AppState
   │     ├── lastPermissionCheck
   │     └── lastSessionScan
   │
-  └── subMu (sync.Mutex)    ← 保護 subscribers map（獨立於 mu）
+  └── subMu (sync.Mutex)    ← protects subscribers map (independent of mu)
         └── subscribers map[int]chan struct{}
 ```
 
-**兩個獨立的 mutex：**
-- `mu`（RWMutex）：保護共享狀態。Write lock 用於 mutation，Read lock 用於讀取。
-- `subMu`（Mutex）：保護 subscriber map。獨立於 `mu`，避免 `NotifyAll` 在持有 `mu` 時 deadlock。
+**Two independent mutexes:**
+- `mu` (RWMutex): protects shared state. Write lock for mutations, read lock for reads.
+- `subMu` (Mutex): protects the subscriber map. Independent of `mu` to avoid deadlock when `NotifyAll` is called while `mu` is held.
 
-**Pub/Sub 廣播機制：**
+**Pub/Sub broadcast mechanism:**
 
 ```
 Model A (SSH Client)                   AppState
@@ -164,20 +164,20 @@ Model A (SSH Client)                   AppState
   │  re-subscribe → waitForStateRefresh  │
 ```
 
-- `Subscribe()` 回傳 ID + buffered channel (size 1)
-- `NotifyAll()` non-blocking send 到所有 subscriber channel，合併快速連續變更
-- `Unsubscribe(id)` 在 quit 時清理
+- `Subscribe()` returns an ID + buffered channel (size 1)
+- `NotifyAll()` sends non-blocking to all subscriber channels, coalescing rapid successive changes
+- `Unsubscribe(id)` cleans up on quit
 
-**Lock patterns（程式碼規範）：**
+**Lock patterns (code conventions):**
 
-| 場景 | Pattern |
+| Scenario | Pattern |
 |------|---------|
-| 讀取 loops/terminals 建立 cmd | `RLock` → 複製到 local vars → `RUnlock` → return cmd closure |
-| 修改 loops/terminals | `Lock` → mutate → `NotifyAll` → `Unlock` → create cmds |
-| handlers 需要讀+寫 | `Lock` → collect actions into slice → `Unlock` → create cmds（action-defer pattern） |
+| Read loops/terminals to build a cmd | `RLock` → copy to local vars → `RUnlock` → return cmd closure |
+| Mutate loops/terminals | `Lock` → mutate → `NotifyAll` → `Unlock` → create cmds |
+| Handler needs both read and write | `Lock` → collect actions into slice → `Unlock` → create cmds (action-defer pattern) |
 | View rendering | `RLock` → render → `RUnlock` |
-| Read-only fields (`cfg`, `clients`, `env`) | No lock needed（init 後不變） |
+| Read-only fields (`cfg`, `clients`, `env`) | No lock needed (unchanged after init) |
 
-**禁止事項：**
-- 持有 `mu` 時呼叫會取 `RLock` 的 cmd 方法（會 deadlock）
-- cmd closure 中直接引用 `AppState` 的 mutable fields（必須先複製）
+**Prohibited patterns:**
+- Calling cmd methods that acquire `RLock` while holding `mu` (causes deadlock)
+- Referencing `AppState` mutable fields directly inside cmd closures (must copy first)

@@ -1,18 +1,16 @@
-# 12. 跨 Agent Channel 通訊
+# 12. Cross-Agent Channel Communication
 
 ---
 
-## 12.1 設計動機
+## 12.1 Design Motivation
 
-當多個 agent 同時處理相關 issue（例如同專案的前後端、或跨專案的共用模組），
-需要即時交換 artifact（interface 定義、type spec）和訊息。
+When multiple agents are concurrently handling related issues (for example, frontend and backend within the same project, or a shared module across projects), they need to exchange artifacts (interface definitions, type specs) and messages in real time.
 
-Channel 系統讓 agent 不需要透過 issue tracker 或檔案系統間接溝通，
-而是透過 HTTP broker + MCP stdio server 建立即時通道。
+The channel system lets agents communicate directly through an HTTP broker and MCP stdio server, without having to route through the issue tracker or the filesystem.
 
 ---
 
-## 12.2 整體架構
+## 12.2 Overall Architecture
 
 ```
 Agent A (Project X, Issue #3)       Agent B (Project Y, Issue #7)
@@ -44,18 +42,18 @@ Agent A (Project X, Issue #3)       Agent B (Project Y, Issue #7)
 
 ---
 
-## 12.3 Broker（HTTP 事件中樞）
+## 12.3 Broker (HTTP Event Hub)
 
-實作位於 `internal/broker/`。
+Implementation lives in `internal/broker/`.
 
-**特性：**
-- 綁定 `127.0.0.1:<broker_port>`（預設 17731），僅限本機存取
-- In-memory 儲存（artifacts、messages），不持久化
-- Non-blocking publish：使用 buffered channel，滿時丟棄（避免慢 subscriber 拖住 broker）
-- SSE 連線計數：per-project per-agent-type 追蹤活躍 SSE 連線數（`?agent_type=X` query parameter），供 `/api/projects` 回傳 `agents` map
-- 在 `NewAppState()` 中啟動，僅當任一 project 有 `channel_enabled = true`
+**Characteristics:**
+- Binds to `127.0.0.1:<broker_port>` (default 17731); local access only
+- In-memory storage (artifacts, messages); no persistence
+- Non-blocking publish: uses buffered channels; drops events when full to prevent slow subscribers from stalling the broker
+- SSE connection tracking: tracks active SSE connection counts per project per agent type (via `?agent_type=X` query parameter); exposed through the `agents` map returned by `/api/projects`
+- Started in `NewAppState()`; only when at least one project has `channel_enabled = true`
 
-**EventBus：**
+**EventBus:**
 
 ```go
 type EventBus interface {
@@ -69,288 +67,284 @@ type Event struct {
 }
 ```
 
-**Artifact / Message struct** 皆包含 `AgentName string` 欄位（json tag: `agent_name,omitempty`），
-由 MCP server 在 HTTP POST 時帶入。用於在 TUI Channel view 中識別不同 agent 的發言。
-命名格式：手動啟動 `{type}-{4碼hex}`（如 `clarifier-a3f7`），Loop 啟動 `{role}-#{issueID}`（如 `coding-#42`）。
+**Artifact / Message structs** both include an `AgentName string` field (json tag: `agent_name,omitempty`), populated by the MCP server in the HTTP POST body. Used to identify which agent produced each entry in the TUI Channel view.
+Naming format: manually launched agents use `{type}-{4hex}` (e.g. `clarifier-a3f7`); loop-launched agents use `{role}-#{issueID}` (e.g. `coding-#42`).
 
-- 以 project key 為分組，每個 project 獨立的 subscriber set
-- `_global` 和跨專案 key 在 EventBus 中是普通的 project key，無特殊邏輯
+- Grouped by project key; each project has its own independent subscriber set
+- `_global` and cross-project keys are ordinary project keys in the EventBus; no special-case logic
 
 ---
 
-## 12.4 MCP Stdio Server（Agent 端橋接）
+## 12.4 MCP Stdio Server (Agent-Side Bridge)
 
-實作位於 `internal/mcp/`。入口：`zpit serve-channel` 子命令。
+Implementation lives in `internal/mcp/`. Entry point: `zpit serve-channel` subcommand.
 
-每個 agent 啟動時，Claude Code 透過 `.mcp.json` 設定自動啟動一個 MCP stdio server。
-Server 從環境變數讀取設定：
+When an agent starts, Claude Code automatically launches an MCP stdio server as configured in `.mcp.json`. The server reads its configuration from environment variables:
 
-| 環境變數 | 說明 |
+| Environment Variable | Description |
 |----------|------|
-| `ZPIT_BROKER_URL` | Broker HTTP 位址 |
-| `ZPIT_PROJECT_ID` | 所屬 project ID |
-| `ZPIT_ISSUE_ID` | 處理中的 issue ID |
-| `ZPIT_LISTEN_PROJECTS` | 額外訂閱的 project key（逗號分隔） |
-| `ZPIT_AGENT_NAME` | Agent 顯示名稱（optional，如 `clarifier-a3f7`） |
-| `ZPIT_AGENT_TYPE` | Agent 類型（optional，如 `clarifier`、`coding`、`reviewer`、`efficiency`、`claude`） |
+| `ZPIT_BROKER_URL` | Broker HTTP address |
+| `ZPIT_PROJECT_ID` | Project ID this agent belongs to |
+| `ZPIT_ISSUE_ID` | Issue ID currently being handled |
+| `ZPIT_LISTEN_PROJECTS` | Additional project keys to subscribe to (comma-separated) |
+| `ZPIT_AGENT_NAME` | Agent display name (optional, e.g. `clarifier-a3f7`) |
+| `ZPIT_AGENT_TYPE` | Agent type (optional, e.g. `clarifier`, `coding`, `reviewer`, `efficiency`, `claude`) |
 
-**提供的 MCP Tools：**
+**Provided MCP Tools:**
 
-| Tool | 說明 |
+| Tool | Description |
 |------|------|
-| `publish_artifact` | 發布 artifact 到 broker，HTTP body 帶入 agent_name |
-| `list_artifacts` | 列出指定 project 的所有 artifact |
-| `send_message` | 發送訊息給指定 agent，HTTP body 帶入 agent_name |
-| `list_projects` | 列出所有活躍 project 及其各類型 agent 連線數（`agents` map） |
-| `subscribe_project` | 動態訂閱指定 project 的 SSE 事件串流 |
-| `unsubscribe_project` | 取消訂閱指定 project 的 SSE 事件串流（不可取消訂閱自身 project） |
-| `list_subscriptions` | 列出目前所有已訂閱 SSE 的 project key |
+| `publish_artifact` | Publishes an artifact to the broker; includes `agent_name` in the HTTP body |
+| `list_artifacts` | Lists all artifacts for a given project |
+| `send_message` | Sends a message to a specified agent; includes `agent_name` in the HTTP body |
+| `list_projects` | Lists all active projects and their per-type agent connection counts (`agents` map) |
+| `subscribe_project` | Dynamically subscribes to the SSE event stream for a given project |
+| `unsubscribe_project` | Unsubscribes from the SSE event stream for a given project (cannot unsubscribe from own project) |
+| `list_subscriptions` | Returns all project keys currently subscribed via SSE |
 
-**SSE 監聽：**
-- 啟動時對自身 project + `ListenProjects` 各啟動一個 SSE listener goroutine
-- 透過 per-instance UUID 過濾自身發送的事件（self-echo filtering）
-- 收到事件時以 JSON-RPC notification 推送到 agent 的 stdin
+**SSE Listening:**
+- At startup, spawns one SSE listener goroutine for each of: own project + each entry in `ListenProjects`
+- Self-echo filtering via a per-instance UUID to suppress events the server itself published
+- Pushes received events to the agent's stdin as JSON-RPC notifications
 
 ---
 
-## 12.5 跨專案通訊模型
+## 12.5 Cross-Project Communication Model
 
-Agent 透過 `target_project` 參數選擇通訊範圍：
+Agents select the communication scope via the `target_project` parameter:
 
-| `target_project` | `to` | 效果 |
+| `target_project` | `to` | Effect |
 |---|---|---|
-| 省略（預設） | `"3"` | 同專案，指定 issue |
-| `"project-a"` | `"5"` | 跨專案，指定 issue |
-| `"project-a"` | `"_project"` | 廣播給目標專案所有 agent |
-| `"_global"` | `"_all"` | 全域廣播給所有監聽中的 agent |
+| omitted (default) | `"3"` | Same project, specific issue |
+| `"project-a"` | `"5"` | Cross-project, specific issue |
+| `"project-a"` | `"_project"` | Broadcast to all agents in the target project |
+| `"_global"` | `"_all"` | Global broadcast to all listening agents |
 
-**範例流程：**
+**Example flow:**
 
 ```
-Project X / Issue #3 的 agent 定義了一個 interface：
+Agent for Project X / Issue #3 defines an interface:
   → publish_artifact(issue_id="3", type="interface", content="...")
-  → Broker 存入 artifacts["project-x"]，透過 EventBus 發布到 "project-x" 的 subscriber
+  → Broker stores it in artifacts["project-x"], publishes to "project-x" subscribers via EventBus
 
-Project Y / Issue #7 的 agent 需要該 interface：
+Agent for Project Y / Issue #7 needs that interface:
   → list_artifacts(project="project-x")
-  → Broker 回傳 project-x 的所有 artifact
+  → Broker returns all artifacts for project-x
 
-跨專案訊息：
+Cross-project message:
   → send_message(to_issue_id="7", content="...", target_project="project-y")
   → Broker POST /api/messages/project-y/7
-  → Project Y 的 SSE listener 收到事件 → 推送到 agent
+  → Project Y's SSE listener receives the event → pushes to agent
 ```
 
 ---
 
-## 12.6 TUI 整合
+## 12.6 TUI Integration
 
-**訂閱機制：**
-- Loop 啟動 / 手動 launch 時呼叫 `channelSubscribeCmd()`
-- 訂閱範圍：自身 project + 每個 `channel_listen` 項目
-- `channelReadNextCmd()` 在 EventBus channel 上阻塞
-- 收到事件 → `ChannelEventMsg` → 存入 `AppState.channelEvents[projectID]`
-- Loop 停止時 unsubscribe 所有相關 channel
+**Subscription mechanism:**
+- `channelSubscribeCmd()` is called on loop start or manual agent launch
+- Subscription scope: own project + each `channel_listen` entry
+- `channelReadNextCmd()` blocks on the EventBus channel
+- Event received → `ChannelEventMsg` → appended to `AppState.channelEvents[projectID]`
+- All related channels are unsubscribed when the loop stops
 
-**Channel View（[m] key）：**
-- 合併自身 project 與 `channel_listen` 的事件，按時間排序
-- 跨專案事件標記 `[source]` tag
-- Viewport 支援滾動瀏覽
+**Channel View ([m] key):**
+- Merges events from own project and `channel_listen` entries, sorted by timestamp
+- Cross-project events are tagged with a `[source]` tag
+- Viewport supports scrolling
 
-**TUI 即時 Toggle（[e] 子選單）：**
-- `[1]` Toggle channel：切換 `channel_enabled` on/off，即時 subscribe/unsubscribe EventBus
-  - OFF → ON：若 broker 為 nil，自動 lazy start；然後訂閱 own project + `channel_listen` 項目
-  - ON → OFF：取消訂閱 own project 的 EventBus channel
-  - 結果同步寫回 config.toml（針對性 TOML 寫入，不影響其他內容）
-- `[2]` Edit channel_listen：多選清單顯示所有其他專案 + `_global`
-  - 確認後即時更新 in-memory config 並寫回 config.toml
-  - 新增的 listen 項目立即 subscribe EventBus，移除的立即 unsubscribe
+**Live TUI Toggle ([e] sub-menu):**
+- `[1]` Toggle channel: switches `channel_enabled` on/off and immediately subscribes/unsubscribes the EventBus
+  - OFF → ON: if broker is nil, lazy-starts it automatically; then subscribes to own project + `channel_listen` entries
+  - ON → OFF: cancels the own project's EventBus channel subscription
+  - Result is written back to config.toml via targeted TOML write (does not affect other content)
+- `[2]` Edit channel_listen: multi-select list showing all other projects + `_global`
+  - On confirm, updates the in-memory config immediately and writes back to config.toml
+  - Newly added listen entries are subscribed immediately; removed entries are unsubscribed immediately
 
 ---
 
-## 12.7 設定
+## 12.7 Configuration
 
 ```toml
-# 全域
-broker_port = 17731          # Broker HTTP 埠
-zpit_bin = "/path/to/zpit"   # 明確指定 binary 路徑（用於 .mcp.json 生成）
+# Global
+broker_port = 17731          # Broker HTTP port
+zpit_bin = "/path/to/zpit"   # Explicit binary path (used for .mcp.json generation)
 
 # Per-project
 [[projects]]
-channel_enabled = true                      # 啟用 channel
-channel_listen = ["_global", "other-proj"]  # 額外訂閱的 project key
+channel_enabled = true                      # Enable channel
+channel_listen = ["_global", "other-proj"]  # Additional project keys to subscribe to
 ```
 
-- `channel_enabled`：per-project 開關，關閉時該 project 的 agent 不啟動 MCP server
-- `channel_listen`：該 project 的 agent 除了自身 project 外，額外訂閱的 key
-- `broker_port`：全域設定，所有 project 共用同一個 broker
-- `zpit_bin`：用於生成 `.mcp.json` 中的 `command` 路徑
+- `channel_enabled`: per-project toggle; when off, agents for that project do not start the MCP server
+- `channel_listen`: additional project keys an agent subscribes to beyond its own project
+- `broker_port`: global setting; all projects share a single broker
+- `zpit_bin`: used to generate the `command` path in `.mcp.json`
 
-`channel_enabled` 和 `channel_listen` 可在 TUI 中透過 `[e]` 子選單即時切換，無需重啟。其他 channel 相關設定（如 `broker_port`）需要重啟才能生效。
+`channel_enabled` and `channel_listen` can be toggled live from the TUI via the `[e]` sub-menu without restarting. Other channel-related settings (such as `broker_port`) require a restart to take effect.
 
 ---
 
-## 12.8 Dependency Coordination Protocol（依賴協調協議）
+## 12.8 Dependency Coordination Protocol
 
-當 Issue Spec 包含 `## COORDINATES_WITH` section 時，coding agent 的 prompt 會注入 Dependency Coordination Protocol。
-此協議解決並行 agent 之間的 artifact 依賴問題——在 Claude Code 的 single-turn 執行模型下，agent 無法在執行中途暫停等待外部信號。
+When an Issue Spec contains a `## COORDINATES_WITH` section, the Dependency Coordination Protocol is injected into the coding agent's prompt. This protocol resolves artifact dependency problems between concurrently running agents — under Claude Code's single-turn execution model, an agent cannot pause mid-run to wait for an external signal.
 
-### 觸發條件
+### Trigger Conditions
 
-- `channel_enabled = true`（專案層級）
-- Issue Spec 中存在 `## COORDINATES_WITH` section（列出並行協作對象的 issue 編號）
-- 兩者缺一不觸發（ChannelEnabled=false 時不注入任何 channel section）
+- `channel_enabled = true` (project level)
+- A `## COORDINATES_WITH` section is present in the Issue Spec (listing the issue numbers of concurrent collaborators)
 
-### 協議流程
+Both conditions must be met; if `ChannelEnabled=false`, no channel section is injected.
+
+### Protocol Flow
 
 ```
-Agent 啟動
+Agent starts
   │
-  ├─ 1. 啟動探查 (Startup Probe)
-  │     ├─ list_artifacts — 檢查已發布的 artifact
-  │     ├─ list_projects — 探索活躍 agent
-  │     └─ send_message → COORDINATES_WITH 中的每個 issue
-  │         （宣告自己計劃定義/消費的 interface）
+  ├─ 1. Startup Probe
+  │     ├─ list_artifacts — check already-published artifacts
+  │     ├─ list_projects — discover active agents
+  │     └─ send_message → each issue listed in COORDINATES_WITH
+  │         (declares the interfaces it plans to define or consume)
   │
-  ├─ 2. 假設標記 (Assumption Marking)
-  │     └─ 需要的 artifact 尚不可用時：
-  │         ├─ 以最佳推測繼續實作
-  │         └─ 標記 // [CHANNEL_ASSUMPTION] <描述, pending artifact from #N>
+  ├─ 2. Assumption Marking
+  │     └─ when a required artifact is not yet available:
+  │         ├─ continue implementation with best-guess assumptions
+  │         └─ mark: // [CHANNEL_ASSUMPTION] <description, pending artifact from #N>
   │
-  ├─ 3. 驗證與清理 (Verification & Cleanup)
-  │     └─ 收到 channel notification 時：
-  │         ├─ 搜尋相關 [CHANNEL_ASSUMPTION] comment
-  │         ├─ 比對 artifact
-  │         ├─ 一致 → 刪除 comment
-  │         └─ 不一致 → 修正實作，再刪除 comment
+  ├─ 3. Verification & Cleanup
+  │     └─ upon receiving a channel notification:
+  │         ├─ search for relevant [CHANNEL_ASSUMPTION] comments
+  │         ├─ compare against artifact
+  │         ├─ match → delete comment
+  │         └─ mismatch → fix implementation, then delete comment
   │
-  ├─ 4. 發布義務 (Publish Obligation)
-  │     └─ 定義完 interface/type/schema 後立即 publish_artifact
+  ├─ 4. Publish Obligation
+  │     └─ publish_artifact immediately after defining an interface/type/schema
   │
-  └─ 5. Review Gate（轉 review 前的閘門）
-        ├─ 搜尋所有 [CHANNEL_ASSUMPTION] comment
-        ├─ 若有未解決：list_artifacts + send_message（最多 3 次累計嘗試）
-        ├─ 3 次後仍有未解決 → post issue comment，等待使用者決定
-        └─ 全部解決 → 加 "review" label
+  └─ 5. Review Gate (gate before transitioning to review)
+        ├─ search all [CHANNEL_ASSUMPTION] comments
+        ├─ if unresolved: list_artifacts + send_message (up to 3 cumulative attempts)
+        ├─ still unresolved after 3 attempts → post issue comment, wait for user decision
+        └─ all resolved → add "review" label
 ```
 
-### 與 DEPENDS_ON 的區別
+### Distinction from DEPENDS_ON
 
 | | DEPENDS_ON | COORDINATES_WITH |
 |---|---|---|
-| 層級 | Loop 引擎（基礎設施層） | Prompt（指示層） |
-| 行為 | 串行阻塞——依賴 issue closed 才開始 | 非阻塞——並行執行，channel 協調 |
-| 時機 | Agent 啟動前（Loop 等待） | Agent 執行中（prompt 指引） |
-| 適用場景 | A 的輸出是 B 的前提 | A 和 B 同時跑、共享 interface |
+| Layer | Loop engine (infrastructure) | Prompt (instruction) |
+| Behavior | Serial blocking — waits for dependency issue to close before starting | Non-blocking — runs concurrently, coordinated via channel |
+| Timing | Before agent launch (Loop waits) | During agent execution (prompt-guided) |
+| Use case | A's output is a prerequisite for B | A and B run simultaneously and share an interface |
 
-### 設計考量
+### Design Rationale
 
-**為何不用阻塞式 tool？**
-Claude Code 的執行模型是 single-turn request-response。Channel 推送只在 turns 之間（agent idle 時）注入。
-`wait_for_artifact` 之類的阻塞式 MCP tool call 會凍結 agent——mid-turn 暫停在當前架構下不可行。
-因此採用 prompt 層的假設標記 + 事後驗證策略。
+**Why not a blocking tool?**
+Claude Code's execution model is single-turn request-response. Channel pushes are only injected between turns (when the agent is idle). A blocking MCP tool call like `wait_for_artifact` would freeze the agent — mid-turn pausing is not feasible in the current architecture. The assumption-marking + post-hoc verification strategy is used instead.
 
-**假設標記的容錯性：**
-- 最佳情況：artifact 在 agent 實作期間抵達，agent 收到 notification 後即時驗證
-- 一般情況：artifact 在 review gate 前抵達，3 次嘗試內解決
-- 最差情況：artifact 始終未抵達，agent 停下等待使用者介入（不產出錯誤的 PR）
+**Fault tolerance of assumption marking:**
+- Best case: artifact arrives while the agent is still implementing; agent verifies immediately upon receiving the notification
+- Typical case: artifact arrives before the review gate; resolved within 3 attempts
+- Worst case: artifact never arrives; agent stops and waits for user intervention (no incorrect PR is produced)
 
 ---
 
-## 12.9 動態訂閱管理
+## 12.9 Dynamic Subscription Management
 
-MCP Server 支援在 runtime 動態增減 SSE 訂閱，讓 agent 在對話中即時加入或退出跨專案頻道。
+The MCP Server supports adding and removing SSE subscriptions at runtime, letting agents join or leave cross-project channels dynamically during a conversation.
 
-**架構：**
-- `Server` struct 以 `sseContexts map[string]context.CancelFunc` 管理 per-project SSE goroutine
-- 每個訂閱有獨立的 `context.WithCancel`，可單獨取消而不影響其他訂閱
-- `sseMu sync.Mutex` 保護所有對 `sseContexts` 的讀寫操作
+**Architecture:**
+- The `Server` struct manages per-project SSE goroutines via `sseContexts map[string]context.CancelFunc`
+- Each subscription has its own `context.WithCancel`, allowing individual cancellation without affecting others
+- `sseMu sync.Mutex` protects all reads and writes to `sseContexts`
 
-**工具：**
+**Tools:**
 
-| Tool | 參數 | 行為 |
+| Tool | Parameters | Behavior |
 |------|------|------|
-| `subscribe_project` | `project` (required) | 檢查是否已訂閱 → 否則建立新 context + 啟動 `listenSSE` goroutine |
-| `unsubscribe_project` | `project` (required) | 檢查是否訂閱中 → 是則 cancel context + 從 map 移除。禁止取消訂閱自身 project |
-| `list_subscriptions` | 無 | 回傳 JSON 陣列，包含所有已訂閱的 project key（按字母排序） |
+| `subscribe_project` | `project` (required) | Checks if already subscribed → if not, creates a new context and starts a `listenSSE` goroutine |
+| `unsubscribe_project` | `project` (required) | Checks if subscribed → if so, cancels the context and removes it from the map. Cannot unsubscribe from own project |
+| `list_subscriptions` | none | Returns a JSON array of all currently subscribed project keys (alphabetically sorted) |
 
-**使用情境：**
-- Agent 在會議模式中需要加入跨專案頻道拉取其他專案的 agent 進討論
-- 跨專案協作結束後退出該頻道，減少不必要的事件推送
-- 初始訂閱（config.toml `channel_listen`）在啟動時自動建立，runtime 動態訂閱為額外擴展
+**Use cases:**
+- An agent in meeting mode needs to join a cross-project channel to pull another project's agents into the discussion
+- After cross-project collaboration ends, the agent leaves the channel to reduce unnecessary event delivery
+- Initial subscriptions (from `channel_listen` in config.toml) are created automatically at startup; runtime dynamic subscriptions are additional extensions
 
-**向後相容：** 初始訂閱行為不變，`channel_listen` 設定仍在啟動時生效。新 tools 僅提供 runtime 的額外控制能力。
+**Backward compatibility:** Initial subscription behavior is unchanged; `channel_listen` configuration still takes effect at startup. The new tools only provide additional runtime control.
 
 ---
 
-## 12.10 會議模式（Meeting Protocol）
+## 12.10 Meeting Mode (Meeting Protocol)
 
-### 概述
+### Overview
 
-當使用者對同一專案多次按下 `[c]` 啟動多個 clarifier agent 時，這些 agent 透過 `list_projects` 的 `agents.clarifier` 計數發現彼此，並以 **Facilitator/Advisor 角色模型** 進入會議模式。
+When a user presses `[c]` multiple times to launch multiple clarifier agents for the same project, those agents discover each other via the `agents.clarifier` count in `list_projects` and enter meeting mode using a **Facilitator/Advisor role model**.
 
-- **Facilitator**：第一個廣播 `[Joining Meeting]` 的 agent，負責驅動完整工作流程、向使用者提問、轉發使用者回答、撰寫 Issue Spec。
-- **Advisor**：後續加入的 agent，負責獨立分析 codebase 並將發現傳送給 Facilitator，進入跟隨模式回應 Facilitator 的訊息。Advisor 不獨立執行工作流步驟 5-17，也不直接向使用者提問（除了 `[⚠ Warning]` 緊急警告例外）。
+- **Facilitator**: the first agent to broadcast `[Joining Meeting]`; drives the full workflow, asks questions of the user, relays user answers, and writes the Issue Spec.
+- **Advisor**: agents that join subsequently; independently analyzes the codebase and sends findings to the Facilitator, then operates in follow mode responding to the Facilitator's messages. Advisors do not independently execute workflow steps 5–17 and do not ask the user questions directly (except for `[⚠ Warning]` emergency alerts).
 
-### 觸發條件
+### Trigger Conditions
 
-會議模式在以下**兩個條件同時成立**時觸發：
+Meeting mode is triggered when **both** of the following conditions are met:
 
-1. **Channel tools 可用**：`.mcp.json` 已部署且 MCP server 處於活躍狀態
-2. **發現其他 clarifier agent**：透過 `list_projects` 回傳的 `agents.clarifier` 計數判斷——自身專案 `agents.clarifier >= 2`，或 `channel_listen` 中的專案 `agents.clarifier >= 1`
+1. **Channel tools are available**: `.mcp.json` is deployed and the MCP server is active
+2. **Another clarifier agent is discovered**: determined by the `agents.clarifier` count returned by `list_projects` — own project `agents.clarifier >= 2`, or a project in `channel_listen` has `agents.clarifier >= 1`
 
-任一條件不滿足時，clarifier 以單一 agent 模式運作。
+If either condition is not met, the clarifier operates in single-agent mode.
 
-### 流程圖
+### Flow Diagram
 
 ```
 Clarifier A (Facilitator)              Clarifier B (Advisor)
   │                                      │
-  ├─ 1. 啟動探查                          ├─ 1. 啟動探查
+  ├─ 1. Startup Probe                    ├─ 1. Startup Probe
   │    list_projects                      │    list_projects
   │    → agents.clarifier >= 2            │    → agents.clarifier >= 2
-  │    send_message [Joining Meeting]     │    收到 A 的 [Joining Meeting]
-  │    role: Facilitator            ───►  │    → 自動成為 Advisor
+  │    send_message [Joining Meeting]     │    receives A's [Joining Meeting]
+  │    role: Facilitator            ───►  │    → automatically becomes Advisor
   │                                      │    send_message [Joining Meeting]
   │                                      │    role: Advisor
   │                                      │
-  │                                      ├─ 2. Codebase 分析
-  │                                      │    讀取相關程式碼
-  │  ◄─── [{AgentName}] {分析結果}        │    send_message 分析
-  │  整合 Advisor 分析                     │
+  │                                      ├─ 2. Codebase Analysis
+  │                                      │    reads relevant code
+  │  ◄─── [{AgentName}] {analysis}       │    send_message analysis
+  │  integrates Advisor analysis          │
   │                                      │
-  ├─ 3. 向使用者提問                       │
-  │    （唯一向使用者提問的 agent）          │
-  │    send_message [User Relay]    ───►  │  收到 → 回應同意/異議/補充
-  │  ◄─── [{AgentName}] {回應}            │
+  ├─ 3. Ask User                         │
+  │    (only agent that asks the user)   │
+  │    send_message [User Relay]    ───►  │  receives → responds agree/disagree/supplement
+  │  ◄─── [{AgentName}] {response}       │
   │                                      │
-  ├─ 4. 收斂                              │
-  │    [Convergence Check]          ───►  │  回覆最後補充
-  │  ◄─── 補充                            │
-  │    驗證 SCOPE 路徑                     │
-  │    撰寫 Issue Spec                    │
-  │    推送到 Tracker                     │
-  │    [Meeting Closed]             ───►  │  會議結束
+  ├─ 4. Convergence                      │
+  │    [Convergence Check]          ───►  │  replies with final additions
+  │  ◄─── additions                      │
+  │    validates SCOPE path              │
+  │    writes Issue Spec                 │
+  │    pushes to Tracker                 │
+  │    [Meeting Closed]             ───►  │  meeting ends
   └─────────────────                      └─────────────────
 ```
 
-### 訊息格式
+### Message Formats
 
-| 類型 | 格式 | 範例 |
+| Type | Format | Example |
 |---|---|---|
-| 加入會議 | `[Joining Meeting] I am {AgentName} (clarifier) on project {ProjectID}, role: {Role}` | `[Joining Meeting] I am clarifier-a3f7 (clarifier) on project zpit, role: Facilitator` |
-| 分析/觀點 | `[{AgentName}] {content}` | `[clarifier-f4db] broker.go 的 sseConns 需改為巢狀 map` |
-| 使用者轉發 | `[User Relay] {summary}` | `[User Relay] 使用者希望 agent_type 作為 query param` |
-| 收斂確認 | `[Convergence Check] {consensus}` | `[Convergence Check] 目前共識：1. 使用 query param... 2. ...` |
-| 緊急警告 | `[⚠ Warning] {AgentName}: {warning}` | `[⚠ Warning] clarifier-f4db: 此變更會破壞向後相容性` |
-| 會議結束 | `[Meeting Closed] Issue #{N} pushed — {title}` | `[Meeting Closed] Issue #80 pushed — Improve Meeting Protocol` |
+| Join meeting | `[Joining Meeting] I am {AgentName} (clarifier) on project {ProjectID}, role: {Role}` | `[Joining Meeting] I am clarifier-a3f7 (clarifier) on project zpit, role: Facilitator` |
+| Analysis / opinion | `[{AgentName}] {content}` | `[clarifier-f4db] sseConns in broker.go needs to be changed to a nested map` |
+| User relay | `[User Relay] {summary}` | `[User Relay] User wants agent_type as a query param` |
+| Convergence check | `[Convergence Check] {consensus}` | `[Convergence Check] Current consensus: 1. Use query param... 2. ...` |
+| Emergency warning | `[⚠ Warning] {AgentName}: {warning}` | `[⚠ Warning] clarifier-f4db: This change will break backward compatibility` |
+| Meeting closed | `[Meeting Closed] Issue #{N} pushed — {title}` | `[Meeting Closed] Issue #80 pushed — Improve Meeting Protocol` |
 
-### 與既有 channel 機制的關係
+### Relationship to the Existing Channel Mechanism
 
-會議模式完全建立在既有的 MCP tools 之上，利用 `agent_type` 基礎設施進行角色發現：
+Meeting mode is built entirely on top of the existing MCP tools, using the `agent_type` infrastructure for role discovery:
 
-| 使用的機制 | 用途 |
+| Mechanism used | Purpose |
 |---|---|
-| `list_projects` 的 `agents.clarifier` | 啟動探查——發現同專案或跨專案的其他 clarifier |
-| `send_message` | 所有 agent 間通訊（加入會議、分析、轉發、收斂、警告、結束） |
-| `ZPIT_AGENT_TYPE` + SSE `?agent_type=` | 讓 broker 區分 agent 類型，提供精確的 clarifier 計數 |
+| `agents.clarifier` from `list_projects` | Startup probe — discovers other clarifiers in the same or cross-project |
+| `send_message` | All inter-agent communication (join, analysis, relay, convergence, warning, close) |
+| `ZPIT_AGENT_TYPE` + SSE `?agent_type=` | Lets the broker distinguish agent types and provide accurate clarifier counts |

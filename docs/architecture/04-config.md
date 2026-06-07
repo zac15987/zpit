@@ -1,20 +1,20 @@
-# 4. 設定檔與 Provider
+# 4. Config & Providers
 
 ---
 
 ## 4.1 config.toml
 
-Zpit 的所有資料統一在 `~/.zpit/` 下：
-- `~/.zpit/config.toml` — 設定檔（可用 `ZPIT_CONFIG` 環境變數覆蓋路徑）
-- `~/.zpit/logs/` — 日誌（daily rotation，自動清理 30 天以上）
+All Zpit data lives under `~/.zpit/`:
+- `~/.zpit/config.toml` — configuration file (path can be overridden with the `ZPIT_CONFIG` env var)
+- `~/.zpit/logs/` — logs (daily rotation, automatic cleanup after 30 days)
 
-首次啟動時若 config 不存在，自動產生模板（`config.WriteTemplate()`），提示使用者編輯後再啟動。
+On first launch, if no config exists, a template is generated automatically (`config.WriteTemplate()`), prompting the user to edit it before restarting.
 
 ```toml
 # ~/.zpit/config.toml
 
 # ──────────────────────────────────────────────
-# 終端設定
+# Terminal settings
 # ──────────────────────────────────────────────
 [terminal]
 windows_mode = "new_tab"    # "new_tab" | "new_window"
@@ -22,52 +22,52 @@ tmux_mode = "new_window"    # "new_window" | "new_pane"
 # windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag
 
 # ──────────────────────────────────────────────
-# 通知設定
+# Notification settings
 # ──────────────────────────────────────────────
 [notification]
 tui_alert = true
 windows_toast = true
 sound = true
-# sound_file = "D:/sounds/notify.mp3"   # 自訂通知音效路徑（支援 WAV/MP3/M4A/OGG）
+# sound_file = "D:/sounds/notify.mp3"   # Custom notification sound path (supports WAV/MP3/M4A/OGG)
 re_remind_minutes = 2
 
 # ──────────────────────────────────────────────
-# Worktree 設定
+# Worktree settings
 # ──────────────────────────────────────────────
 [worktree]
 base_dir_windows = "D:/Projects/.worktrees"
 base_dir_wsl = "/mnt/d/Projects/.worktrees"
-dir_format = "{project_id}/{issue_id}--{slug}"   # 預設
-auto_cleanup = true           # PR merge 後自動清理
-max_per_project = 5           # 每個專案最大同時 worktree 數量
-max_review_rounds = 3         # coding↔review 最大循環次數
-poll_seconds = 10             # todo issue polling 間隔（秒）
-pr_poll_seconds = 10          # PR/label 狀態 polling 間隔（秒）
+dir_format = "{project_id}/{issue_id}--{slug}"   # default
+auto_cleanup = true           # auto-cleanup after PR merge
+max_per_project = 5           # max concurrent worktrees per project
+max_review_rounds = 3         # max coding↔review cycle count
+poll_seconds = 10             # todo issue polling interval (seconds)
+pr_poll_seconds = 10          # PR/label status polling interval (seconds)
 
 # ──────────────────────────────────────────────
 # Per-Role Model Selection
 # ──────────────────────────────────────────────
-# 啟動 agent 時透過 --model <id> 傳給 Claude Code。
-# 接受 short alias（opus/sonnet/haiku，依 provider 解析到不同版本）或
-# full model ID（跨 provider 行為一致）。附加 [1m] 啟用 1M-context tier。
-# 詳見 §6.7。
+# Passed to Claude Code via --model <id> at agent launch.
+# Accepts short aliases (opus/sonnet/haiku — resolved to different versions per provider) or
+# full model IDs (consistent behavior across providers). Append [1m] to enable the 1M-context tier.
+# See §6.7.
 [agent_models]
-clarifier = "opus[1m]"      # 需求澄清 — 最深層推理（1M context）
-coding = "opus[1m]"         # 功能實作（1M context）
-reviewer = "opus[1m]"       # PR review（1M context）
-task_runner = "opus[1m]"    # advisory — 由 coding session 繼承
-efficiency = "opus[1m]"     # 效能檢視 agent（[f] 啟動）— 深層推理
+clarifier = "opus[1m]"      # requirements clarification — deepest reasoning (1M context)
+coding = "opus[1m]"         # feature implementation (1M context)
+reviewer = "opus[1m]"       # PR review (1M context)
+task_runner = "opus[1m]"    # advisory — inherited from coding session
+efficiency = "opus[1m]"     # efficiency review agent (launched via [f]) — deep reasoning
 
 # ──────────────────────────────────────────────
-# SSH Server（zpit serve）
+# SSH Server (zpit serve)
 # ──────────────────────────────────────────────
 [ssh]
-port = 2200                                    # 預設
-host = "0.0.0.0"                               # 預設
-host_key_path = "~/.zpit/ssh/host_ed25519"     # 預設，支援 ~/ 展開
-password_env = "ZPIT_SSH_PASSWORD"              # env var 名稱，選配
-authorized_keys_path = "~/.ssh/authorized_keys" # 預設，選配
-auto_serve = false                             # 預設 false；true 時 zpit 自動啟動 SSH server + 連入
+port = 2200                                    # default
+host = "0.0.0.0"                               # default
+host_key_path = "~/.zpit/ssh/host_ed25519"     # default, supports ~/ expansion
+password_env = "ZPIT_SSH_PASSWORD"              # env var name, optional
+authorized_keys_path = "~/.ssh/authorized_keys" # default, optional
+auto_serve = false                             # default false; when true, zpit auto-starts SSH server and connects into it
 
 # ──────────────────────────────────────────────
 # Issue Tracker Providers
@@ -83,7 +83,7 @@ type = "github_issues"
 token_env = "GITHUB_TOKEN"
 
 # ──────────────────────────────────────────────
-# Git Host Providers（agent 透過 MCP 操作，Zpit 不直接使用）
+# Git Host Providers (used by agents via MCP; Zpit does not use these directly)
 # ──────────────────────────────────────────────
 
 [providers.git.forgejo-local]
@@ -94,24 +94,24 @@ url = "https://git.nas.local"
 type = "github"
 
 # ──────────────────────────────────────────────
-# 專案定義
+# Project definitions
 # ──────────────────────────────────────────────
 
 [[projects]]
-name = "ASE 檢測清潔機台"
+name = "ASE Inspection Cleaning Machine"
 id = "ase-inspection"
-profile = "machine"             # 顯示標籤：machine | desktop | web | android | terminal (TUI icon)
+profile = "machine"             # display icon: machine | desktop | web | android | terminal (TUI icon)
 log_policy = "strict"           # strict | standard | minimal
-isolation = "worktree"          # worktree（預設，每個 issue 開 git worktree）| in_project（直接在專案目錄工作，停用 [P] 並行、slot 上限鎖 1；適用於 worktree 複製成本過高的大型 repo）
-tracker = "my-forgejo"          # 指向 providers.tracker 的 key
+isolation = "worktree"          # worktree (default, forks a git worktree per issue) | in_project (works directly in the project directory, disables [P] parallel batches, caps slot count to 1; intended for large repos where worktree copying is prohibitively expensive)
+tracker = "my-forgejo"          # key pointing to providers.tracker
 tracker_project = "ase-inspection"
 git = "forgejo-local"
 repo = "leyu/ase-inspection"
 base_branch = "dev"
-channel_enabled = false         # 啟用跨 agent channel 通訊
-channel_listen = []             # 額外訂閱的 project key，如 ["_global", "other-proj"]
-auto_merge = false              # true 時 Zpit 自動呼叫 tracker merge API（opt-in，預設 false）
-merge_method = "squash"         # squash | merge | rebase，auto_merge=true 時使用
+channel_enabled = false         # enable cross-agent channel communication
+channel_listen = []             # additional project keys to subscribe, e.g. ["_global", "other-proj"]
+auto_merge = false              # when true, Zpit automatically calls the tracker merge API (opt-in, default false)
+merge_method = "squash"         # squash | merge | rebase, used when auto_merge=true
 tags = ["wpf", "ethercat", "basler"]
 
 [projects.path]
@@ -121,11 +121,11 @@ wsl = "/mnt/d/Projects/ASE_Inspection"
 
 ---
 
-## 4.2 Provider 抽象層 — TrackerClient
+## 4.2 Provider Abstraction Layer — TrackerClient
 
-**核心設計決策：Zpit 透過直接 REST API 與各 tracker 互動。**
+**Core design decision: Zpit interacts with each tracker directly via REST API.**
 
-目前支援兩種 tracker：
+Two tracker backends are currently supported:
 
 ```
 TrackerClient (interface)
@@ -133,22 +133,22 @@ TrackerClient (interface)
   └─ GitHubClient   → GitHub REST API
 ```
 
-**為什麼用直接 API 而非 MCP 橋接？**
-- Zpit 的 tracker 操作都是簡單 CRUD（列 issue、改 label、查 PR），不需要 LLM
-- 直接 API < 1 秒回應，claude -p 橋接要 10-20 秒——Loop 頻繁 poll 無法接受
-- `[s]` status 列表需要即時回應，使用者體驗優先
+**Why direct API instead of MCP bridging?**
+- Zpit's tracker operations are simple CRUD (list issues, update labels, query PR status) — no LLM required
+- Direct API responds in under 1 second; `claude -p` bridging takes 10–20 seconds — unacceptable for the Loop's frequent polling
+- The `[s]` status list requires immediate response; user experience is the priority
 
-**Agent 仍透過 MCP 操作 tracker：**
-- Clarifier agent 透過 MCP 推 issue（在終端中，使用者確認後）
-- Coding/Reviewer agent 透過 MCP 開 PR、寫 comment、更新 label
-- MCP 的安裝與配置由各專案的 `claude mcp add` 管理，與 Zpit config 無關
-- Agent 讀取 `.claude/docs/tracker.md`（由 Zpit 自動部署）得知使用哪個 API
+**Agents still interact with the tracker via MCP:**
+- The clarifier agent pushes issues via MCP (in the terminal, after the user confirms)
+- Coding/Reviewer agents open PRs, write comments, and update labels via MCP
+- MCP installation and configuration is managed by each project's `claude mcp add` — separate from the Zpit config
+- Agents read `.claude/docs/tracker.md` (auto-deployed by Zpit) to know which API to use
 
-**Auth 機制：**
-- 每個 provider 設定 `token_env` 欄位，指向環境變數名稱
-- Zpit 啟動時從環境變數讀取 token，不在 config 中存放明文
+**Auth mechanism:**
+- Each provider config has a `token_env` field pointing to an environment variable name
+- Zpit reads the token from the env var at startup; tokens are never stored in plain text in the config
 
-#### TrackerClient 介面定義
+#### TrackerClient Interface Definition
 
 ```go
 // internal/tracker/client.go
@@ -167,24 +167,24 @@ func NewClient(providerType, baseURL, tokenEnv string) (TrackerClient, error)
 
 ---
 
-**統一的 Issue 狀態（內部使用，各 tracker 的 label 對應由 client 實作）：**
+**Unified issue status (used internally; label mapping for each tracker is implemented by the client):**
 
 ```go
 const (
-    StatusPendingConfirm = "pending_confirm"  // 待確認
+    StatusPendingConfirm = "pending_confirm"  // awaiting confirmation
     StatusTodo           = "todo"
     StatusInProgress     = "in_progress"
     StatusAIReview       = "ai_review"
     StatusWaitingReview  = "waiting_review"
-    StatusNeedsVerify    = "needs_verify"     // 待機台/實機驗證
+    StatusNeedsVerify    = "needs_verify"     // awaiting hardware/physical verification
     StatusDone           = "done"
 )
 ```
 
-各 tracker 的狀態對應：
+Status mapping per tracker:
 
 ```
-內部狀態            GitHub Issues    Forgejo Issues
+Internal status     GitHub Issues    Forgejo Issues
 ─────────────────────────────────────────────────
 pending_confirm     label:pending    label:pending
 todo                label:todo       label:todo
@@ -195,72 +195,69 @@ needs_verify        label:verify     label:verify
 done                closed           closed
 ```
 
-**Label on-demand 檢查：**
-Zpit 需要 6 個 label（pending, todo, wip, review, ai-review, needs-changes），但不在啟動時自動建立。使用者按下操作鍵（`[y]`/`[c]`/`[r]`/`[l]`）時，每次都呼叫 `CheckLabels`（read-only）透過 API 檢查全部 6 個 label 是否存在；若有缺少，跳出 overlay confirm dialog 列出缺少的 label，使用者確認後才呼叫 `EnsureLabels` 建立。不做 session 內快取，確保外部刪除 label 後也能即時偵測。透過 `LabelManager` interface（`ListRepoLabels` + `CreateLabel`）實作，ForgejoClient 與 GitHubClient 皆滿足。
+**On-demand label check:**
+Zpit requires 6 labels (pending, todo, wip, review, ai-review, needs-changes) but does not create them automatically at startup. When the user presses an action key (`[y]`/`[c]`/`[r]`/`[l]`), `CheckLabels` (read-only) is called each time to verify via API that all 6 labels exist. If any are missing, an overlay confirm dialog lists the missing labels; `EnsureLabels` is only called to create them after the user confirms. No in-session caching is performed, so labels deleted externally are detected immediately. Implemented via the `LabelManager` interface (`ListRepoLabels` + `CreateLabel`), satisfied by both `ForgejoClient` and `GitHubClient`.
 
 ---
 
-## 4.3 log_policy 與 profile 欄位
+## 4.3 log_policy and profile Fields
 
-`log_policy` 是 **per-project** 設定，會注入到 Coding Agent 和 Reviewer Agent 的 prompt 中，
-讓 agent 在實作和 review 時都遵循對應的 logging 規範。三個可選值：
+`log_policy` is a **per-project** setting injected into the Coding Agent and Reviewer Agent prompts, so that both implementation and review adhere to the corresponding logging standards. Three possible values:
 
-| log_policy | 說明 |
+| log_policy | Description |
 |-----------|------|
-| strict | 所有 Service 方法有進出 log，硬體操作有指令/回應 log，狀態機轉換有前後狀態 log |
-| standard | Service 方法有進出 log，異常有完整 log |
-| minimal | 只 log 錯誤和關鍵操作 |
+| strict | All service methods have entry/exit logs; hardware operations have command/response logs; state machine transitions have before/after state logs |
+| standard | Service methods have entry/exit logs; exceptions have full logs |
+| minimal | Only errors and critical operations are logged |
 
-Build、test、review、開 PR 等執行動作都是 agent 的職責（agent 從各專案 CLAUDE.md 得知 build 指令），
-Zpit 不介入 agent 的工作內容。
+Building, testing, reviewing, and opening PRs are all the agent's responsibility (agents learn the build commands from each project's `CLAUDE.md`). Zpit does not intervene in the agent's work.
 
-`profile` 欄位是 **純顯示標籤**，用於 TUI 專案清單挑選 icon（machine / desktop / web / android），
-不影響 agent 行為；未來可能用於 TUI 的 group 分類視覺化。
+The `profile` field is a **display-only label** used to select an icon in the TUI project list (machine / desktop / web / android). It has no effect on agent behavior; it may be used in the future for group classification visualization in the TUI.
 
 ---
 
 ## 4.4 Config Hot-Reload
 
-Zpit 支援在 TUI 運行中重新載入 config.toml。設定欄位分為兩類：
+Zpit supports reloading `config.toml` while the TUI is running. Config fields fall into two categories:
 
-### Hot-Reloadable（即時套用）
+### Hot-Reloadable (applied immediately)
 
-| 欄位 | 套用方式 |
+| Field | How it is applied |
 |------|---------|
-| `language` | 呼叫 `locale.SetLanguage()` |
-| `notification.*` | 呼叫 `notifier.UpdateConfig()` |
-| `worktree.poll_seconds` / `pr_poll_seconds` / `max_review_rounds` | 呼叫 `wtManager.UpdateConfig()` |
-| `terminal.*` | 更新 cfg，下次啟動 agent 時生效 |
-| `agent_models.*` | 更新 cfg，下次啟動 agent 時生效（已運行的 session 沿用啟動時 model） |
-| per-project `channel_enabled` | 動態 subscribe/unsubscribe EventBus |
-| per-project `channel_listen` | 動態管理跨專案訂閱 |
-| per-project `base_branch` / `log_policy` / `isolation` / `auto_merge` / `merge_method` | 更新 cfg，下次操作時生效（已在執行中的 merge 使用 handler 進入時捕獲的設定；`isolation` 變更套用於下次 issue dispatch，進行中的 slot 保留原本配置的 working tree）。`hook_mode` 已棄用，仍寫在 config 內會被忽略並印 deprecation warning。 |
+| `language` | Calls `locale.SetLanguage()` |
+| `notification.*` | Calls `notifier.UpdateConfig()` |
+| `worktree.poll_seconds` / `pr_poll_seconds` / `max_review_rounds` | Calls `wtManager.UpdateConfig()` |
+| `terminal.*` | Updates cfg; takes effect on the next agent launch |
+| `agent_models.*` | Updates cfg; takes effect on the next agent launch (already-running sessions keep the model from their original launch) |
+| per-project `channel_enabled` | Dynamically subscribe/unsubscribe from the EventBus |
+| per-project `channel_listen` | Dynamically manage cross-project subscriptions |
+| per-project `base_branch` / `log_policy` / `isolation` / `auto_merge` / `merge_method` | Updates cfg; takes effect on the next operation (an in-flight merge uses the config captured when the handler entered; an `isolation` change applies to the next issue dispatch — an in-progress slot retains the working tree allocated under the original config). `hook_mode` is deprecated; if still present in the config it is ignored and a deprecation warning is printed. |
 
-### Restart-Required（需重啟）
+### Restart-Required
 
-| 欄位 | 原因 |
+| Field | Reason |
 |------|------|
-| `broker_port` | Port 已綁定 |
-| `ssh.*`（含 `auto_serve`） | SSH server 已綁定 / 啟動行為改變 |
-| `providers.*` | Tracker client 需重新初始化 |
-| 新增/刪除 `[[projects]]` | 需重建 tracker clients 和 UI 狀態 |
-| `worktree.base_dir_*` / `dir_format` / `max_per_project` | 影響已進行的 worktree 路徑解析 |
+| `broker_port` | Port is already bound |
+| `ssh.*` (including `auto_serve`) | SSH server is already bound / startup behavior changes |
+| `providers.*` | Tracker client must be re-initialized |
+| Adding/removing `[[projects]]` | Tracker clients and UI state must be rebuilt |
+| `worktree.base_dir_*` / `dir_format` / `max_per_project` | Affects path resolution for worktrees already in progress |
 
-### 重載機制
+### Reload Mechanism
 
-1. **TUI 內建**：按 `[e]` → `[3]` 用 `$EDITOR` 開啟 config.toml，編輯器關閉後自動重載
-2. **手動觸發**：在 `[e]` 子選單中按 `[r]` 手動觸發重載（適用於 SSH 遠端模式）
-3. **解析流程**：`config.Reload()` → `config.Diff()` 分類 → `AppState.ApplyConfig()` 套用 hot-reload 欄位，對 restart-required 欄位在 status bar 顯示提示
+1. **Built into the TUI**: Press `[e]` → `[3]` to open `config.toml` in `$EDITOR`; the config is automatically reloaded when the editor closes
+2. **Manual trigger**: Press `[r]` in the `[e]` sub-menu to manually trigger a reload (useful in SSH remote mode)
+3. **Parse flow**: `config.Reload()` → `config.Diff()` classifies fields → `AppState.ApplyConfig()` applies hot-reloadable fields; restart-required fields display a prompt in the status bar
 
-### 針對性 TOML 寫入
+### Targeted TOML Writing
 
-Channel 快速切換（`[1]` toggle / `[2]` listen edit）使用 `internal/config/toml_writer.go` 進行針對性寫入：
+The channel quick-toggle (`[1]` toggle / `[2]` listen edit) uses `internal/config/toml_writer.go` for targeted writes:
 
-- 以行為單位操作，不做完整的 TOML 序列化
-- 透過 `id` 欄位定位正確的 `[[projects]]` 區塊
-- 僅修改 `channel_enabled` 和 `channel_listen` 行
-- 保留檔案其餘內容（包括註解、空行、格式）
+- Operates line by line, without full TOML serialization
+- Locates the correct `[[projects]]` block by its `id` field
+- Modifies only the `channel_enabled` and `channel_listen` lines
+- Preserves all remaining file content (including comments, blank lines, and formatting)
 
 ### Broker Lazy Start
 
-若啟動時無任何專案啟用 channel（broker 為 nil），使用者透過 `[1]` toggle 首次啟用某專案的 `channel_enabled` 時，`ToggleChannel()` 會延遲啟動 broker。啟動失敗時在 status bar 顯示錯誤，不更新 `channel_enabled`。
+If no project has channel enabled at startup (broker is nil), the first time the user enables `channel_enabled` on a project via the `[1]` toggle, `ToggleChannel()` starts the broker lazily. If the broker fails to start, an error is shown in the status bar and `channel_enabled` is not updated.

@@ -1,55 +1,55 @@
-# 1. 願景
+# 1. Vision
 
-> 版本: 2.0
-> 日期: 2026-04-01
-> 作者: 智豪 + Claude
+> Version: 2.0
+> Date: 2026-04-01
+> Author: Chih Hao + Claude
 
 ---
 
-一個開機就緒的 TUI **調度中心**，讓你只需要：
-1. 說出模糊的需求
-2. 確認 AI 產出的 issue
-3. Review PR 和機台驗證
+A boot-ready TUI **dispatch center** where all you need to do is:
+1. Describe a vague requirement
+2. Confirm the AI-generated issue
+3. Review the PR and validate on the target machine
 
-中間的一切 — 需求釐清、實作、編譯、code review、開 PR、更新狀態 — 全部自動化。
+Everything in between — requirement clarification, implementation, compilation, code review, opening PRs, updating status — is fully automated.
 
-## 核心設計原則：調度模式（非包裹模式）
+## Core Design Principle: Dispatch Mode (Not Wrapper Mode)
 
-TUI **不是** Claude Code 的外殼。Claude Code 在獨立的終端視窗中運行，
-你可以隨時切過去直接操作。TUI 是調度中心 — 選專案、啟動 agent、
-監控進度、顯示狀態。
+The TUI is **not** a shell around Claude Code. Claude Code runs in independent terminal windows
+that you can switch to and operate directly at any time. The TUI is the dispatch center —
+it selects projects, launches agents, monitors progress, and displays status.
 
 ```
                     ┌─────────────────────────┐
-                    │  TUI 調度中心           │
-                    │  (Bubble Tea, 常駐)      │
-                    │  - 選專案               │
-                    │  - 啟動 agent           │
-                    │  - 即時狀態監控         │
+                    │  TUI Dispatch Center     │
+                    │  (Bubble Tea, resident)  │
+                    │  - select project        │
+                    │  - launch agent          │
+                    │  - live status monitor   │
                     └─────┬───────────────────┘
-                          │ 開新終端
+                          │ open new terminal
           ┌───────────────┼───────────────┐
           ▼               ▼               ▼
    ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-   │WT Tab: ASE  │ │WT Tab: 網頁 │ │WT Tab: Tool │
+   │WT Tab: ASE  │ │WT Tab: Web  │ │WT Tab: Tool │
    │ claude code │ │ claude code │ │ claude code │
-   │ (你可隨時   │ │             │ │             │
-   │  切過去操作)│ │             │ │             │
+   │ (switch to  │ │             │ │             │
+   │  it anytime)│ │             │ │             │
    └──────┬──────┘ └──────┬──────┘ └──────┬──────┘
           │               │               │
           ▼               ▼               ▼
      session log     session log     session log
           │               │               │
           └───────────────┼───────────────┘
-                          │ tail -f 監控
+                          │ tail -f monitor
                           ▼
-                    TUI 即時狀態更新
+                  TUI live status update
 ```
 
-**不同環境的終端啟動方式：**
+**Terminal launch method by environment:**
 
-| 環境 | 啟動方式 | 切換方式 |
-|------|---------|---------|
-| Windows Terminal | `wt.exe new-tab -d <path> -- claude` | Alt+Tab 或 Ctrl+Tab 切 tab |
-| WSL (tmux) | `tmux new-window -n <name> -c <path> "claude"` | TUI 顯示 `tmux select-window -t <name>` |
-| Linux (tmux) | 同 WSL | 同 WSL |
+| Environment | Launch Method | How to Switch |
+|-------------|--------------|---------------|
+| Windows Terminal | `wt.exe new-tab -d <path> -- claude` | Alt+Tab or Ctrl+Tab to switch tabs |
+| WSL (tmux) | `tmux new-window -n <name> -c <path> "claude"` | TUI shows `tmux select-window -t <name>` |
+| Linux (tmux) | Same as WSL | Same as WSL |

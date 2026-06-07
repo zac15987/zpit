@@ -17,46 +17,46 @@ cleanup error: removing worktree: git worktree remove --force <path>:
 error: failed to delete '<path>': Permission denied: exit status 255
 ```
 
-Worktree 目錄因 Windows file lock 無法刪除，殘留在磁碟上。
+The worktree directory cannot be deleted due to a Windows file lock and remains on disk.
 
-> **已修正（部分）：** `CloseIssue` 不再因 cleanup 失敗而被跳過。`loopCleanupCmd` 現在無論 `Remove()` 結果如何都會執行 `CloseIssue`（Fix Direction #3 已實作）。但 worktree 目錄的 Permission denied 問題在 Windows 上仍存在。
+> **Partially fixed:** `CloseIssue` is no longer skipped when cleanup fails. `loopCleanupCmd` now executes `CloseIssue` regardless of the `Remove()` result (Fix Direction #3 is implemented). However, the Permission Denied error when deleting the worktree directory on Windows still persists.
 
 ### Root Cause
 
-Windows 不允許刪除正在被任何 process 當作 working directory (CWD) 的目錄。
+Windows does not allow deleting a directory that any process is using as its current working directory (CWD).
 
-Loop engine 的 cleanup 時序：
+Loop engine cleanup sequence:
 
-1. Loop 啟動 reviewer agent → Claude Code process 的 CWD 設在 worktree 目錄
-2. Reviewer 完成工作、設定 `ai-review` label → Loop 偵測到 PR merged
-3. Loop 呼叫 `Remove()` 嘗試刪除 worktree 目錄
-4. **此時 reviewer 的 Claude Code session 可能尚未完全結束**（process 仍佔用 CWD）
+1. Loop launches reviewer agent → Claude Code process CWD is set to the worktree directory
+2. Reviewer finishes work, sets the `ai-review` label → Loop detects PR merged
+3. Loop calls `Remove()` to delete the worktree directory
+4. **At this point the reviewer's Claude Code session may not have fully exited** (process still holds the CWD)
 5. `git worktree remove --force` → Permission denied
-6. Fallback `removeDirRetry` → 同樣被 Windows file lock 擋住
+6. Fallback `removeDirRetry` → also blocked by the Windows file lock
 
-Linux / macOS 允許刪除被佔用為 CWD 的目錄，因此此問題僅出現在 Windows。
+Linux / macOS allow deleting a directory that is held as a CWD, so this issue only occurs on Windows.
 
 ### Workaround
 
-等佔用 worktree 目錄的 process 結束後，手動清除：
+After the process holding the worktree directory exits, clean up manually:
 
 ```bash
 git -C <repo-path> worktree remove --force <worktree-path>
 ```
 
-或重新啟動 Loop，讓它在下一輪 resume 時 retry cleanup。
+Or restart the Loop and let it retry cleanup during the next resume round.
 
 ### Potential Fix Directions
 
-1. **Wait for agent process exit before cleanup** — 在 `loopCleanupCmd` 中，確認 agent session PID 已結束後再呼叫 `Remove()`。需注意 PID reuse 的 race condition。
-2. **Deferred cleanup queue** — cleanup 失敗時將 worktree path 加入 retry queue，下一輪 poll 時重試。
-3. ~~**Separate CloseIssue from Remove**~~ — **已實作。** `loopCleanupCmd` 現在無論 `Remove()` 結果如何都會執行 `CloseIssue`，worktree 清除降級為 best-effort。
+1. **Wait for agent process exit before cleanup** — in `loopCleanupCmd`, confirm the agent session PID has exited before calling `Remove()`. Be mindful of the PID-reuse race condition.
+2. **Deferred cleanup queue** — when cleanup fails, add the worktree path to a retry queue and retry on the next poll cycle.
+3. ~~**Separate CloseIssue from Remove**~~ — **Implemented.** `loopCleanupCmd` now executes `CloseIssue` regardless of the `Remove()` result; worktree deletion is degraded to best-effort.
 
 ### Related
 
-- Issue #36: `git branch -d` → `-D` fix（已合併，與此問題無關但在同次 cleanup 中觸發）
-- `internal/worktree/manager.go`: `removeDirRetry` fallback 邏輯
-- `internal/tui/loop_cmds.go` `loopCleanupCmd`: cleanup 失敗時仍執行 `CloseIssue`
+- Issue #36: `git branch -d` → `-D` fix (merged, unrelated to this issue but triggered in the same cleanup)
+- `internal/worktree/manager.go`: `removeDirRetry` fallback logic
+- `internal/tui/loop_cmds.go` `loopCleanupCmd`: executes `CloseIssue` even when cleanup fails
 
 ---
 
@@ -65,85 +65,85 @@ git -C <repo-path> worktree remove --force <worktree-path>
 **Affected OS:** all platforms
 **Component:** `agents/task-runner.md`, `internal/prompt/coding.go` (`buildTeamDelegation`)
 **First observed:** 2026-04-18 (Issue #9, coding session `b51aef45-6d51-48d3-926f-f1ba50ddcd7f`)
-**Status:** ✅ 已修復（v2, 2026-04-20）— 初版修復在 linked worktree 下路徑解析錯誤，見下方 Fix v2。
+**Status:** ✅ Fixed (v2, 2026-04-20) — the initial fix had path resolution errors under linked worktrees; see Fix v2 below.
 
 ### Symptom
 
-當 coding orchestrator 把 `[P]` batch 分派給 Agent Team（T1~T9 同時跑）時，teammate 共用同一 worktree 的 `.git/index`，幾次 commit 內容互相錯置——某個 T{N} commit 裡混進了其他 teammate 的檔案。當場的 task-runner subagent 以 `git commit -- <pathspec>` 自行修正個別錯誤 commit，並在報告中留言：
+When the coding orchestrator dispatched a `[P]` batch to an Agent Team (T1–T9 running concurrently), the teammates shared the same worktree's `.git/index` and within a few commits the contents were cross-contaminated — some T{N} commits contained files from other teammates. The task-runner subagents corrected individual erroneous commits in place using `git commit -- <pathspec>`, and left the following note in their reports:
 
-> T1~T9 並行 subagent 時，shared worktree 的 git index 競爭造成幾次 commit 內容錯置，subagent 均以 `git commit -- pathspec` scope 自行修正。未來大量並行任務建議分批或改為序列。
+> When T1–T9 ran as parallel subagents, the shared worktree's git index race caused several commits to have cross-contaminated contents; each subagent self-corrected using `git commit -- pathspec`. For large parallel batches in the future, batching or switching to sequential is recommended.
 
 ### Root Cause
 
-兩層 race 同時存在：
+Two levels of race occurred simultaneously:
 
-1. **Index race** — 多個 teammate 的 `git add` 同時寫入 `.git/index`，staging 內容互相覆蓋。`git commit` 隨後讀到的 tree 就是混合 staging 的結果。
-2. **Ref race** — 多個 `git commit` 同時更新 `refs/heads/<branch>`，`refs/heads/<branch>.lock` 競爭造成其中一個失敗（intermittent "cannot lock ref"）。
+1. **Index race** — multiple teammates' `git add` commands wrote to `.git/index` concurrently, overwriting each other's staging area. The tree read by a subsequent `git commit` was therefore a mixed staging result.
+2. **Ref race** — multiple `git commit` commands concurrently updated `refs/heads/<branch>`, and contention on `refs/heads/<branch>.lock` caused intermittent "cannot lock ref" failures.
 
-Claude Code 的 Agent Team 不讓 orchestrator 給 teammate 設不同 cwd，所以「每個 teammate 開獨立 worktree」在現行模型下做不到；必須用 git 原生的 index 隔離機制處理。
+Claude Code's Agent Team does not allow the orchestrator to assign a different CWD to each teammate, so "give each teammate its own worktree" was not achievable under the existing model; the git-native index isolation mechanism had to be used instead.
 
 ### Fix
 
-在 orchestrator prompt 與 `task-runner` subagent doc 中加入 **Parallel Commit Protocol**（三層防禦，僅 `[P]` teammate 適用；循序 task 獨佔 index 不走此流程）：
+The orchestrator prompt and the `task-runner` subagent doc were extended with a **Parallel Commit Protocol** (three-layer defense, applicable only to `[P]` teammates; sequential tasks own the index exclusively and do not follow this flow):
 
-1. **Index 隔離** — `export GIT_INDEX_FILE=.git/index.zpit.T{N}`，每個 teammate 用獨立 staging index
-2. **Pathspec 安全網** — `git add -- <declared files only>`（即使 Layer 1 漏掉，pathspec 仍能避免跨 task 汙染）
-3. **Commit serialize** — `mkdir .git/zpit-commit.lock`（atomic、跨平台）取得鎖、重試最多 5 次 jittered sleep、commit 完 `rmdir` 釋放
+1. **Index isolation** — `export GIT_INDEX_FILE=.git/index.zpit.T{N}`: each teammate uses a private staging index
+2. **Pathspec safety net** — `git add -- <declared files only>` (even if Layer 1 is bypassed, the pathspec prevents cross-task contamination)
+3. **Commit serialization** — `mkdir .git/zpit-commit.lock` (atomic, cross-platform) acquires the lock, retries up to 5 times with jittered sleep, releases with `rmdir` after commit
 
-觸發條件：orchestrator 在每個 teammate 的 spawn prompt 注入 `parallel_task_id: T{N}` 一行；`task-runner.md` 的 Parallel Commit Protocol 段落以該行為啟動訊號。
+Trigger: the orchestrator injects a `parallel_task_id: T{N}` line into each teammate's spawn prompt; the `task-runner.md` Parallel Commit Protocol section uses that line as the activation signal.
 
 ### Code Locations
 
-- `agents/task-runner.md` §Parallel Commit Protocol — teammate 側完整步驟與命令
-- `internal/prompt/coding.go` `buildTeamDelegation` — orchestrator 注入 `parallel_task_id` 與協定摘要
-- `docs/agent-guidelines.md` §Git Operations — 交叉引用
-- `internal/prompt/prompt_test.go` — `TestBuildCodingPrompt_WithParallelTasks` / `WithTasks` 雙向斷言（sequential prompt 不得洩漏協定字串）
+- `agents/task-runner.md` §Parallel Commit Protocol — complete teammate-side steps and commands
+- `internal/prompt/coding.go` `buildTeamDelegation` — orchestrator injects `parallel_task_id` and protocol summary
+- `docs/agent-guidelines.md` §Git Operations — cross-reference
+- `internal/prompt/prompt_test.go` — `TestBuildCodingPrompt_WithParallelTasks` / `WithTasks` bidirectional assertions (sequential prompt must not leak protocol strings)
 
-### Fix v2（2026-04-20，Issue #11 session `14b85919-…`）
+### Fix v2 (2026-04-20, Issue #11 session `14b85919-…`)
 
-**Regression：** 初版修復把協定指令寫成字面路徑 `.git/index.zpit.T{N}` 與 `.git/zpit-commit.lock`。但 zpit 正常發射目標是 linked worktree，裡面的 `.git` 是一個**指向 `<main-repo>/.git/worktrees/<name>` 的 pointer file，不是 directory**。實戰中 33 個 task-runner subagent 全數命中 `fatal: Unable to create '.git/index.zpit.T1.lock': No such file or directory`，改採自救路徑（`GIT_DIR=$(git rev-parse --git-dir)`）時又因為初版協定從未指示「用 `git read-tree HEAD` seed 私有 index」，commit 出現 54 檔 / 2593 deletions 之類的大規模誤刪（T1 `b27d210`、T5 `8ff9ef8` 等）。
+**Regression:** The initial fix hard-coded the protocol commands as literal paths `.git/index.zpit.T{N}` and `.git/zpit-commit.lock`. However, zpit normally dispatches to a linked worktree, where `.git` is a **pointer file pointing to `<main-repo>/.git/worktrees/<name>`, not a directory**. In practice, all 33 task-runner subagents hit `fatal: Unable to create '.git/index.zpit.T1.lock': No such file or directory`. When they fell back to self-recovery via `GIT_DIR=$(git rev-parse --git-dir)`, the original protocol never instructed them to seed the private index with `git read-tree HEAD`, so commits produced massive spurious deletions — 54 files / 2593 deletions (T1 `b27d210`, T5 `8ff9ef8`, etc.).
 
-**Fix v2：** 改寫 `agents/task-runner.md` §Parallel Commit Protocol 與 `internal/prompt/coding.go` `buildTeamDelegation` 的 summary：
+**Fix v2:** Rewrote `agents/task-runner.md` §Parallel Commit Protocol and the summary in `internal/prompt/coding.go` `buildTeamDelegation`:
 
-1. 路徑改以 `git rev-parse --git-dir`（per-worktree index）與 `git rev-parse --git-common-dir`（跨 worktree lock）解析，**不再 hard-code `.git/...`**。
-2. 新增 `GIT_INDEX_FILE="$IDX" git read-tree HEAD` 步驟，seed 私有 index 讓 commit 不會把未 stage 的檔案全部記為刪除。
-3. 明確要求整段序列跑在**同一個 Bash tool 呼叫**裡（Claude Code 每個 Bash tool call 都是全新 shell，`export` 不跨呼叫生效）；所有 git 指令以 `GIT_INDEX_FILE="$IDX"` 前綴 inline。
-4. 失敗路徑也做 `rm -f "$IDX"`，避免殘留。
+1. Paths are now resolved via `git rev-parse --git-dir` (per-worktree index) and `git rev-parse --git-common-dir` (cross-worktree lock) — **no more hard-coded `.git/...`**.
+2. Added a `GIT_INDEX_FILE="$IDX" git read-tree HEAD` step to seed the private index so commits do not treat all unstaged files as deleted.
+3. Explicitly required that the entire sequence run in **a single Bash tool call** (Claude Code spawns a fresh shell for each Bash tool call; `export` does not persist across calls); all git commands are prefixed inline with `GIT_INDEX_FILE="$IDX"`.
+4. The failure path also runs `rm -f "$IDX"` to avoid leaving stale files.
 
-**參考：** StackOverflow / git-scm docs 確認 `git commit` 不會對 `refs/heads/*.lock` 自動 retry（VS Code #47141、Graphite blog），因此 mkdir lock + jittered retry 仍是必要的；`pre-commit` #2295 警示 `GIT_INDEX_FILE` 在 linked worktree 下的路徑誤解。
+**References:** StackOverflow / git-scm docs confirm that `git commit` does not auto-retry on `refs/heads/*.lock` (VS Code #47141, Graphite blog), so the mkdir lock + jittered retry is still necessary; `pre-commit` #2295 warns about path misinterpretation of `GIT_INDEX_FILE` under linked worktrees.
 
-### Fix v3（2026-04-21，Issue #13 session `3192ffd3-…` / `12e4f992-…` / `3359f5f1-…` / `b6f7633d-…`）
+### Fix v3 (2026-04-21, Issue #13 session `3192ffd3-…` / `12e4f992-…` / `3359f5f1-…` / `b6f7633d-…`)
 
-**Regression：** Fix v2 解決了「parallel teammate 的 isolated index 必須從 HEAD seed」，但沒照顧到它的鏡像問題——**當 parallel batch 全部跑完，shared worktree 的 main index（`$GIT_DIR/index`）從沒被更新，仍停在 batch 開始前那棵 tree。** 後續任何 sequential task 走正常流程 `git add -- <files> && git commit` 時，commit 所依據的 tree 是「舊 main index」＋「剛 stage 的小幅修改」，等於悄悄把整個 batch 的工作撤回。
+**Regression:** Fix v2 resolved "the parallel teammate's isolated index must be seeded from HEAD", but did not address the mirror problem — **when the entire parallel batch completes, the shared worktree's main index (`$GIT_DIR/index`) has never been updated; it still reflects the tree from before the batch started.** Any subsequent sequential task following the normal flow of `git add -- <files> && git commit` builds on "stale main index" plus a small set of new staged changes, effectively silently reverting the entire batch.
 
-Issue #13 現場：T1–T9 以 v2 協定並行 commit 成功推進 HEAD，T10（sequential、修改 `CLAUDE.md`）照指示執行 `git add -- CLAUDE.md && git commit`，結果 commit `a4a7f9b` 觸碰 10 個檔案：
-- `CLAUDE.md`：+22 / -0 ✅（預期）
-- `src/hooks/useIsMobile.ts`：status: removed, -32 ❌（T1 新檔被「刪除」）
-- 其餘 8 個 mobile 元件：全被還原回 pre-T1 狀態 ❌
+Issue #13 situation: T1–T9 advanced HEAD successfully using the v2 protocol; T10 (sequential, modifying `CLAUDE.md`) followed the instructions and ran `git add -- CLAUDE.md && git commit`, but commit `a4a7f9b` touched 10 files:
+- `CLAUDE.md`: +22 / -0 ✅ (expected)
+- `src/hooks/useIsMobile.ts`: status: removed, -32 ❌ (T1's new file was "deleted")
+- 8 other mobile components: all reverted to their pre-T1 state ❌
 
-下一個 commit `fe3a799`（人工 restore）才把遺失的改動搶救回來。PR #14 因此在 git 歷史中出現「加入 → 刪除 → 復原」的 U 字型怪異 diff。
+The next commit `fe3a799` (manual restore) recovered the lost changes. PR #14 therefore shows a U-shaped "add → delete → restore" pattern in git history.
 
-Root Cause：
-1. `GIT_INDEX_FILE=$IDX git commit` 只更新私有 index 與 HEAD，不會反寫到 `$GIT_DIR/index`。
-2. Main index 的唯一同步點原本應該是每個 teammate 做完後由某處 `git read-tree HEAD` 重新裝載——但 v2 protocol 沒寫這一步，teammate 各自 `rm -f "$IDX"` 就結束了。
-3. 下游 sequential task 拿到 stale main index + 自己的新檔，commit 出來的 tree = 舊世界 + 新檔，其他檔案被當成「被刪除」。
+Root Cause:
+1. `GIT_INDEX_FILE=$IDX git commit` only updates the private index and HEAD; it does not write back to `$GIT_DIR/index`.
+2. The only intended sync point for the main index was a `git read-tree HEAD` reload somewhere after each teammate finished — but the v2 protocol omitted this step; teammates each ran `rm -f "$IDX"` and exited.
+3. Downstream sequential tasks picked up the stale main index plus their own new files; the committed tree = old world + new files, and everything else was treated as "deleted".
 
-**Fix v3（orchestrator-side resync）：** 在 `internal/prompt/coding.go` `buildTaskWorkflow` 的 Task Execution Order 區塊，**每個 parallel group 結束後** 都印出一行指示：「Before any later `git add` / `git commit` against the main index, run `git read-tree HEAD` in the worktree root」。由 orchestrator 在 batch 結束後呼叫一次，確保後續 sequential task 或 orchestrator 自己的 final-adjustment commit 都建立在正確 baseline 上。
+**Fix v3 (orchestrator-side resync):** In `internal/prompt/coding.go` `buildTaskWorkflow`'s Task Execution Order block, a resync instruction is emitted **after each parallel group completes**: "Before any later `git add` / `git commit` against the main index, run `git read-tree HEAD` in the worktree root". The orchestrator calls this once after each batch completes, ensuring that any subsequent sequential task or final-adjustment commit by the orchestrator is built on the correct baseline.
 
-為什麼不放在 teammate 協定裡？**並行寫 `$GIT_DIR/index` 本身就會 race**——9 個 teammate 同時 `git read-tree HEAD`，其中 8 個會撞到 `index.lock: File exists`，反而需要再加一層 mkdir-lock。Orchestrator 是唯一知道「batch 已完成」的角色，resync 一次、無鎖、清楚。
+Why not put this in the teammate protocol? **Parallel writes to `$GIT_DIR/index` themselves cause a race** — if 9 teammates simultaneously run `git read-tree HEAD`, 8 will hit `index.lock: File exists`, requiring yet another mkdir-lock layer. The orchestrator is the only party that knows "the batch is done"; a single, lock-free resync is cleaner.
 
-**Fix v3 code changes：**
-- `internal/prompt/coding.go` `buildTaskWorkflow` — parallel group 的 Task Execution Order 輸出附加 resync 指示
-- `agents/task-runner.md` 新增 §What NOT to do：明確禁止 teammate 自己去 resync main index
-- `internal/prompt/prompt_test.go` — 新增 `TestBuildCodingPrompt_ParallelBatchResync`（每個 `[P]` group 都要觸發 resync 指示）、更新 `WithTasks` / `WithParallelTasks` 的斷言（sequential-only prompt 不得洩漏 "Resync main index" 字串；parallel prompt 必須包含且順序在 Parallel group 指示之後）
-- `CLAUDE.md` §Task Execution Model Parallel Commit Protocol 段落補上 orchestrator-side resync 的說明
+**Fix v3 code changes:**
+- `internal/prompt/coding.go` `buildTaskWorkflow` — the parallel-group Task Execution Order output appends the resync instruction
+- `agents/task-runner.md` gains a new §What NOT to do: explicitly forbids teammates from resyncing the main index themselves
+- `internal/prompt/prompt_test.go` — adds `TestBuildCodingPrompt_ParallelBatchResync` (every `[P]` group must trigger a resync instruction); updates `WithTasks` / `WithParallelTasks` assertions (sequential-only prompts must not contain the "Resync main index" string; parallel prompts must contain it and it must appear after the Parallel group instructions)
+- `CLAUDE.md` §Task Execution Model Parallel Commit Protocol section updated to document the orchestrator-side resync
 
-**參考：** `git-read-tree` docs（plain 模式只替換 index、不動 worktree）、`git-reset` docs（`--mixed` 有 ORIG_HEAD + reflog 副作用，選 `read-tree` 更乾淨）、`pluralsight` / Microsoft Learn on `index.lock`（支撐「不要並行 resync」的決策）。
+**References:** `git-read-tree` docs (plain mode replaces only the index, does not touch the worktree); `git-reset` docs (`--mixed` has ORIG_HEAD + reflog side effects, making `read-tree` cleaner); pluralsight / Microsoft Learn on `index.lock` (supports the "don't resync in parallel" decision).
 
-### 未來風險
+### Future Risks
 
-- 若未來 `[P]` batch 普遍超過 5 個或 `[P]` 規則頻繁被違反（真的 touch 同檔案），本協定擋不住語意層的衝突，需升級為「每個 `[P]` task 一個 worktree」；或改採 plumbing `commit-tree` + `update-ref` CAS retry 完全繞開 index/ref lock。當時的討論留在 plan `C:\Users\Jeff\.claude\plans\1-2-vast-lark.md` §Design 開頭。
-- **Fix v3 是第三次在 shared-worktree 模型上打補丁。** 產業慣例（Cursor, Claude Code docs, Augment, spec-kit）皆走「per-teammate worktree」。若再出現一次（v4 規模）incident，正確回應不是 v4 補丁，而是切換到 per-teammate worktree 架構——現有 `internal/worktree/` 已經提供 worktree 生命週期管理，延伸到 batch-ephemeral worktree 的工程成本可控，勝於持續堆疊 shared-worktree 協定複雜度。
+- If `[P]` batches routinely exceed 5 tasks or the `[P]` rules are frequently violated (tasks actually touching shared files), this protocol cannot handle semantic-level conflicts. The correct upgrade is "one worktree per `[P]` task", or switching to plumbing `commit-tree` + `update-ref` CAS retry to bypass the index/ref lock entirely. The discussion at the time is in plan `C:\Users\Jeff\.claude\plans\1-2-vast-lark.md` §Design opening.
+- **Fix v3 is the third patch on the shared-worktree model.** Industry convention (Cursor, Claude Code docs, Augment, spec-kit) all use "per-teammate worktree". If another incident occurs (v4 scale), the correct response is not a v4 patch but rather switching to the per-teammate worktree architecture — the existing `internal/worktree/` already provides worktree lifecycle management, and extending it to batch-ephemeral worktrees is engineering work of manageable scope, preferable to continued accumulation of shared-worktree protocol complexity.
 
 ### Resolution (2026-04-21, per-teammate worktree via Claude Code `WorktreeCreate` hook)
 
@@ -435,7 +435,7 @@ If this becomes a frequent friction point, the cleanest direction is a **per-ses
 
 `press_button` / `set_value` against a button whose action opens a modal dialog returns successfully — but takes 50–90 seconds, with the dialog visible the whole time. The agent perceives "MCP hung". Manual mouse click on the same button opens the same dialog in <1s.
 
-Empirical measurements against KV Studio's "打開專案(Ctrl+O)" toolbar button (PID 22208, same Integrity Level as MCP, no cross-IL slowdown):
+Empirical measurements against KV Studio's "Open Project (Ctrl+O)" toolbar button (PID 22208, same Integrity Level as MCP, no cross-IL slowdown):
 
 | Path | Time | Outcome |
 |---|---|---|

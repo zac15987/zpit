@@ -1,91 +1,91 @@
-# 8. Agent 阻塞與通知機制
+# 8. Agent Blocking and Notification System
 
 ---
 
-## 8.1 核心原則：不確定就停下來問
+## 8.1 Core Principle: Stop and Ask When Uncertain
 
-無論 agent 的權限模式是什麼（包括 bypass all permissions），
-遇到以下情況必須停下來問你：
+Regardless of the agent's permission mode (including bypass all permissions),
+the agent must stop and ask you in the following situations:
 
-- 技術決策不確定（多種實作路徑、不清楚該用哪個 pattern）
-- Issue 的 acceptance criteria 描述模糊，無法判斷該怎麼做
-- 改動範圍超出 issue 預期（發現需要連帶修改其他模組）
-- 硬體相關邏輯不確定（timeout 值、retry 次數、安全狀態定義）
+- A technical decision is uncertain (multiple implementation paths; unclear which pattern to use)
+- Acceptance criteria in the issue are ambiguous and cannot determine the correct approach
+- The scope of changes exceeds what the issue anticipated (discovering that other modules also need modification)
+- Hardware-related logic is uncertain (timeout values, retry counts, safe-state definitions)
 
-**all permissions ≠ 自己做所有決定**
-all permissions 是「允許執行 read/write/bash 等操作不用逐一確認」，
-不是「允許 agent 自己決定技術方向」。
+**all permissions ≠ making all decisions autonomously**
+all permissions means "allow read/write/bash operations without per-action confirmation" —
+it does NOT mean "allow the agent to decide the technical direction on its own."
 
 ---
 
-## 8.2 TUI 通知系統
+## 8.2 TUI Notification System
 
-### 偵測方式
+### Detection Methods
 
-**Session Log 偵測（agent 等待輸入）：**
-- Session log 最後一筆 assistant message 的 `stop_reason == "end_turn"` → 等待使用者
-- TUI 即時更新活躍終端區域
+**Session Log Detection (agent waiting for input):**
+- The last assistant message in the session log has `stop_reason == "end_turn"` → waiting for user
+- TUI updates the active terminals panel in real time
 
-**Permission 偵測（Notification hook）：**
-- `notify-permission.sh` hook 在 Claude Code 需要 tool 權限時觸發
-- 寫入信號檔到 `~/.zpit/signals/permission-{sessionID}.json`
-- TUI 每 2 秒 tick 掃描信號目錄
-- 使用者 approve/deny 後，JSONL 新記錄出現 → 狀態恢復 → 信號檔刪除
+**Permission Detection (Notification hook):**
+- `notify-permission.sh` hook fires when Claude Code needs tool permission
+- Writes a signal file to `~/.zpit/signals/permission-{sessionID}.json`
+- TUI scans the signal directory on a 2-second tick
+- After the user approves/denies, a new JSONL record appears → state recovers → signal file is deleted
 
-### 通知管道
+### Notification Channels
 
 ```
-Agent 停下來 / 需要權限
+Agent pauses / needs permission
     │
-    ├─ ① TUI 主畫面警示（即時）
-    │   活躍終端區域狀態變更
-    │   顯示問題摘要 / permission message
-    │   顯示切換指令
+    ├─ ① TUI main screen alert (real-time)
+    │   Active terminals panel status change
+    │   Displays question summary / permission message
+    │   Displays switch command
     │
-    ├─ ② Windows Toast 通知
-    │   透過 PowerShell 呼叫 WinRT ToastNotification API
-    │   標題: "{專案名} - Agent waiting"
-    │   內容: 問題摘要（截斷至 100 字元）
+    ├─ ② Windows Toast notification
+    │   Calls WinRT ToastNotification API via PowerShell
+    │   Title: "{project name} - Agent waiting"
+    │   Body: question summary (truncated to 100 characters)
     │
-    └─ ③ 音效提示
+    └─ ③ Sound alert
         Windows: PowerShell SystemSounds.Beep
-        Unix: BEL 字元 (\a)
+        Unix: BEL character (\a)
 ```
 
-**主畫面顯示範例：**
+**Main screen display example:**
 
 ```
 ╠══════════════════════════════════════════════════════════════════════╣
-║  活躍終端                                                          ║
-║  [1] ASE 檢測  │ 🟡 等待你回應                            05:32   ║
-║      問題: "ReconnectAsync 要用 SemaphoreSlim 還是用       ║
-║             現有的 LockObject？"                           ║
-║      切換: tmux select-window -t ase-inspection            ║
-║  [2] 個人網頁  │ 🟠 等待授權                              00:08   ║
-║      P: Claude needs your permission to use Bash           ║
-║  [3] Zpit      │ 🟢 實作中: Three.js 場景優化     02:15   ║
+║  Active Terminals                                                   ║
+║  [1] ASE Inspection  │ 🟡 Waiting for your response        05:32   ║
+║      Question: "Should ReconnectAsync use SemaphoreSlim or          ║
+║                the existing LockObject?"                    ║
+║      Switch: tmux select-window -t ase-inspection           ║
+║  [2] Personal Site   │ 🟠 Waiting for permission           00:08   ║
+║      P: Claude needs your permission to use Bash            ║
+║  [3] Zpit            │ 🟢 Working: Three.js scene optimization 02:15║
 ╠══════════════════════════════════════════════════════════════════════╣
 ```
 
-### 通知設定
+### Notification Settings
 
 ```toml
 [notification]
-tui_alert = true          # TUI 主畫面警示
-windows_toast = true      # Windows Toast 通知
-sound = true              # 音效提示
-# sound_file = "D:/sounds/notify.mp3"  # 自訂通知音效路徑（留空使用系統預設音效）
-re_remind_minutes = 2     # 超過 N 分鐘未回應，再次發送提醒
+tui_alert = true          # TUI main screen alert
+windows_toast = true      # Windows Toast notification
+sound = true              # Sound alert
+# sound_file = "D:/sounds/notify.mp3"  # Custom notification sound path (leave empty to use system default)
+re_remind_minutes = 2     # Send a follow-up reminder if no response after N minutes
 ```
 
-#### 自訂音效播放
+#### Custom Sound Playback
 
-`sound_file` 欄位允許使用者指定自訂通知音效檔案路徑。支援格式：WAV、MP3、M4A、OGG、WMA。
+The `sound_file` field allows users to specify a custom notification sound file path. Supported formats: WAV, MP3, M4A, OGG, WMA.
 
-- **Windows**：透過 PowerShell 載入 `PresentationCore` 並使用 `System.Windows.Media.MediaPlayer` 播放，原生支援多種格式，無需額外安裝。
-- **Linux**：依序嘗試 `mpv` → `ffplay` → `paplay` → `aplay`，第一個成功即停止。前兩者支援所有主流格式，後兩者限 WAV/OGG。
-- **空值或未設定**：Windows 使用 `SystemSounds::Asterisk`，Linux 使用 freedesktop 系統音效（現行行為）。
-- **檔案不存在**：log 記錄警告、跳過播放，TUI 透過 `setStatus` 顯示一次性警告。
-- **Timeout**：使用 `exec.CommandContext` 搭配 5 秒 timeout，防止 goroutine 洩漏。
+- **Windows**: Loads `PresentationCore` via PowerShell and plays back using `System.Windows.Media.MediaPlayer`; natively supports multiple formats with no additional installation required.
+- **Linux**: Tries `mpv` → `ffplay` → `paplay` → `aplay` in order, stopping at the first success. The first two support all major formats; the latter two are limited to WAV/OGG.
+- **Empty or unset**: Windows uses `SystemSounds::Asterisk`; Linux uses the freedesktop system sound (current behavior).
+- **File not found**: Logs a warning, skips playback, and shows a one-time warning in the TUI via `setStatus`.
+- **Timeout**: Uses `exec.CommandContext` with a 5-second timeout to prevent goroutine leaks.
 
-實作位於 `internal/notify/`（`notify.go` + 平台特定檔案 `toast_windows.go`/`toast_unix.go`、`sound_windows.go`/`sound_unix.go`）。
+Implementation is in `internal/notify/` (`notify.go` + platform-specific files `toast_windows.go`/`toast_unix.go`, `sound_windows.go`/`sound_unix.go`).
