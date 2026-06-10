@@ -88,18 +88,69 @@
 
 Responsible for opening a new terminal window in the correct environment and launching Claude Code.
 Behavior is controlled by the `[terminal]` section of config.toml.
-Implementation lives in `internal/terminal/`.
+Implementation lives in `internal/terminal/`; the zplex HTTP client lives in `internal/zplex/`.
+
+### Launch Priority
+
+Every launch entry point (`LaunchClaude`, `LaunchClaudeInDir`, `LaunchLazygit`, `LaunchClaudeUpdate`) follows the same priority chain:
+
+```
+zplex probe → Windows Terminal (wt.exe) → tmux → error
+```
+
+### zplex Backend
+
+When `terminal.zplex_port > 0`, zpit probes the local zplex daemon before falling back to the
+platform-native terminal:
+
+1. **Probe**: `GET http://127.0.0.1:<zplex_port>/api/health` with a 500ms timeout (no caching —
+   one probe per launch call). If the response is HTTP 200, the session is created via
+   `POST /api/sessions` on the daemon and appears as a panel in the zplex web frontend.
+2. **Fallback**: if the probe fails (timeout / non-200 / unreachable), zpit falls back to
+   `platform.Detect()` (Windows Terminal → tmux → error) exactly as before.
+3. **Disabled**: when `zplex_port = 0`, the probe is skipped entirely — no HTTP request is made —
+   and zpit behaves as if zplex does not exist.
+
+**POST body** sent to `POST /api/sessions`:
+
+| Field | Value |
+|---|---|
+| `shell` | required |
+| `title` | required |
+| `cwd` | optional working directory |
+| `args` | optional argument list |
+| `env` | optional; **replaces** the child environment (not merged). Agent sessions that need hook enforcement send `append(os.Environ(), "ZPIT_AGENT=1", "ZPIT_AGENT_TYPE=<role>")`. Plain claude / lazygit / update sessions omit this field. |
+| `source` | `"zpit"` (identity metadata) |
+| `project_id` | zpit project ID |
+| `issue_id` | issue ID (if applicable) |
+| `role` | agent role string |
+| `agent_state` | initial agent state (`"active"` for agent sessions; empty otherwise) |
+
+The zpit-env/zpit-exit wrapper scripts are **not** used on the zplex path. Panel lifecycle is
+managed by the daemon's `session.closed` event on process exit; zpit never issues a DELETE call.
+
+**Platform package boundary**: `platform.Detect()` and the existing `platform.Env*` constants are
+unchanged. A new `platform.EnvZplex` enum value (String() = `"zplex"`) is added solely as a
+display marker in `LaunchResult.Env`; the detection logic itself remains in `platform.Detect()`
+and is never modified.
 
 ```go
 // pseudocode
 func LaunchClaude(project Project, config Config) {
     path := project.PathForCurrentOS()
 
+    // 1. zplex probe (skipped when zplex_port == 0)
+    if config.Terminal.ZplexPort > 0 {
+        if probeZplex(config.Terminal.ZplexPort) {
+            return launchViaZplex(config.Terminal.ZplexPort, path, project)
+        }
+    }
+
+    // 2. fall back to platform-native terminal
     switch detectEnvironment() {
     case WindowsTerminal:
         switch config.Terminal.WindowsMode {
         case "new_tab":
-            // default: open a new tab in Windows Terminal
             exec("wt.exe", "new-tab", "-d", path, "--title", project.Name, "--", "claude")
         case "new_window":
             exec("wt.exe", "-w", "new", "-d", path, "--title", project.Name, "--", "claude")

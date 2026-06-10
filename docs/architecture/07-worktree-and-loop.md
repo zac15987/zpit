@@ -145,20 +145,35 @@ Building, testing, reviewing, opening PRs, and updating tracker status are all t
 │  │                                                              │
 │  │ 5. Launch coding agent (new terminal, visible)              │
 │  │    working directory = worktree path, ZPIT_AGENT=1          │
+│  │    zplex sessions: POST agent_state="active", role=<role>   │
+│  │    session ref ({PID, zplex_id, role}) appended to slot     │
 │  │                                                              │
 │  │ 6. Poll issue labels (GetIssue every 10 seconds)            │
 │  │    "review" label detected = coding agent finished          │
-│  │    (label-driven, not PID-driven; terminal stays open)      │
+│  │    (label-driven, not PID-driven)                           │
+│  │    PATCH agent_state="done" for the coder zplex session     │
 │  │                                                              │
 │  │ 7. Launch reviewer agent (same worktree, read-only)         │
+│  │    zplex sessions: POST agent_state="active", role=reviewer  │
+│  │    session ref appended to slot's accumulated list          │
 │  │                                                              │
 │  │ 8. Poll issue labels                                        │
-│  │    ├─ ai-review → PASS → wait for PR merge                 │
+│  │    ├─ ai-review → PASS                                      │
+│  │    │  PATCH reviewer agent_state="done"                     │
+│  │    │  auto_close_after_done=true → kill ALL sessions in     │
+│  │    │    the slot's accumulated session-reference list        │
+│  │    │    (KillWithZeroExit + parent-shell kill; zplex panels  │
+│  │    │    removed by daemon's process-exit watcher)            │
+│  │    │  → wait for PR merge                                   │
 │  │    ├─ needs-changes → NEEDS CHANGES                         │
+│  │    │  PATCH reviewer agent_state="done"                     │
 │  │    │  └─ round < max_review_rounds?                         │
 │  │    │     ├─ yes → write revision prompt, rerun coding agent │
+│  │    │     │        new POST with agent_state="active"         │
 │  │    │     └─ no  → NeedsHuman state, notify for intervention │
 │  │    └─ label unchanged → continue polling                     │
+│  │    Permission-signal scanner: PATCH agent_state="waiting"   │
+│  │    when a session is blocked; "active" when it unblocks      │
 │  │                                                              │
 │  │ 9. PR merged detected → clean up worktree + branch          │
 │  │    + sync local base branch (git fetch origin <base>:<base>)│
@@ -168,6 +183,26 @@ Building, testing, reviewing, opening PRs, and updating tracker status are all t
 │  │                                                              │
 │  └──────────────────────────────────────────────────────────────┘
 ```
+
+### agent_state Sync
+
+When sessions are launched through the zplex backend, zpit keeps the zplex daemon in sync about
+agent progress. Sync is **best-effort and fire-and-forget** — it never blocks the loop and is
+never retried on failure. Sessions launched via the wt/tmux fallback have an empty zplex session
+ID and are silently skipped.
+
+| Event | PATCH agent_state value |
+|---|---|
+| Session launched as a slot agent | `"active"` (sent in the initial POST) |
+| Permission-signal scanner detects a blocked session | `"waiting"` |
+| Blocked session leaves the permission state | `"active"` |
+| Slot transitions out of `SlotCoding` (coder finished) | `"done"` |
+| Slot transitions out of `SlotReviewing` on PASS or needs-changes | `"done"` |
+| Revision relaunch | new POST with `agent_state: "active"` (new session) |
+
+Valid `agent_state` values: `""` (non-agent sessions) | `"active"` | `"waiting"` | `"done"`.
+
+Plain sessions (lazygit, `claude` update, manual launches) POST empty `role` and `agent_state`.
 
 ---
 
@@ -221,6 +256,13 @@ This design prevents the bug where "a nil return path in a handler silently kill
 The `Slot` struct tracks each issue's position in the pipeline:
 
 ```go
+// SessionRef records a launched session for auto-close and agent_state sync.
+type SessionRef struct {
+    PID      int    // OS process ID (used by KillWithZeroExit)
+    ZplexID  string // zplex session ID for PATCH; empty on wt/tmux fallback
+    Role     string // agent role string
+}
+
 type Slot struct {
     ProjectID    string
     IssueID      string
@@ -229,12 +271,30 @@ type Slot struct {
     BaseBranch   string    // PR target branch
     WorktreePath string
     State        SlotState
-    ReviewRound  int       // 0-based; incremented on NEEDS CHANGES
+    ReviewRound  int         // 0-based; incremented on NEEDS CHANGES
     Error        error
-    SessionPID   int
-    LaunchedAt   int64     // unix timestamp
+    Sessions     []SessionRef // accumulated across all review rounds (coder + reviewer)
+    LaunchedAt   int64        // unix timestamp
 }
 ```
+
+`Sessions` accumulates session references across all review rounds instead of overwriting a single
+PID. This enables `auto_close_after_done` to kill the full set of coder + reviewer terminals when
+a slot's review PASSES.
+
+### auto_close_after_done
+
+When `auto_close_after_done = true` (global config, default true) and a slot's reviewer produces
+an `ai-review` PASS verdict, zpit kills **every session** recorded in `Slot.Sessions` using the
+existing backend-agnostic kill path (`KillWithZeroExit` + parent-shell kill). For zplex sessions
+the daemon's process-exit watcher removes the panels. A `needs-changes` verdict **never** triggers
+closing. Only slot-launched sessions are recorded, so clarifier / efficiency / desktop / manual
+sessions are never auto-closed.
+
+**⚠️ Changed invariant:** Previously the loop never killed agent terminals. This invariant is now
+amended: **the loop kills a slot's own terminals after review PASS when `auto_close_after_done` is
+enabled.** The rationale: transcript history is recoverable with external tools, and orchestrator
+terminals show little detail since work is delegated to subagents.
 
 ---
 
