@@ -24,6 +24,9 @@ const (
 
 	defaultBrokerPort = 17731
 
+	defaultZplexPort          = 17732
+	defaultAutoCloseAfterDone = true
+
 	defaultSSHPort               = 2200
 	defaultSSHHost               = "0.0.0.0"
 	defaultSSHHostKeyPath        = "~/.zpit/ssh/host_ed25519"
@@ -39,16 +42,17 @@ const (
 
 // Config is the top-level configuration loaded from config.toml.
 type Config struct {
-	Language     string             `toml:"language"`
-	BrokerPort   int                `toml:"broker_port"`
-	ZpitBin      string             `toml:"zpit_bin"`
-	Terminal     TerminalConfig     `toml:"terminal"`
-	Notification NotificationConfig `toml:"notification"`
-	Worktree     WorktreeConfig     `toml:"worktree"`
-	SSH          SSHConfig          `toml:"ssh"`
-	AgentModels  AgentModelsConfig  `toml:"agent_models"`
-	Providers    ProvidersConfig    `toml:"providers"`
-	Projects     []ProjectConfig    `toml:"projects"`
+	Language            string             `toml:"language"`
+	BrokerPort          int                `toml:"broker_port"`
+	ZpitBin             string             `toml:"zpit_bin"`
+	AutoCloseAfterDone  bool               `toml:"auto_close_after_done"`
+	Terminal            TerminalConfig     `toml:"terminal"`
+	Notification        NotificationConfig `toml:"notification"`
+	Worktree            WorktreeConfig     `toml:"worktree"`
+	SSH                 SSHConfig          `toml:"ssh"`
+	AgentModels         AgentModelsConfig  `toml:"agent_models"`
+	Providers           ProvidersConfig    `toml:"providers"`
+	Projects            []ProjectConfig    `toml:"projects"`
 }
 
 // AgentModelsConfig holds the --model value passed to Claude Code for each
@@ -78,6 +82,7 @@ type TerminalConfig struct {
 	WindowsMode            string `toml:"windows_mode"`             // "new_tab" | "new_window"
 	TmuxMode               string `toml:"tmux_mode"`                // "new_window" | "new_pane"
 	WindowsTerminalProfile string `toml:"windows_terminal_profile"` // WT profile name for -p flag
+	ZplexPort              int    `toml:"zplex_port"`               // TCP port for the zplex backend; 0 disables
 }
 
 type NotificationConfig struct {
@@ -176,10 +181,15 @@ const configTemplate = `# Zpit Configuration
 # If omitted, falls back to os.Executable().
 # zpit_bin = "/usr/local/bin/zpit"
 
+# auto_close_after_done: when true, zpit kills a slot's terminal panels after
+# the reviewer issues a PASS (review done). Set to false to keep panels open.
+auto_close_after_done = true
+
 [terminal]
 windows_mode = "new_tab"    # new_tab | new_window
 tmux_mode = "new_window"    # new_window | new_pane
 # windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag and auto shell detection
+zplex_port = 17732           # TCP port for the zplex launcher backend; 0 disables the zplex backend
 
 [notification]
 tui_alert = true
@@ -266,11 +276,11 @@ func WriteTemplate(path string) error {
 // Load reads and parses the TOML config file.
 func Load(path string) (*Config, error) {
 	var cfg Config
-	_, err := toml.DecodeFile(path, &cfg)
+	md, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("loading config from %s: %w", path, err)
 	}
-	applyDefaults(&cfg)
+	applyDefaults(&cfg, md)
 	return &cfg, nil
 }
 
@@ -348,6 +358,9 @@ func Diff(old, new *Config) ConfigDiff {
 	}
 	if old.Terminal != new.Terminal {
 		diff.HotReload = append(diff.HotReload, "terminal")
+	}
+	if old.AutoCloseAfterDone != new.AutoCloseAfterDone {
+		diff.HotReload = append(diff.HotReload, "auto_close_after_done")
 	}
 	if old.AgentModels != new.AgentModels {
 		diff.HotReload = append(diff.HotReload, "agent_models")
@@ -487,18 +500,24 @@ func stringSliceEqual(a, b []string) bool {
 	return true
 }
 
-func applyDefaults(cfg *Config) {
+func applyDefaults(cfg *Config, md toml.MetaData) {
 	if cfg.Language == "" {
 		cfg.Language = "en"
 	}
 	if cfg.BrokerPort == 0 {
 		cfg.BrokerPort = defaultBrokerPort
 	}
+	if !md.IsDefined("auto_close_after_done") {
+		cfg.AutoCloseAfterDone = defaultAutoCloseAfterDone
+	}
 	if cfg.Terminal.WindowsMode == "" {
 		cfg.Terminal.WindowsMode = defaultWindowsMode
 	}
 	if cfg.Terminal.TmuxMode == "" {
 		cfg.Terminal.TmuxMode = defaultTmuxMode
+	}
+	if !md.IsDefined("terminal", "zplex_port") {
+		cfg.Terminal.ZplexPort = defaultZplexPort
 	}
 	if cfg.Worktree.MaxPerProject == 0 {
 		cfg.Worktree.MaxPerProject = defaultMaxPerProject
