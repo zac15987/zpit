@@ -22,7 +22,59 @@ import (
 	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/tracker"
 	"github.com/zac15987/zpit/internal/worktree"
+	"github.com/zac15987/zpit/internal/zplex"
 )
+
+// zplexPatcher is the minimal interface used for fire-and-forget agent_state sync.
+type zplexPatcher interface{ PatchAgentState(id, state string) error }
+
+// newZplexClient builds the patcher; overridable in tests.
+var newZplexClient = func(port int) zplexPatcher { return zplex.New(port) }
+
+// patchZplexStateCmd issues a fire-and-forget PATCH to update the zplex agent_state.
+// Returns nil when sessionID is empty (wt/tmux fallback — no zplex session).
+func (m Model) patchZplexStateCmd(sessionID, state string) tea.Cmd {
+	if sessionID == "" {
+		return nil
+	}
+	port := m.state.cfg.Terminal.ZplexPort
+	logger := m.state.logger
+	return func() tea.Msg {
+		if port <= 0 {
+			return nil
+		}
+		if err := newZplexClient(port).PatchAgentState(sessionID, state); err != nil {
+			logger.Printf("zplex sync failed: session=%s agent_state=%s err=%v", sessionID, state, err)
+		} else {
+			logger.Printf("zplex sync: session=%s agent_state=%s", sessionID, state)
+		}
+		return nil
+	}
+}
+
+// killSessionFn kills one session's PID (and its parent shell) — overridable in tests.
+var killSessionFn = func(pid int) {
+	if pid <= 0 {
+		return
+	}
+	parentPID, _ := terminal.FindParentShell(pid)
+	_ = terminal.KillWithZeroExit(pid)
+	if parentPID > 0 {
+		terminal.KillProcess(parentPID)
+	}
+}
+
+// autoCloseSlotCmd kills every recorded session PID for the slot.
+func (m Model) autoCloseSlotCmd(projectID, issueID string, pids []int) tea.Cmd {
+	logger := m.state.logger
+	return func() tea.Msg {
+		logger.Printf("auto-close: project=%s issue=%s sessions=%d", projectID, issueID, len(pids))
+		for _, pid := range pids {
+			killSessionFn(pid)
+		}
+		return nil
+	}
+}
 
 // loopPollCmd polls the tracker for todo issues.
 // After filtering for "todo" status, it parses each issue's DEPENDS_ON section,
@@ -481,11 +533,15 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 		}
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
 			terminal.SessionMeta{ProjectID: projectID, IssueID: issueID}, args...)
-		return LoopAgentLaunchedMsg{
+		msg := LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "coder", LaunchedAt: launchedAt,
 			Result: result, Err: err,
 		}
+		if result != nil {
+			msg.ZplexSessionID = result.ZplexSessionID
+		}
+		return msg
 	}
 }
 
@@ -612,11 +668,15 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		}
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
 			terminal.SessionMeta{ProjectID: projectID, IssueID: issueID}, args...)
-		return LoopAgentLaunchedMsg{
+		msg := LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "reviewer", LaunchedAt: launchedAt,
 			Result: result, Err: err,
 		}
+		if result != nil {
+			msg.ZplexSessionID = result.ZplexSessionID
+		}
+		return msg
 	}
 }
 
