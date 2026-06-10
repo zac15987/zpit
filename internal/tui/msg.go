@@ -18,7 +18,6 @@ type LaunchResultMsg struct {
 	TrackingKey    string // if set, use as activeTerminals key instead of ProjectID
 	WorkDir        string // if set, use for session discovery instead of project path
 	WorktreeBranch string // non-empty when launched in a git worktree (e.g. "feat/19-slug")
-	ZplexSessionID string // zplex session id from the launch; empty on wt/tmux fallback
 	Result         *terminal.LaunchResult
 	Err            error
 }

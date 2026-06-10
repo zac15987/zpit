@@ -1144,6 +1144,7 @@ func (m Model) handleLaunchResult(msg LaunchResultMsg) (tea.Model, tea.Cmd) {
 		LaunchResult:   msg.Result,
 		WorkDir:        workDir,
 		WorktreeBranch: msg.WorktreeBranch,
+		ZplexSessionID: msg.Result.ZplexSessionID,
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}

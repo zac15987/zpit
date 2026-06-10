@@ -153,7 +153,7 @@ func (m Model) handleExistingSessions(msg existingSessionsMsg) (tea.Model, tea.C
 		}
 		key := m.nextTrackingKey(entry.ProjectID)
 		m.state.logger.Printf("  attach: key=%s PID=%d sessionID=%s", key, entry.PID, entry.SessionID)
-		m.state.activeTerminals[key] = &ActiveTerminal{
+		at := &ActiveTerminal{
 			State:          watcher.StateUnknown,
 			SessionPID:     entry.PID,
 			SessionID:      entry.SessionID,
@@ -161,12 +161,42 @@ func (m Model) handleExistingSessions(msg existingSessionsMsg) (tea.Model, tea.C
 			WorktreeBranch: entry.WorktreeBranch,
 			StateChangedAt: time.Now(),
 		}
+		m.bindLoopSessionRef(key, at, entry)
+		m.state.activeTerminals[key] = at
 		currentPIDs[entry.PID] = true
 		cmds = append(cmds, waitForLogCmd(key, entry.PID, entry.SessionID, entry.LogPath, entry.WorkDir, m.state.logger))
 	}
 	m.state.NotifyAll()
 	m.state.Unlock()
 	return m, tea.Batch(cmds...)
+}
+
+// bindLoopSessionRef is the loop counterpart of the desktop fill-in above:
+// loop sessions' ActiveTerminals are created by the scan (not at launch), so
+// bind the slot's latest pending SessionRef here — zplex id flows ref→AT
+// (AC-8 waiting/active PATCH), PID flows entry→ref (auto-close kill list).
+// Picks the latest PID==0 ref rather than matching by role: the scan cannot
+// know the session's role, and slot launches are strictly sequential, so at
+// most one new unbound ref exists per worktree at any moment.
+// Caller must hold m.state.Lock().
+func (m Model) bindLoopSessionRef(key string, at *ActiveTerminal, entry existingSessionEntry) {
+	for _, ls := range m.state.loops {
+		for _, slot := range ls.Slots {
+			if slot.WorktreePath != entry.WorkDir {
+				continue
+			}
+			for i := len(slot.Sessions) - 1; i >= 0; i-- {
+				if slot.Sessions[i].PID == 0 {
+					at.ZplexSessionID = slot.Sessions[i].ZplexSessionID
+					slot.Sessions[i].PID = entry.PID
+					m.state.logger.Printf("  loop fill-in: key=%s role=%s zplex=%s PID=%d",
+						key, slot.Sessions[i].Role, slot.Sessions[i].ZplexSessionID, entry.PID)
+					return
+				}
+			}
+			return // one worktree maps to at most one slot
+		}
+	}
 }
 
 func (m Model) handleSessionFound(msg sessionFoundMsg) (tea.Model, tea.Cmd) {

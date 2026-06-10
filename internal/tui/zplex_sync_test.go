@@ -21,6 +21,7 @@ import (
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/loop"
+	"github.com/zac15987/zpit/internal/terminal"
 	"github.com/zac15987/zpit/internal/watcher"
 	"github.com/zac15987/zpit/internal/worktree"
 )
@@ -455,5 +456,153 @@ func TestZplexSync_AC10_NeedsChanges_NeverKills(t *testing.T) {
 
 	if nKilled != 0 {
 		t.Errorf("expected 0 killed PIDs on needs-changes (AC-10), got %d", nKilled)
+	}
+}
+
+// --- Production wiring: ZplexSessionID must reach ActiveTerminal without manual staging ---
+
+// Manual launch path: handleLaunchResult must copy Result.ZplexSessionID into
+// the ActiveTerminal it creates. The returned cmd tree is deliberately NOT run
+// (it contains startWatcherDirCmdWithExcludes, which scans real processes).
+func TestZplexWiring_HandleLaunchResult_CopiesSessionID(t *testing.T) {
+	m := makeZplexTestModel(t, true)
+
+	model, _ := m.handleLaunchResult(LaunchResultMsg{
+		ProjectID: "p1",
+		WorkDir:   "D:/proj",
+		Result:    &terminal.LaunchResult{ZplexSessionID: "z1", SwitchHint: "hint"},
+	})
+	m = model.(Model)
+
+	m.state.RLock()
+	defer m.state.RUnlock()
+	var found *ActiveTerminal
+	for _, at := range m.state.activeTerminals {
+		if at.WorkDir == "D:/proj" {
+			found = at
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected an ActiveTerminal for WorkDir D:/proj")
+	}
+	if found.ZplexSessionID != "z1" {
+		t.Errorf("expected ZplexSessionID %q, got %q", "z1", found.ZplexSessionID)
+	}
+}
+
+// Loop launch path: the session scan creates the ActiveTerminal, so
+// handleExistingSessions must bind the slot's pending SessionRef —
+// zplex id flows ref→AT (AC-8), PID flows entry→ref (auto-close).
+func TestZplexWiring_ExistingSessions_LoopFillIn(t *testing.T) {
+	m := makeZplexTestModel(t, true)
+
+	slot := &loop.Slot{
+		ProjectID:    "p1",
+		IssueID:      "42",
+		State:        loop.SlotCoding,
+		WorktreePath: "D:/wt",
+		Sessions: []loop.SessionRef{
+			{Role: "coder", ZplexSessionID: "c1", PID: 0},
+		},
+	}
+	seedZplexLoop(m, slot)
+
+	// Cmds (waitForLogCmd) are deliberately NOT run.
+	m.handleExistingSessions(existingSessionsMsg{
+		Source: "periodic",
+		Entries: []existingSessionEntry{
+			{ProjectID: "p1", PID: 111, SessionID: "S1", WorkDir: "D:/wt", LogPath: "x.jsonl"},
+		},
+	})
+
+	m.state.RLock()
+	defer m.state.RUnlock()
+	var found *ActiveTerminal
+	for _, at := range m.state.activeTerminals {
+		if at.SessionPID == 111 {
+			found = at
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected an ActiveTerminal for PID 111")
+	}
+	if found.ZplexSessionID != "c1" {
+		t.Errorf("expected ZplexSessionID %q backfilled from slot ref, got %q", "c1", found.ZplexSessionID)
+	}
+	ref := m.state.loops["p1"].Slots[loop.SlotKey("p1", "42")].Sessions[0]
+	if ref.PID != 111 {
+		t.Errorf("expected SessionRef.PID backfilled to 111, got %d", ref.PID)
+	}
+}
+
+// Auto-close PID collection must dedup: multiple refs resolving through the
+// WorkDir fallback to the same ActiveTerminal must yield one kill, not N.
+func TestZplexWiring_AutoClose_DedupsPIDs(t *testing.T) {
+	m := makeZplexTestModel(t, true)
+	fake := &fakePatcher{}
+	overrideZplexClient(t, fake)
+
+	var killedMu sync.Mutex
+	var killedPIDs []int
+	origKill := killSessionFn
+	killSessionFn = func(pid int) {
+		killedMu.Lock()
+		killedPIDs = append(killedPIDs, pid)
+		killedMu.Unlock()
+	}
+	t.Cleanup(func() { killSessionFn = origKill })
+
+	// Two coder rounds with unresolved PIDs (wt/tmux fallback: no zplex id)
+	// plus a reviewer with a known PID. Both coder refs fall back to the same
+	// WorkDir-matched ActiveTerminal.
+	slot := &loop.Slot{
+		ProjectID:    "p1",
+		IssueID:      "42",
+		State:        loop.SlotReviewing,
+		WorktreePath: "D:/wt",
+		Sessions: []loop.SessionRef{
+			{Role: "coder", PID: 0},
+			{Role: "coder", PID: 0},
+			{Role: "reviewer", ZplexSessionID: "r1", PID: 222},
+		},
+	}
+	seedZplexLoop(m, slot)
+
+	m.state.Lock()
+	m.state.activeTerminals["k"] = &ActiveTerminal{
+		WorkDir:    "D:/wt",
+		SessionPID: 111,
+		State:      watcher.StateWorking,
+	}
+	m.state.Unlock()
+
+	_, cmd := m.handleLoopLabelPoll(LoopLabelPollMsg{
+		ProjectID: "p1",
+		IssueID:   "42",
+		Labels:    []string{"ai-review"},
+	})
+	runCmd(cmd)
+
+	killedMu.Lock()
+	killed := make([]int, len(killedPIDs))
+	copy(killed, killedPIDs)
+	killedMu.Unlock()
+
+	if len(killed) != 2 {
+		t.Fatalf("expected 2 unique killed PIDs, got %d: %v", len(killed), killed)
+	}
+	has111, has222 := false, false
+	for _, pid := range killed {
+		if pid == 111 {
+			has111 = true
+		}
+		if pid == 222 {
+			has222 = true
+		}
+	}
+	if !has111 || !has222 {
+		t.Errorf("expected PIDs 111 and 222 killed exactly once each, got %v", killed)
 	}
 }

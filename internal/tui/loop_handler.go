@@ -285,7 +285,8 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 	}
 
 	// Record this session in the slot's accumulated session list. PID is left 0
-	// here — it is resolved at auto-close time from activeTerminals by ZplexSessionID.
+	// here — the session scan backfills it once the spawned claude process is
+	// discovered (bindLoopSessionRef in session.go).
 	slot.AddSession(loop.SessionRef{ZplexSessionID: msg.ZplexSessionID, Role: msg.Role})
 	if msg.ZplexSessionID != "" {
 		m.state.logger.Printf("zplex launch: key=%s role=%s session=%s",
@@ -359,6 +360,7 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 			// Collect kill PIDs under the lock for auto-close (AC-10).
 			var pids []int
 			if autoClose {
+				seen := make(map[int]bool)
 				for _, ref := range slot.Sessions {
 					pid := ref.PID
 					if pid == 0 && ref.ZplexSessionID != "" {
@@ -371,7 +373,8 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 						}
 					}
 					if pid == 0 {
-						// Fallback: resolve by worktree path.
+						// Fallback: resolve by worktree path. Multiple unresolved
+						// refs hit the same AT here — dedup below keeps one kill.
 						for _, at := range m.state.activeTerminals {
 							if at.WorkDir == slot.WorktreePath {
 								pid = at.SessionPID
@@ -379,7 +382,8 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
-					if pid > 0 {
+					if pid > 0 && !seen[pid] {
+						seen[pid] = true
 						pids = append(pids, pid)
 					}
 				}
