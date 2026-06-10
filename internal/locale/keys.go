@@ -256,4 +256,8 @@ const (
 	KeyDesktopAlreadyRunning   Key = "desktop_already_running"
 	KeyDesktopLaunching        Key = "desktop_launching"
 	KeyDesktopLinuxUnsupported Key = "desktop_linux_unsupported"
+
+	// zplex backend
+	KeyZplexLaunched   Key = "zplex_launched"
+	KeyZplexSwitchHint Key = "zplex_switch_hint"
 )
