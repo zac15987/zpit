@@ -434,6 +434,9 @@ func (m Model) handleDesktopAgentLaunched(msg DesktopAgentLaunchedMsg) (tea.Mode
 	m.state.NotifyAll()
 	m.state.Unlock()
 
+	if at.ZplexSessionID != "" {
+		m.state.logger.Printf("zplex launch: key=%s role=%s session=%s", trackingKey, "desktop", at.ZplexSessionID)
+	}
 	m.state.logger.Printf("desktop: launched agent=%s (PID pending session discovery)", msg.AgentName)
 	// Kick off active session discovery (same flow as project-scope launches).
 	// Without this, a terminal closed before the 10s periodic scan would leave

@@ -287,6 +287,10 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 	// Record this session in the slot's accumulated session list. PID is left 0
 	// here — it is resolved at auto-close time from activeTerminals by ZplexSessionID.
 	slot.AddSession(loop.SessionRef{ZplexSessionID: msg.ZplexSessionID, Role: msg.Role})
+	if msg.ZplexSessionID != "" {
+		m.state.logger.Printf("zplex launch: key=%s role=%s session=%s",
+			loop.SlotKey(msg.ProjectID, msg.IssueID), msg.Role, msg.ZplexSessionID)
+	}
 
 	if msg.Role == "coder" {
 		slot.State = loop.SlotCoding
