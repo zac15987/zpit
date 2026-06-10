@@ -46,10 +46,11 @@ internal/
 ├── prompt/              # Prompt assembly: BuildCodingPrompt (subagent/team delegation), BuildReviewerPrompt, BuildRevisionPrompt
 ├── sessionsync/         # Session bundle pack/unpack + cross-OS cwd rewrite (zip + manifest)
 ├── ssh/                 # Wish SSH server: StartServerAsync(), ServerHandle, StartServer(), auth config
-├── terminal/            # LaunchClaude() dispatch + platform-specific launchers (wt.exe / tmux)
+├── terminal/            # LaunchClaude() dispatch + platform-specific launchers; launch priority: zplex probe → wt.exe → tmux → error
 ├── tracker/             # TrackerClient interface: ForgejoClient + GitHubClient REST abstractions
 ├── watcher/             # Session log monitoring: EncodeCwd, ParseLine, FindActiveSessions, Watcher
 ├── worktree/            # Worktree Manager, Slugify(), DeployHooksToProject(), DeployHooksToWorktree(), settings.json merge
+├── zplex/               # HTTP client for the zplex launch-backend daemon (Health/CreateSession/PatchAgentState)
 └── tui/                 # Bubble Tea TUI — see docs/architecture/02-tui-design.md + 10-appstate.md
     ├── appstate.go      # AppState struct, RWMutex, Subscribe/NotifyAll pub/sub
     ├── channel.go       # Channel EventBus subscription and event reading
@@ -101,6 +102,7 @@ Full architecture lives in `docs/architecture/` (English, one file per topic —
 - **Parallel `[P]` task batches** — the orchestrator spawns one `task-runner` per task with `isolation: "worktree"`. After they return: discover each branch with `git -C <path> rev-parse --abbrev-ref HEAD` (CC doesn't propagate `worktreeBranch` — known-issues §3), cherry-pick in task-ID order, then clean up as **TWO separate Bash calls** — `git worktree remove --force` then `git branch -D`, never chained with `&&` (a hook block on one must not skip the other — §4). `isolation = "in_project"` force-disables `[P]` (one working tree can't host parallel children).
 - **Hook gate** — every hook `exit 0`s unless `ZPIT_AGENT=1`, so non-zpit Claude Code sessions are untouched. Worktrees get a dual-write of `.claude/settings.json` + `settings.local.json` (a linked worktree doesn't inherit the main repo's settings — Issue #39); `in_project` instead *merges* into the real repo's `settings.json` and self-ignores a zpit-created `.gitignore`.
 - **go:embed deploy** — agents/hooks/docs are embedded in the binary and redeployed to the target project/worktree on every launch, so editing `agents/*.md`, `hooks/*.sh`, or `docs/agent-guidelines.md` requires a rebuild to take effect. `[f]` (efficiency) launches without hooks.
+- **Auto-close after review PASS** — when `auto_close_after_done` (global, default `true`) is enabled, the loop kills a slot's own coder+reviewer terminals after a review PASS verdict (`ai-review` label). For the zplex backend, panels close via process exit. `needs-changes` never triggers closing. `loop.Slot` accumulates a per-round session-reference list to track which terminals to close at round completion.
 
 ## Config
 
