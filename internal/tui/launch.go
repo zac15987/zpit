@@ -426,6 +426,9 @@ func (m Model) handleDesktopAgentLaunched(msg DesktopAgentLaunchedMsg) (tea.Mode
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}
+	if msg.Result != nil {
+		at.ZplexSessionID = msg.Result.ZplexSessionID
+	}
 	m.state.activeTerminals[trackingKey] = at
 	m.state.activeDesktopAgent = at
 	m.state.NotifyAll()
@@ -704,7 +707,7 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 		}
 		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
 			terminal.SessionMeta{ProjectID: focusProjectID, IssueID: issueID}, args...)
-		return LaunchResultMsg{
+		msg := LaunchResultMsg{
 			ProjectID:      focusProjectID,
 			TrackingKey:    trackingKey,
 			WorkDir:        wtPath,
@@ -712,6 +715,10 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 			Result:         result,
 			Err:            err,
 		}
+		if result != nil {
+			msg.ZplexSessionID = result.ZplexSessionID
+		}
+		return msg
 	}
 }
 

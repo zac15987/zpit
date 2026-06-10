@@ -56,6 +56,14 @@ func (s SlotState) String() string {
 	}
 }
 
+// SessionRef records one launched agent session belonging to a slot.
+// ZplexSessionID is empty when the session was launched via the wt/tmux fallback.
+type SessionRef struct {
+	PID            int
+	ZplexSessionID string
+	Role           string // "coder" or "reviewer"
+}
+
 // Slot tracks a single issue through the automation pipeline.
 type Slot struct {
 	ProjectID    string
@@ -69,7 +77,21 @@ type Slot struct {
 	ReviewRound  int // 0-based; incremented on each NEEDS CHANGES retry
 	Error        error
 	SessionPID   int
-	LaunchedAt   int64 // unix timestamp captured just before agent launch
+	LaunchedAt   int64         // unix timestamp captured just before agent launch
+	Sessions     []SessionRef  // accumulated across review rounds — appended per coder/reviewer launch, never overwritten
+}
+
+// AddSession appends a new SessionRef to the slot's session list.
+func (s *Slot) AddSession(ref SessionRef) { s.Sessions = append(s.Sessions, ref) }
+
+// LatestSessionByRole returns the most recently appended session for the given role.
+func (s *Slot) LatestSessionByRole(role string) (SessionRef, bool) {
+	for i := len(s.Sessions) - 1; i >= 0; i-- {
+		if s.Sessions[i].Role == role {
+			return s.Sessions[i], true
+		}
+	}
+	return SessionRef{}, false
 }
 
 // LoopState tracks per-project loop status.

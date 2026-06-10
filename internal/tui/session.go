@@ -38,6 +38,8 @@ type ActiveTerminal struct {
 	SessionID         string // current session ID (for /resume change detection)
 	WorkDir           string // project work directory (needed to recompute logPath on session switch)
 	WorktreeBranch    string // non-empty when session runs in a git worktree (e.g. "feat/19-slug")
+	ZplexSessionID    string // non-empty only when launched via the zplex backend
+	zplexWaiting      bool   // true after we PATCH agent_state=waiting for the current permission episode; used by T8 to issue the matching active PATCH
 	State             watcher.AgentState
 	LastQuestion      string
 	PermissionMessage string // message from permission signal (e.g., "Claude needs your permission to use Bash")
