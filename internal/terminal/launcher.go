@@ -8,22 +8,49 @@ import (
 
 	"github.com/zac15987/zpit/internal/config"
 	"github.com/zac15987/zpit/internal/platform"
+	"github.com/zac15987/zpit/internal/zplex"
 )
 
 // LaunchResult contains info about a launched terminal session.
 type LaunchResult struct {
-	Env        platform.Environment
-	Command    string
-	Args       []string
-	SwitchHint string
-	Warnings   []string // non-fatal warnings (e.g. WT profile resolution failures)
+	Env            platform.Environment
+	Command        string
+	Args           []string
+	SwitchHint     string
+	Warnings       []string // non-fatal warnings (e.g. WT profile resolution failures)
+	ZplexSessionID string   // non-empty only on the zplex backend path
+}
+
+// SessionMeta carries loop/project metadata passed to the zplex POST body.
+type SessionMeta struct {
+	ProjectID string
+	IssueID   string
+}
+
+// zplexClient probes the zplex backend and returns a ready client, or nil.
+// It makes AT MOST one HTTP call (Health) and ZERO when port is 0.
+// zplex failures are best-effort: callers fall back to wt/tmux on nil.
+func zplexClient(cfg config.TerminalConfig) *zplex.Client {
+	if cfg.ZplexPort <= 0 {
+		return nil
+	}
+	c := zplex.New(cfg.ZplexPort)
+	if c.Health() != nil {
+		return nil
+	}
+	return c
 }
 
 // LaunchClaude opens a new terminal window/tab and runs claude in the project directory.
 func LaunchClaude(project config.ProjectConfig, cfg config.TerminalConfig, extraArgs ...string) (*LaunchResult, error) {
-	env := platform.Detect()
 	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
 
+	if c := zplexClient(cfg); c != nil {
+		return launchClaudeZplex(c, cfg, project.Name, projectPath,
+			SessionMeta{ProjectID: project.ID}, extraArgs)
+	}
+
+	env := platform.Detect()
 	switch env {
 	case platform.EnvWindowsTerminal:
 		return launchWindows(project, cfg, projectPath, extraArgs)
@@ -36,9 +63,13 @@ func LaunchClaude(project config.ProjectConfig, cfg config.TerminalConfig, extra
 
 // LaunchClaudeInDir opens Claude Code in a new terminal with a custom working directory.
 // Used by the loop engine to launch agents in worktree directories.
-func LaunchClaudeInDir(workDir, tabTitle string, cfg config.TerminalConfig, extraArgs ...string) (*LaunchResult, error) {
-	env := platform.Detect()
+// meta carries project/issue IDs for zplex session metadata; pass SessionMeta{} for non-loop launches.
+func LaunchClaudeInDir(workDir, tabTitle string, cfg config.TerminalConfig, meta SessionMeta, extraArgs ...string) (*LaunchResult, error) {
+	if c := zplexClient(cfg); c != nil {
+		return launchClaudeZplex(c, cfg, tabTitle, workDir, meta, extraArgs)
+	}
 
+	env := platform.Detect()
 	switch env {
 	case platform.EnvWindowsTerminal:
 		return launchWindowsInDir(tabTitle, cfg, workDir, extraArgs)
@@ -52,6 +83,10 @@ func LaunchClaudeInDir(workDir, tabTitle string, cfg config.TerminalConfig, extr
 // LaunchLazygit opens lazygit in a new terminal with a custom working directory.
 // Does NOT go through the ZPIT_AGENT hook wrapper — lazygit is a plain user tool.
 func LaunchLazygit(workDir, tabTitle string, cfg config.TerminalConfig) (*LaunchResult, error) {
+	if c := zplexClient(cfg); c != nil {
+		return launchLazygitZplex(c, cfg, tabTitle, workDir)
+	}
+
 	env := platform.Detect()
 	switch env {
 	case platform.EnvWindowsTerminal:
@@ -66,6 +101,10 @@ func LaunchLazygit(workDir, tabTitle string, cfg config.TerminalConfig) (*Launch
 // LaunchClaudeUpdate runs `claude update` in a new terminal and keeps the window
 // open after the command exits so the user can read the result.
 func LaunchClaudeUpdate(cfg config.TerminalConfig) (*LaunchResult, error) {
+	if c := zplexClient(cfg); c != nil {
+		return launchClaudeUpdateZplex(c, cfg)
+	}
+
 	env := platform.Detect()
 	switch env {
 	case platform.EnvWindowsTerminal:

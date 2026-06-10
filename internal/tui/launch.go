@@ -398,7 +398,7 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 			"--mcp-config", mcpConfigPath,
 			"--allowedTools", "Read,Bash,Glob,Grep,mcp__desktop-proxy__*",
 		}
-		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, args...)
+		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, terminal.SessionMeta{}, args...)
 		return DesktopAgentLaunchedMsg{
 			AgentName: agentName,
 			HomeDir:   homeDir,
@@ -702,7 +702,8 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
+			terminal.SessionMeta{ProjectID: focusProjectID, IssueID: issueID}, args...)
 		return LaunchResultMsg{
 			ProjectID:      focusProjectID,
 			TrackingKey:    trackingKey,

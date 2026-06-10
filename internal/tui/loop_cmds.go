@@ -479,7 +479,8 @@ func (m Model) loopLaunchCoderCmd(projectID, issueID string) tea.Cmd {
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
+			terminal.SessionMeta{ProjectID: projectID, IssueID: issueID}, args...)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "coder", LaunchedAt: launchedAt,
@@ -609,7 +610,8 @@ func (m Model) loopWriteAndLaunchReviewerCmd(projectID, issueID string) tea.Cmd 
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
+			terminal.SessionMeta{ProjectID: projectID, IssueID: issueID}, args...)
 		return LoopAgentLaunchedMsg{
 			ProjectID: projectID, IssueID: issueID,
 			Role: "reviewer", LaunchedAt: launchedAt,
