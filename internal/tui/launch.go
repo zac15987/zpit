@@ -914,8 +914,12 @@ func (m Model) openSlotPRCmd(slotKey string) (tea.Model, tea.Cmd) {
 // runLazygitCmd returns a tea.Cmd that spawns lazygit in a new terminal.
 func runLazygitCmd(workDir, title string, cfg config.TerminalConfig) tea.Cmd {
 	return func() tea.Msg {
-		if _, err := terminal.LaunchLazygit(workDir, title, cfg); err != nil {
+		result, err := terminal.LaunchLazygit(workDir, title, cfg)
+		if err != nil {
 			return StatusMsg{Text: fmt.Sprintf("lazygit launch failed: %s", err)}
+		}
+		if result != nil && result.Env == platform.EnvZplex {
+			return StatusMsg{Text: locale.T(locale.KeyZplexLaunched)}
 		}
 		return StatusMsg{Text: fmt.Sprintf("Opened lazygit in %s", workDir)}
 	}
@@ -960,8 +964,12 @@ func (m Model) launchSlotLazygitCmd(slotKey string) (tea.Model, tea.Cmd) {
 func (m Model) launchClaudeUpdateCmd() tea.Cmd {
 	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
-		if _, err := terminal.LaunchClaudeUpdate(cfg); err != nil {
+		result, err := terminal.LaunchClaudeUpdate(cfg)
+		if err != nil {
 			return StatusMsg{Text: fmt.Sprintf("claude update launch failed: %s", err)}
+		}
+		if result != nil && result.Env == platform.EnvZplex {
+			return StatusMsg{Text: locale.T(locale.KeyZplexLaunched)}
 		}
 		return StatusMsg{Text: "Launched claude update"}
 	}
