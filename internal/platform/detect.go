@@ -14,6 +14,7 @@ const (
 	EnvWSLTmux
 	EnvLinuxTmux
 	EnvUnknown
+	EnvZplex
 )
 
 func (e Environment) String() string {
@@ -24,6 +25,10 @@ func (e Environment) String() string {
 		return "WSL"
 	case EnvLinuxTmux:
 		return "Linux (tmux)"
+	case EnvUnknown:
+		return "Unknown"
+	case EnvZplex:
+		return "zplex"
 	default:
 		return "Unknown"
 	}

@@ -84,6 +84,7 @@ func TestEnvironment_String(t *testing.T) {
 		{EnvWSLTmux, "WSL"},
 		{EnvLinuxTmux, "Linux (tmux)"},
 		{EnvUnknown, "Unknown"},
+		{EnvZplex, "zplex"},
 	}
 	for _, tt := range tests {
 		if got := tt.env.String(); got != tt.want {
