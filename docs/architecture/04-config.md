@@ -14,12 +14,22 @@ On first launch, if no config exists, a template is generated automatically (`co
 # ~/.zpit/config.toml
 
 # ──────────────────────────────────────────────
+# Global settings
+# ──────────────────────────────────────────────
+auto_close_after_done = true  # when true, after a slot's review PASSES zpit kills that slot's
+                               # coder+reviewer terminals (closes zplex panels via process exit).
+                               # Hot-reloadable; read at PASS-handling time. Applies only to
+                               # slot-launched sessions; clarifier/efficiency/desktop/manual
+                               # sessions are never affected.
+
+# ──────────────────────────────────────────────
 # Terminal settings
 # ──────────────────────────────────────────────
 [terminal]
 windows_mode = "new_tab"    # "new_tab" | "new_window"
 tmux_mode = "new_window"    # "new_window" | "new_pane"
 # windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag
+zplex_port = 17732          # TCP port of the local zplex daemon; 0 disables the zplex backend
 
 # ──────────────────────────────────────────────
 # Notification settings
@@ -227,7 +237,8 @@ Zpit supports reloading `config.toml` while the TUI is running. Config fields fa
 | `language` | Calls `locale.SetLanguage()` |
 | `notification.*` | Calls `notifier.UpdateConfig()` |
 | `worktree.poll_seconds` / `pr_poll_seconds` / `max_review_rounds` | Calls `wtManager.UpdateConfig()` |
-| `terminal.*` | Updates cfg; takes effect on the next agent launch |
+| `terminal.*` (including `zplex_port`) | Updates cfg; takes effect on the next agent launch. A `zplex_port` change redirects subsequent launches to the new daemon address without restart. |
+| `auto_close_after_done` | Read at PASS-handling time; changing it mid-cycle affects the current slot's cleanup decision. |
 | `agent_models.*` | Updates cfg; takes effect on the next agent launch (already-running sessions keep the model from their original launch) |
 | per-project `channel_enabled` | Dynamically subscribe/unsubscribe from the EventBus |
 | per-project `channel_listen` | Dynamically manage cross-project subscriptions |

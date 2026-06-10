@@ -25,6 +25,12 @@ func TestLoad(t *testing.T) {
 	if cfg.Terminal.TmuxMode != "new_window" {
 		t.Errorf("TmuxMode = %q, want %q", cfg.Terminal.TmuxMode, "new_window")
 	}
+	if cfg.Terminal.ZplexPort != 17732 {
+		t.Errorf("ZplexPort = %d, want 17732", cfg.Terminal.ZplexPort)
+	}
+	if !cfg.AutoCloseAfterDone {
+		t.Error("AutoCloseAfterDone should be true")
+	}
 
 	// Notification
 	if !cfg.Notification.TUIAlert {
@@ -399,4 +405,92 @@ func containsAll(s string, parts ...string) bool {
 		}
 	}
 	return true
+}
+
+// TestZplexPortAndAutoCloseDefaults verifies that omitting both fields from the
+// config file loads them with their coded defaults (AC-1).
+func TestZplexPortAndAutoCloseDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// Deliberately omit zplex_port and auto_close_after_done.
+	content := "[terminal]\nwindows_mode = \"new_tab\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Terminal.ZplexPort != defaultZplexPort {
+		t.Errorf("ZplexPort = %d, want %d (default)", cfg.Terminal.ZplexPort, defaultZplexPort)
+	}
+	if !cfg.AutoCloseAfterDone {
+		t.Errorf("AutoCloseAfterDone = false, want true (default)")
+	}
+}
+
+// TestZplexPortAndAutoCloseExplicitZero verifies that explicit zero/false values
+// are not overridden by defaults (AC-1).
+func TestZplexPortAndAutoCloseExplicitZero(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// Explicitly set zplex_port = 0 and auto_close_after_done = false.
+	content := "auto_close_after_done = false\n[terminal]\nzplex_port = 0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Terminal.ZplexPort != 0 {
+		t.Errorf("ZplexPort = %d, want 0 (explicit disable)", cfg.Terminal.ZplexPort)
+	}
+	if cfg.AutoCloseAfterDone {
+		t.Errorf("AutoCloseAfterDone = true, want false (explicit)")
+	}
+}
+
+// TestZplexPortAndAutoCloseDiff_HotReload verifies that both fields are
+// classified as hot-reload (not restart-required) by Diff (AC-14).
+func TestZplexPortAndAutoCloseDiff_HotReload(t *testing.T) {
+	cases := []struct {
+		name string
+		old  *Config
+		new  *Config
+		want string // expected entry in HotReload
+	}{
+		{
+			name: "zplex_port_change",
+			old:  &Config{Terminal: TerminalConfig{ZplexPort: 17732}},
+			new:  &Config{Terminal: TerminalConfig{ZplexPort: 0}},
+			want: "terminal",
+		},
+		{
+			name: "auto_close_after_done_change",
+			old:  &Config{AutoCloseAfterDone: true},
+			new:  &Config{AutoCloseAfterDone: false},
+			want: "auto_close_after_done",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Diff(tc.old, tc.new)
+			foundHot := false
+			for _, f := range d.HotReload {
+				if f == tc.want {
+					foundHot = true
+					break
+				}
+			}
+			if !foundHot {
+				t.Errorf("%s change should be in HotReload as %q; got HotReload=%v", tc.name, tc.want, d.HotReload)
+			}
+			for _, f := range d.RestartRequired {
+				if f == tc.want || f == "terminal" {
+					t.Errorf("%s change must NOT be in RestartRequired; got RestartRequired=%v", tc.name, d.RestartRequired)
+				}
+			}
+		})
+	}
 }

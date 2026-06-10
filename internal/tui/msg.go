@@ -18,6 +18,7 @@ type LaunchResultMsg struct {
 	TrackingKey    string // if set, use as activeTerminals key instead of ProjectID
 	WorkDir        string // if set, use for session discovery instead of project path
 	WorktreeBranch string // non-empty when launched in a git worktree (e.g. "feat/19-slug")
+	ZplexSessionID string // zplex session id from the launch; empty on wt/tmux fallback
 	Result         *terminal.LaunchResult
 	Err            error
 }
@@ -107,12 +108,13 @@ type LoopAgentWrittenMsg struct {
 
 // LoopAgentLaunchedMsg indicates a coding/reviewer agent was launched.
 type LoopAgentLaunchedMsg struct {
-	ProjectID  string
-	IssueID    string
-	Role       string // "coder" or "reviewer"
-	LaunchedAt int64  // unix timestamp captured just before terminal launch
-	Result     *terminal.LaunchResult
-	Err        error
+	ProjectID      string
+	IssueID        string
+	Role           string // "coder" or "reviewer"
+	LaunchedAt     int64  // unix timestamp captured just before terminal launch
+	ZplexSessionID string // zplex session id from the launch; empty on wt/tmux fallback
+	Result         *terminal.LaunchResult
+	Err            error
 }
 
 // LoopPRStatusMsg carries the result of polling PR status for merge detection.

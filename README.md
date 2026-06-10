@@ -192,12 +192,19 @@ Config lives at `~/.zpit/config.toml`. Override with `ZPIT_CONFIG` env var.
 ```toml
 language = "en"             # en | zh-TW
 broker_port = 17731         # HTTP broker port for cross-agent channel
+auto_close_after_done = true  # kill the slot's coder+reviewer terminals after review PASS
+                               # (ai-review label); zplex panels close via process exit.
+                               # needs-changes never triggers closing. Hot-reloadable.
 # zpit_bin = "/usr/local/bin/zpit"  # explicit binary path for .mcp.json generation
 
 [terminal]
 windows_mode = "new_tab"    # new_tab | new_window
 tmux_mode = "new_window"    # new_window | new_pane
 # windows_terminal_profile = "PowerShell 7"  # WT profile name for -p flag
+# zplex_port = 17732        # TCP port of the local zplex daemon (launch backend).
+                             # 0 disables the zplex backend; launch priority is
+                             # zplex probe → Windows Terminal → tmux → error.
+                             # Hot-reloadable.
 
 [notification]
 tui_alert = true

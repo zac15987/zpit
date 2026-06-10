@@ -284,6 +284,14 @@ func (m Model) handleLoopAgentLaunched(msg LoopAgentLaunchedMsg) (tea.Model, tea
 		}
 	}
 
+	// Record this session in the slot's accumulated session list. PID is left 0
+	// here — it is resolved at auto-close time from activeTerminals by ZplexSessionID.
+	slot.AddSession(loop.SessionRef{ZplexSessionID: msg.ZplexSessionID, Role: msg.Role})
+	if msg.ZplexSessionID != "" {
+		m.state.logger.Printf("zplex launch: key=%s role=%s session=%s",
+			loop.SlotKey(msg.ProjectID, msg.IssueID), msg.Role, msg.ZplexSessionID)
+	}
+
 	if msg.Role == "coder" {
 		slot.State = loop.SlotCoding
 		m.state.logger.Printf("loop: coder launched #%s (round=%d)", msg.IssueID, slot.ReviewRound)
@@ -322,11 +330,18 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 	switch slot.State {
 	case loop.SlotCoding:
 		if hasLabel(msg.Labels, "review") {
+			// Capture coder session ref before state transition (AC-9).
+			coderRef, hasCoder := slot.LatestSessionByRole("coder")
 			slot.State = loop.SlotLaunchingReviewer
 			m.state.logger.Printf("loop: label 'review' found #%s → launching reviewer", msg.IssueID)
 			m.state.NotifyAll()
 			m.state.Unlock()
-			return m, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID)
+			var cmds []tea.Cmd
+			cmds = append(cmds, m.loopWriteAndLaunchReviewerCmd(msg.ProjectID, msg.IssueID))
+			if hasCoder {
+				cmds = append(cmds, m.patchZplexStateCmd(coderRef.ZplexSessionID, "done"))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		m.state.Unlock()
 		// Tick handler has already rescheduled.
@@ -336,21 +351,81 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 		if hasLabel(msg.Labels, "ai-review") {
 			project := m.findProject(msg.ProjectID)
 			autoMerge := project != nil && project.AutoMerge
+			autoClose := m.state.cfg.AutoCloseAfterDone
+
+			// Capture reviewer session ref for done-PATCH (AC-9).
+			reviewerRef, hasReviewer := slot.LatestSessionByRole("reviewer")
+
+			// Collect kill PIDs under the lock for auto-close (AC-10).
+			var pids []int
+			if autoClose {
+				for _, ref := range slot.Sessions {
+					pid := ref.PID
+					if pid == 0 && ref.ZplexSessionID != "" {
+						// Resolve live PID from activeTerminals by ZplexSessionID.
+						for _, at := range m.state.activeTerminals {
+							if at.ZplexSessionID == ref.ZplexSessionID {
+								pid = at.SessionPID
+								break
+							}
+						}
+					}
+					if pid == 0 {
+						// Fallback: resolve by worktree path.
+						for _, at := range m.state.activeTerminals {
+							if at.WorkDir == slot.WorktreePath {
+								pid = at.SessionPID
+								break
+							}
+						}
+					}
+					if pid > 0 {
+						pids = append(pids, pid)
+					}
+				}
+			}
+
+			// Capture locals for cmd construction after unlock.
+			projectID := msg.ProjectID
+			issueID := msg.IssueID
+			worktreePath := slot.WorktreePath
+			_ = worktreePath // used in pid resolution above
+
 			if autoMerge {
 				slot.State = loop.SlotAutoMerging
 				m.state.logger.Printf("loop: label 'ai-review' found #%s → auto-merging", msg.IssueID)
 				m.state.NotifyAll()
 				m.state.Unlock()
-				return m, m.loopAutoMergeCmd(msg.ProjectID, msg.IssueID)
+				var cmds []tea.Cmd
+				cmds = append(cmds, m.loopAutoMergeCmd(projectID, issueID))
+				if hasReviewer {
+					cmds = append(cmds, m.patchZplexStateCmd(reviewerRef.ZplexSessionID, "done"))
+				}
+				if autoClose {
+					cmds = append(cmds, m.autoCloseSlotCmd(projectID, issueID, pids))
+				}
+				return m, tea.Batch(cmds...)
 			}
 			slot.State = loop.SlotWaitingPRMerge
 			m.state.logger.Printf("loop: label 'ai-review' found #%s → waiting PR merge", msg.IssueID)
 			m.state.NotifyAll()
 			m.state.Unlock()
-			return m, m.loopSchedulePRPoll(msg.ProjectID, msg.IssueID)
+			var cmds []tea.Cmd
+			cmds = append(cmds, m.loopSchedulePRPoll(projectID, issueID))
+			if hasReviewer {
+				cmds = append(cmds, m.patchZplexStateCmd(reviewerRef.ZplexSessionID, "done"))
+			}
+			if autoClose {
+				cmds = append(cmds, m.autoCloseSlotCmd(projectID, issueID, pids))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		if hasLabel(msg.Labels, "needs-changes") {
 			maxRounds := m.state.cfg.Worktree.MaxReviewRounds
+
+			// Capture reviewer session ref for done-PATCH (AC-9).
+			reviewerRef, hasReviewer := slot.LatestSessionByRole("reviewer")
+
 			if slot.ReviewRound >= maxRounds {
 				slot.State = loop.SlotNeedsHuman
 				m.state.logger.Printf("loop: #%s review rounds exhausted (%d), needs human", msg.IssueID, maxRounds)
@@ -363,6 +438,10 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 				if w := m.state.notifier.ConsumeWarning(); w != "" {
 					m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
 				}
+				// No kill on needs-changes (AC-10). Patch reviewer done (AC-9).
+				if hasReviewer {
+					return m, m.patchZplexStateCmd(reviewerRef.ZplexSessionID, "done")
+				}
 				return m, nil
 			}
 			slot.ReviewRound++
@@ -372,6 +451,13 @@ func (m Model) handleLoopLabelPoll(msg LoopLabelPollMsg) (tea.Model, tea.Cmd) {
 			m.state.Unlock()
 			m.setStatus(fmt.Sprintf("Issue #%s needs changes (round %d/%d), re-launching coder",
 				msg.IssueID, slot.ReviewRound, maxRounds))
+			// No kill on needs-changes (AC-10). Patch reviewer done (AC-9).
+			if hasReviewer {
+				return m, tea.Batch(
+					m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID),
+					m.patchZplexStateCmd(reviewerRef.ZplexSessionID, "done"),
+				)
+			}
 			return m, m.loopWriteRevisionAgentCmd(msg.ProjectID, msg.IssueID)
 		}
 		m.state.Unlock()

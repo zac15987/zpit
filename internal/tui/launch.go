@@ -398,7 +398,7 @@ func (m Model) launchDesktopAgentCmd() tea.Cmd {
 			"--mcp-config", mcpConfigPath,
 			"--allowedTools", "Read,Bash,Glob,Grep,mcp__desktop-proxy__*",
 		}
-		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, args...)
+		result, launchErr := terminal.LaunchClaudeInDir(homeDir, tabTitle, cfg, terminal.SessionMeta{}, args...)
 		return DesktopAgentLaunchedMsg{
 			AgentName: agentName,
 			HomeDir:   homeDir,
@@ -426,11 +426,17 @@ func (m Model) handleDesktopAgentLaunched(msg DesktopAgentLaunchedMsg) (tea.Mode
 		State:          watcher.StateUnknown,
 		StateChangedAt: time.Now(),
 	}
+	if msg.Result != nil {
+		at.ZplexSessionID = msg.Result.ZplexSessionID
+	}
 	m.state.activeTerminals[trackingKey] = at
 	m.state.activeDesktopAgent = at
 	m.state.NotifyAll()
 	m.state.Unlock()
 
+	if at.ZplexSessionID != "" {
+		m.state.logger.Printf("zplex launch: key=%s role=%s session=%s", trackingKey, "desktop", at.ZplexSessionID)
+	}
 	m.state.logger.Printf("desktop: launched agent=%s (PID pending session discovery)", msg.AgentName)
 	// Kick off active session discovery (same flow as project-scope launches).
 	// Without this, a terminal closed before the 10s periodic scan would leave
@@ -702,8 +708,9 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 		if channelEnabled {
 			args = append(args, "--channel-enabled")
 		}
-		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg, args...)
-		return LaunchResultMsg{
+		result, err := terminal.LaunchClaudeInDir(wtPath, tabTitle, cfg,
+			terminal.SessionMeta{ProjectID: focusProjectID, IssueID: issueID}, args...)
+		msg := LaunchResultMsg{
 			ProjectID:      focusProjectID,
 			TrackingKey:    trackingKey,
 			WorkDir:        wtPath,
@@ -711,6 +718,10 @@ func (m Model) launchFocusClaudeCmd(slotKey string) (tea.Model, tea.Cmd) {
 			Result:         result,
 			Err:            err,
 		}
+		if result != nil {
+			msg.ZplexSessionID = result.ZplexSessionID
+		}
+		return msg
 	}
 }
 
@@ -903,8 +914,12 @@ func (m Model) openSlotPRCmd(slotKey string) (tea.Model, tea.Cmd) {
 // runLazygitCmd returns a tea.Cmd that spawns lazygit in a new terminal.
 func runLazygitCmd(workDir, title string, cfg config.TerminalConfig) tea.Cmd {
 	return func() tea.Msg {
-		if _, err := terminal.LaunchLazygit(workDir, title, cfg); err != nil {
+		result, err := terminal.LaunchLazygit(workDir, title, cfg)
+		if err != nil {
 			return StatusMsg{Text: fmt.Sprintf("lazygit launch failed: %s", err)}
+		}
+		if result != nil && result.Env == platform.EnvZplex {
+			return StatusMsg{Text: locale.T(locale.KeyZplexLaunched)}
 		}
 		return StatusMsg{Text: fmt.Sprintf("Opened lazygit in %s", workDir)}
 	}
@@ -949,8 +964,12 @@ func (m Model) launchSlotLazygitCmd(slotKey string) (tea.Model, tea.Cmd) {
 func (m Model) launchClaudeUpdateCmd() tea.Cmd {
 	cfg := m.state.cfg.Terminal
 	return func() tea.Msg {
-		if _, err := terminal.LaunchClaudeUpdate(cfg); err != nil {
+		result, err := terminal.LaunchClaudeUpdate(cfg)
+		if err != nil {
 			return StatusMsg{Text: fmt.Sprintf("claude update launch failed: %s", err)}
+		}
+		if result != nil && result.Env == platform.EnvZplex {
+			return StatusMsg{Text: locale.T(locale.KeyZplexLaunched)}
 		}
 		return StatusMsg{Text: "Launched claude update"}
 	}

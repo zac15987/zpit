@@ -2,10 +2,16 @@ package terminal
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/zac15987/zpit/internal/config"
 )
 
 func init() {
@@ -563,5 +569,46 @@ func TestResolveShellExe_CachesLookup(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("expected exePathLookup to be called once, got %d", calls)
+	}
+}
+
+// --- zplex dispatch fallback gate tests (AC-15 a/b) ---
+
+// TestZplexClientGate_ZeroPortReturnsNil verifies that zplexClient returns nil
+// (and issues zero HTTP requests) when ZplexPort == 0.
+// A live counting server is started but must receive no requests.
+func TestZplexClientGate_ZeroPortReturnsNil(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.TerminalConfig{ZplexPort: 0}
+	c := zplexClient(cfg)
+	if c != nil {
+		t.Errorf("expected nil client for ZplexPort=0, got non-nil")
+	}
+	if requests != 0 {
+		t.Errorf("expected 0 HTTP requests for ZplexPort=0, got %d", requests)
+	}
+}
+
+// TestZplexClientGate_HealthFailReturnsNil verifies that zplexClient returns nil
+// when the health check returns a non-200 status, causing fallback to wt/tmux.
+func TestZplexClientGate_HealthFailReturnsNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+
+	cfg := config.TerminalConfig{ZplexPort: port}
+	c := zplexClient(cfg)
+	if c != nil {
+		t.Errorf("expected nil client when health check fails, got non-nil — entry points must fall back to wt/tmux")
 	}
 }

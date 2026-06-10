@@ -38,6 +38,8 @@ type ActiveTerminal struct {
 	SessionID         string // current session ID (for /resume change detection)
 	WorkDir           string // project work directory (needed to recompute logPath on session switch)
 	WorktreeBranch    string // non-empty when session runs in a git worktree (e.g. "feat/19-slug")
+	ZplexSessionID    string // non-empty only when launched via the zplex backend
+	zplexWaiting      bool   // true after we PATCH agent_state=waiting for the current permission episode; used by T8 to issue the matching active PATCH
 	State             watcher.AgentState
 	LastQuestion      string
 	PermissionMessage string // message from permission signal (e.g., "Claude needs your permission to use Bash")
@@ -102,7 +104,8 @@ const (
 
 func (m Model) handleTick() (tea.Model, tea.Cmd) {
 	cmds := m.checkSessionLiveness()
-	m.checkPermissionSignals()
+	cmds = append(cmds, m.checkPermissionSignals()...)
+	cmds = append(cmds, m.checkZplexActiveResync()...)
 	if scanCmd := m.checkNewSessions(); scanCmd != nil {
 		cmds = append(cmds, scanCmd)
 	}
@@ -677,24 +680,25 @@ func (m *Model) checkSessionLiveness() []tea.Cmd {
 
 // checkPermissionSignals scans ~/.zpit/signals/ for permission signal files
 // and updates matching ActiveTerminals to StatePermission.
-func (m *Model) checkPermissionSignals() {
+// Returns fire-and-forget PATCH cmds for any terminals that newly entered permission state.
+func (m *Model) checkPermissionSignals() []tea.Cmd {
 	m.state.Lock()
 	now := time.Now()
 	if now.Sub(m.state.lastPermissionCheck) < permissionCheckInterval {
 		m.state.Unlock()
-		return
+		return nil
 	}
 	m.state.lastPermissionCheck = now
 	m.state.Unlock()
 
 	dir := signalDir()
 	if dir == "" {
-		return
+		return nil
 	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return // directory may not exist yet
+		return nil // directory may not exist yet
 	}
 
 	// Collect parsed signals from filesystem (no lock needed for I/O).
@@ -720,13 +724,15 @@ func (m *Model) checkPermissionSignals() {
 	}
 
 	if len(signals) == 0 {
-		return
+		return nil
 	}
 
-	// Match signals to active terminals under lock.
+	// Match signals to active terminals under lock. Collect session IDs that newly
+	// entered permission state so we can build PATCH cmds after unlocking.
 	m.state.Lock()
 	changed := false
 	var staleFiles []string
+	var waitingIDs []string // zplex session IDs needing a "waiting" PATCH
 	for _, ps := range signals {
 		matched := false
 		for projectID, at := range m.state.activeTerminals {
@@ -749,6 +755,11 @@ func (m *Model) checkPermissionSignals() {
 			if w := m.state.notifier.ConsumeWarning(); w != "" {
 				m.setStatus(fmt.Sprintf(locale.T(locale.KeySoundFileNotFound), m.state.cfg.Notification.SoundFile))
 			}
+			// AC-8: issue waiting PATCH if terminal has a zplex session and is not already marked waiting.
+			if at.ZplexSessionID != "" && !at.zplexWaiting {
+				at.zplexWaiting = true
+				waitingIDs = append(waitingIDs, at.ZplexSessionID)
+			}
 			break
 		}
 		if !matched {
@@ -764,6 +775,32 @@ func (m *Model) checkPermissionSignals() {
 	for _, name := range staleFiles {
 		os.Remove(filepath.Join(dir, name))
 	}
+
+	// Build fire-and-forget PATCH cmds after releasing the lock.
+	var cmds []tea.Cmd
+	for _, id := range waitingIDs {
+		cmds = append(cmds, m.patchZplexStateCmd(id, "waiting"))
+	}
+	return cmds
+}
+
+// checkZplexActiveResync issues an active PATCH for any terminal that was
+// patched to waiting but has since left the permission state.
+func (m *Model) checkZplexActiveResync() []tea.Cmd {
+	m.state.Lock()
+	var ids []string
+	for _, at := range m.state.activeTerminals {
+		if at.zplexWaiting && at.State != watcher.StatePermission && at.ZplexSessionID != "" {
+			ids = append(ids, at.ZplexSessionID)
+			at.zplexWaiting = false
+		}
+	}
+	m.state.Unlock()
+	var cmds []tea.Cmd
+	for _, id := range ids {
+		cmds = append(cmds, m.patchZplexStateCmd(id, "active"))
+	}
+	return cmds
 }
 
 // checkNewSessions checks if sessionScanInterval has elapsed and, if so, returns a tea.Cmd
