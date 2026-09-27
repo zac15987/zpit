@@ -48,19 +48,36 @@ fi
 # matches the parallel-subagent naming convention `<parent>-agent-<hex>` (what
 # worktree-create.sh produces using Claude Code's default isolation slug).
 # Arbitrary `git branch -D` still falls through to the blocklist below.
+#
+# Branch args end at the first shell control/redirect char, so a trailing
+# `2>&1 | tail -20` doesn't void the whitelist. That trailing part is NOT
+# trusted: it becomes CHECK_CMD and still runs through the blocklist, so
+# `git branch -D x-agent-1 && git branch -D dev` stays blocked.
+CHECK_CMD="$COMMAND"
+IS_BRANCH_DELETE=0
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+branch[[:space:]]+-[dD][[:space:]]+(.+)$ ]]; then
+  IS_BRANCH_DELETE=1
   rest="${BASH_REMATCH[1]}"
+  cut_chars='[;&|<>`$()]'
+  head="${rest%%$cut_chars*}"
+  tail="${rest:${#head}}"
+  read -ra branch_args <<< "$head"
+  # `2>&1` / `2>/dev/null`: the fd number is glued to the redirect, not a branch.
+  if [[ "$tail" == [\<\>]* && "$head" != *[[:space:]] && ${#branch_args[@]} -gt 0 \
+        && "${branch_args[-1]}" =~ ^[0-9]+$ ]]; then
+    unset 'branch_args[-1]'
+  fi
   all_subagent_branches=1
-  for b in $rest; do
-    b="${b%%[;&|]*}"
-    [ -z "$b" ] && continue
+  [ ${#branch_args[@]} -eq 0 ] && all_subagent_branches=0
+  for b in "${branch_args[@]}"; do
     if ! [[ "$b" =~ -agent-[0-9a-f]+$ ]]; then
       all_subagent_branches=0
       break
     fi
   done
   if [ "$all_subagent_branches" = "1" ]; then
-    exit 0
+    [ -z "$tail" ] && exit 0
+    CHECK_CMD="$tail"
   fi
 fi
 
@@ -84,7 +101,11 @@ GREP_FLAG="-P"
 echo "test" | grep -P "test" > /dev/null 2>&1 || GREP_FLAG="-E"
 
 for pattern in "${GIT_BLOCKED[@]}"; do
-  if echo "$COMMAND" | grep -qi${GREP_FLAG:1} "$pattern"; then
+  if echo "$CHECK_CMD" | grep -qi${GREP_FLAG:1} "$pattern"; then
+    if [ "$IS_BRANCH_DELETE" = "1" ] && [ "$CHECK_CMD" = "$COMMAND" ]; then
+      echo "BLOCKED: 'git branch -D' is only allowed for parallel-subagent branches (<parent>-agent-<hex>), and every argument must be such a branch. For post-batch cleanup, retry as a standalone call: git branch -D <branch1> <branch2> ..." >&2
+      exit 2
+    fi
     echo "BLOCKED: Git operation '$COMMAND' is not allowed. Agents should only commit to the worktree branch." >&2
     exit 2
   fi

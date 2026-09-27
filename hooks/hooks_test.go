@@ -1,6 +1,7 @@
 package hooks_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -312,6 +313,54 @@ func TestGitGuard_BlocksMixedTeammateAndOtherBranchDelete(t *testing.T) {
 		agentEnv(nil))
 	if code != 2 {
 		t.Errorf("expected exit 2, got %d", code)
+	}
+}
+
+// Orchestrators habitually append `2>&1 | tail -N`; the fd-dup and pipe are
+// not branch args and must not void the whitelist.
+func TestGitGuard_AllowsTeammateBranchDeleteWithPipe(t *testing.T) {
+	for _, cmd := range []string{
+		"git branch -D feat/1-foo-agent-a4035b9d feat/1-foo-agent-a977314b 2>&1 | tail -20",
+		"git branch -D feat/1-foo-agent-a4035b9d 2>/dev/null",
+		"git branch -D feat/1-foo-agent-a4035b9d; echo done",
+	} {
+		code, msg := runHook(t, "git-guard.sh",
+			`{"tool_input":{"command":"`+cmd+`"}}`,
+			agentEnv(nil))
+		if code != 0 {
+			t.Errorf("%q: expected exit 0, got %d: %s", cmd, code, msg)
+		}
+	}
+}
+
+// The trailing part after the whitelisted args is still checked against the
+// blocklist — the whitelist must not smuggle a second destructive command.
+func TestGitGuard_BlocksTeammateBranchDeleteChainedWithBlocked(t *testing.T) {
+	for _, cmd := range []string{
+		"git branch -D feat/1-foo-agent-a4035b9d && git branch -D dev",
+		"git branch -D feat/1-foo-agent-a4035b9d; git reset --hard",
+		"git branch -D feat/1-foo-agent-a4035b9d $(git branch -D dev)",
+	} {
+		code, _ := runHook(t, "git-guard.sh",
+			`{"tool_input":{"command":"`+cmd+`"}}`,
+			agentEnv(nil))
+		if code != 2 {
+			t.Errorf("%q: expected exit 2, got %d", cmd, code)
+		}
+	}
+}
+
+// A rejected `git branch -D` must say how to retry legitimately, not read as
+// a blanket policy ban (orchestrators gave up on cleanup when it did).
+func TestGitGuard_BranchDeleteBlockMessageGuidesRetry(t *testing.T) {
+	code, msg := runHook(t, "git-guard.sh",
+		`{"tool_input":{"command":"git branch -D dev"}}`,
+		agentEnv(nil))
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(msg, "-agent-<hex>") || !strings.Contains(msg, "standalone") {
+		t.Errorf("expected retry guidance in block message, got: %s", msg)
 	}
 }
 
@@ -641,6 +690,39 @@ func TestBashFirewall_AllowsDevNullDiscardBoth(t *testing.T) {
 		agentEnv(worktreeEnv))
 	if code != 0 {
 		t.Errorf("expected exit 0 for > /dev/null 2>&1, got %d: %s", code, msg)
+	}
+}
+
+// Regression guard: inside $(...) or backticks the closing paren/backtick must
+// not be read as part of the redirect target (`/dev/null)` was blocked).
+func TestBashFirewall_AllowsDevNullInsideSubstitution(t *testing.T) {
+	for _, cmd := range []string{
+		`n=$(git rev-list --count HEAD 2>/dev/null); echo $n`,
+		"n=`git rev-list --count HEAD 2>/dev/null`; echo $n",
+	} {
+		input, _ := json.Marshal(map[string]any{"tool_input": map[string]string{"command": cmd}})
+		code, msg := runHook(t, "bash-firewall.sh", string(input), agentEnv(worktreeEnv))
+		if code != 0 {
+			t.Errorf("%q: expected exit 0, got %d: %s", cmd, code, msg)
+		}
+	}
+}
+
+func TestBashFirewall_BlocksEscapeInsideSubstitution(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"x=$(echo pwned > /etc/passwd)"}}`,
+		agentEnv(worktreeEnv))
+	if code != 2 {
+		t.Errorf("expected exit 2 for escape inside $(...), got %d: %s", code, msg)
+	}
+}
+
+func TestBashFirewall_Clarifier_BlocksRedirectToSourceInsideSubstitution(t *testing.T) {
+	code, msg := runHook(t, "bash-firewall.sh",
+		`{"tool_input":{"command":"x=$(echo hi > docs/spec.md)"}}`,
+		clarifierEnv(nil))
+	if code != 2 {
+		t.Errorf("expected exit 2 for clarifier redirect to .md inside $(...), got %d: %s", code, msg)
 	}
 }
 

@@ -244,6 +244,13 @@ Also observed: `git worktree remove` without `--force` failed because child work
 - `hooks/git-guard.sh` — whitelist `git branch -D` when every branch argument matches the teammate convention `…-agent-<hex>` (Claude Code's default isolation slug). Arbitrary `git branch -D` still blocked.
 - `internal/prompt/coding.go` — emit cleanup as TWO SEPARATE Bash tool calls (worktree-remove, branch-delete), always pass `--force` to `git worktree remove`, instruct orchestrator to retry `branch -D` independently if it fails.
 
+### Follow-up (2026-09-27): trailing pipe voided the whitelist
+
+An orchestrator emitted `git branch -D <15 × …-agent-<hex>> 2>&1 | tail -20`. The whitelist word-split every token after `-D`, so `2>&1` / `|` / `tail` failed the `-agent-<hex>` match and the command fell to the blocklist. The generic `is not allowed` message read as a policy ban, so the orchestrator declined to retry and leaked all 15 branches. Same session: `$(git … 2>/dev/null)` was blocked by bash-firewall because the redirect-target regex captured `/dev/null)`.
+
+- `hooks/git-guard.sh` — branch args end at the first shell control/redirect char (`;&|<>` backtick `$()`); a glued fd number (`2>`) is dropped. The remaining tail is still run through `GIT_BLOCKED`, so chaining a second destructive command stays blocked. Rejected `git branch -D` now prints a dedicated message telling the agent how to retry.
+- `hooks/bash-firewall.sh` — `)` and backtick terminate a redirect target (both the worktree-escape extractor and the clarifier source-extension check).
+
 ### Code locations
 
 - `hooks/git-guard.sh` — teammate whitelist block (inserted before `GIT_BLOCKED` loop).

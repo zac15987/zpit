@@ -238,8 +238,8 @@ if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
     done
 
     # Redirect to source-code file extensions — block unless target is tmp_*.{md,txt}
-    if echo "$seg" | grep -qE '>[[:space:]]*[^[:space:]|&;]+\.(go|ts|tsx|js|jsx|astro|md|json|toml|yaml|yml|css|scss|sh|py|java|cs|cpp|c|h)([[:space:]]|$)'; then
-      CLARIFIER_TGT=$(echo "$seg" | grep -oE '>[[:space:]]*[^[:space:]|&;]+' | sed -E 's/^>[[:space:]]*//' | tail -1)
+    if echo "$seg" | grep -qE '>[[:space:]]*[^[:space:]|&;)`]+\.(go|ts|tsx|js|jsx|astro|md|json|toml|yaml|yml|css|scss|sh|py|java|cs|cpp|c|h)([[:space:])`]|$)'; then
+      CLARIFIER_TGT=$(echo "$seg" | grep -oE '>[[:space:]]*[^[:space:]|&;)`]+' | sed -E 's/^>[[:space:]]*//' | tail -1)
       CLARIFIER_TGT_BASE="${CLARIFIER_TGT##*/}"
       case "$CLARIFIER_TGT_BASE" in
         tmp_*.md|tmp_*.txt) : ;;
@@ -281,10 +281,11 @@ is_under_any() {
 
 # Extract every redirect target (the token after > >> 2> 2>> &> ...).
 # fd-dup forms like `2>&1` yield no target (the & is excluded) and are skipped.
+# `)` and backtick end a target so `$(cmd 2>/dev/null)` yields `/dev/null`.
 if [ "$GREP_FLAG" = "-P" ]; then
-  REDIRECT_TARGETS=$(echo "$COMMAND" | grep -oP '(?:[0-9]*|&)>>?\s*\K[^\s;|&<>]+' 2>/dev/null || true)
+  REDIRECT_TARGETS=$(echo "$COMMAND" | grep -oP '(?:[0-9]*|&)>>?\s*\K[^\s;|&<>)`]+' 2>/dev/null || true)
 else
-  REDIRECT_TARGETS=$(echo "$COMMAND" | grep -oE '([0-9]*|&)>>?[[:space:]]*[^[:space:];|&<>]+' 2>/dev/null | sed -E 's/^([0-9]*|&)>>?[[:space:]]*//' || true)
+  REDIRECT_TARGETS=$(echo "$COMMAND" | grep -oE '([0-9]*|&)>>?[[:space:]]*[^[:space:];|&<>)`]+' 2>/dev/null | sed -E 's/^([0-9]*|&)>>?[[:space:]]*//' || true)
 fi
 
 while IFS= read -r tgt; do
