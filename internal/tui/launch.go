@@ -18,6 +18,7 @@ import (
 	crypto_rand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -602,62 +603,151 @@ func (m Model) deployAndLaunchAgentLite() tea.Cmd {
 	}
 }
 
-// deployAllCmd wipes any existing Zpit deployment from the project and writes a
-// fresh copy of every agent, hook, and doc. Does NOT launch Claude Code and does
-// NOT write .mcp.json (that requires agent-name/issue-id decided at launch time).
-// The set of files written here must stay in sync with the deployedFiles list in
-// view_projects.go used by deployStatus for the list indicator.
-func (m Model) deployAllCmd() tea.Cmd {
-	project := m.state.projects[m.cursor]
-	projectPath := platform.ResolvePath(project.Path.Windows, project.Path.WSL)
-	projectName := project.Name
-	logger := m.state.logger
+// deployPayload is a snapshot of everything a full redeploy writes to one
+// project, captured on the UI goroutine so the file I/O can run in a tea.Cmd.
+type deployPayload struct {
+	name, path  string
+	agents      map[string][]byte // filename under .claude/agents/ → content
+	hookScripts worktree.HookScripts
+	trackerDoc  string
+	guidelines  []byte
+	principles  []byte
+}
 
-	clarifierMD := injectClarifierLangInstruction(m.state.clarifierMD)
-	reviewerMD := injectLangInstruction(m.state.reviewerMD)
-	taskRunnerMD := m.state.taskRunnerMD
-	efficiencyMD := injectLangInstruction(m.state.efficiencyMD)
-	agentGuidelines := m.state.agentGuidelinesMD
-	codeConstructionPrinciples := m.state.codeConstructionPrinciplesMD
-	hookScripts := m.state.hookScripts
-	var trackerDocContent string
+func (m Model) buildDeployPayload(project config.ProjectConfig) deployPayload {
+	var trackerDoc string
 	if provider, ok := m.state.cfg.Providers.Tracker[project.Tracker]; ok {
-		trackerDocContent = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+		trackerDoc = tracker.BuildTrackerDoc(provider.Type, provider.URL, project.Repo, provider.TokenEnv, project.BaseBranch)
+	}
+	return deployPayload{
+		name: project.Name,
+		path: platform.ResolvePath(project.Path.Windows, project.Path.WSL),
+		agents: map[string][]byte{
+			"clarifier.md":   injectClarifierLangInstruction(m.state.clarifierMD),
+			"reviewer.md":    injectLangInstruction(m.state.reviewerMD),
+			"task-runner.md": m.state.taskRunnerMD,
+			"efficiency.md":  injectLangInstruction(m.state.efficiencyMD),
+		},
+		hookScripts: m.state.hookScripts,
+		trackerDoc:  trackerDoc,
+		guidelines:  m.state.agentGuidelinesMD,
+		principles:  m.state.codeConstructionPrinciplesMD,
+	}
+}
+
+// redeployProject wipes any existing Zpit deployment from the project and
+// writes a fresh copy of every agent, hook, and doc. Does NOT launch Claude
+// Code and does NOT write .mcp.json (that requires agent-name/issue-id decided
+// at launch time). The set of files written here must stay in sync with the
+// deployedFiles list in view_projects.go used by deployStatus for the list
+// indicator.
+func redeployProject(p deployPayload, logger *log.Logger) error {
+	removed := undeployFiles(p.path)
+	logger.Printf("[redeploy] %s: cleared %d prior item(s)", p.name, removed)
+
+	worktree.EnsureGitignore(p.path)
+
+	if err := worktree.DeployHooksToProject(p.path, p.hookScripts); err != nil {
+		logger.Printf("[redeploy] %s: hook deploy failed: %v", p.name, err)
+		return err
 	}
 
+	agentDir := filepath.Join(p.path, ".claude", "agents")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		logger.Printf("[redeploy] %s: mkdir agents failed: %v", p.name, err)
+		return err
+	}
+	for name, content := range p.agents {
+		if err := os.WriteFile(filepath.Join(agentDir, name), content, 0o644); err != nil {
+			logger.Printf("[redeploy] %s: write %s failed: %v", p.name, name, err)
+			return err
+		}
+	}
+
+	deployDocs(p.path, p.trackerDoc, p.guidelines, p.principles)
+
+	logger.Printf("[redeploy] %s: wrote %d agent(s), hooks, docs to %s", p.name, len(p.agents), p.path)
+	return nil
+}
+
+// redeployProjectCmd redeploys a single project (the `[d]` "this project" choice).
+func (m Model) redeployProjectCmd(project config.ProjectConfig) tea.Cmd {
+	payload := m.buildDeployPayload(project)
+	logger := m.state.logger
 	return func() tea.Msg {
-		removed := undeployFiles(projectPath)
-		logger.Printf("[redeploy] %s: cleared %d prior item(s)", projectName, removed)
-
-		worktree.EnsureGitignore(projectPath)
-
-		if err := worktree.DeployHooksToProject(projectPath, hookScripts); err != nil {
-			logger.Printf("[redeploy] %s: hook deploy failed: %v", projectName, err)
+		if err := redeployProject(payload, logger); err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
 		}
+		return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyRedeployDone), payload.name)}
+	}
+}
 
-		agentDir := filepath.Join(projectPath, ".claude", "agents")
-		if err := os.MkdirAll(agentDir, 0o755); err != nil {
-			logger.Printf("[redeploy] %s: mkdir agents failed: %v", projectName, err)
-			return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
+// redeployTargets returns the projects a "redeploy all" run covers: those that
+// already carry a full or partial Zpit deployment. Never-deployed projects are
+// left alone so zpit doesn't drop .claude/ files into repos that don't use it.
+func (m Model) redeployTargets() []config.ProjectConfig {
+	var out []config.ProjectConfig
+	for _, p := range m.state.projects {
+		if deployStatus(platform.ResolvePath(p.Path.Windows, p.Path.WSL)) != DeployNone {
+			out = append(out, p)
 		}
-		agents := map[string][]byte{
-			"clarifier.md":   clarifierMD,
-			"reviewer.md":    reviewerMD,
-			"task-runner.md": taskRunnerMD,
-			"efficiency.md":  efficiencyMD,
+	}
+	return out
+}
+
+// busyProjectNames returns the names of targets that have an active terminal
+// or an active loop. Those still get redeployed; the names are only surfaced
+// so the user knows which sessions keep their already-loaded agent files.
+func (m Model) busyProjectNames(targets []config.ProjectConfig) []string {
+	busy := make(map[string]bool)
+	m.state.RLock()
+	for key := range m.state.activeTerminals {
+		busy[baseProjectID(key)] = true
+	}
+	for id, ls := range m.state.loops {
+		if ls != nil && ls.Active {
+			busy[id] = true
 		}
-		for name, content := range agents {
-			if err := os.WriteFile(filepath.Join(agentDir, name), content, 0o644); err != nil {
-				logger.Printf("[redeploy] %s: write %s failed: %v", projectName, name, err)
-				return StatusMsg{Text: fmt.Sprintf("Redeploy failed: %s", err)}
+	}
+	m.state.RUnlock()
+
+	var names []string
+	for _, p := range targets {
+		if busy[p.ID] {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+// redeployAllProjectsCmd redeploys every project from redeployTargets. A
+// failure on one project is logged and reported but does not stop the rest.
+func (m Model) redeployAllProjectsCmd() tea.Cmd {
+	targets := m.redeployTargets()
+	payloads := make([]deployPayload, 0, len(targets))
+	for _, p := range targets {
+		payloads = append(payloads, m.buildDeployPayload(p))
+	}
+	busy := m.busyProjectNames(targets)
+	logger := m.state.logger
+	return func() tea.Msg {
+		var failed []string
+		for _, p := range payloads {
+			if err := redeployProject(p, logger); err != nil {
+				failed = append(failed, p.name)
 			}
 		}
+		done := len(payloads) - len(failed)
+		logger.Printf("[redeploy-all] %d/%d project(s) redeployed, failed=%v busy=%v", done, len(payloads), failed, busy)
 
-		deployDocs(projectPath, trackerDocContent, agentGuidelines, codeConstructionPrinciples)
-
-		logger.Printf("[redeploy] %s: wrote %d agent(s), hooks, docs to %s", projectName, len(agents), projectPath)
-		return StatusMsg{Text: fmt.Sprintf(locale.T(locale.KeyRedeployDone), projectName)}
+		text := fmt.Sprintf(locale.T(locale.KeyRedeployAllDone), done, len(payloads))
+		if len(failed) > 0 {
+			text += "  " + fmt.Sprintf(locale.T(locale.KeyRedeployAllFailed), strings.Join(failed, ", "))
+		}
+		if len(busy) > 0 {
+			text += "  " + fmt.Sprintf(locale.T(locale.KeyRedeployAllBusy), strings.Join(busy, ", "))
+		}
+		return StatusMsg{Text: text}
 	}
 }
 

@@ -935,7 +935,7 @@ func (m Model) handleProjectsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.checkConfig("[d]", *p, valPath) {
 			return m, nil
 		}
-		m.showRedeployConfirm()
+		m.showRedeployConfirm(*p)
 		return m, m.initConfirmForm()
 
 	case key.Matches(msg, m.keys.Status):

@@ -83,7 +83,7 @@ You (TUI)                    Claude Code Agents
     ├─ [s] Status ────────────► shows issue list from tracker
     ├─ [r] Review ────────────► launches reviewer on demand
     ├─ [f] Efficiency ────────► lightweight agent (no hooks, no tracker, self-review)
-    ├─ [d] Redeploy ──────────► undeploy + re-write all agents/hooks/docs (no launch)
+    ├─ [d] Redeploy ──────────► undeploy + re-write all agents/hooks/docs (no launch; this project or all deployed)
     └─ [Enter] ───────────────► launches Claude Code directly
 ```
 
@@ -291,7 +291,7 @@ wsl = "/mnt/d/Projects/my-project"
 | `i` | Open issue tracker in browser |
 | `p` | Open pull request in browser (in Loop Slot focus: the slot's PR; falls back to `/pulls?head=<branch>` if not yet open) |
 | `u` | Undeploy — remove deployed agents, docs, hooks |
-| `d` | Redeploy — undeploy then re-write all 4 agents + hooks + docs (no Claude launch) |
+| `d` | Redeploy — undeploy then re-write all 4 agents + hooks + docs (no Claude launch); choose this project only or all already-deployed projects |
 | `m` | Channel — view cross-agent communication events |
 | `g` | Git Status — view branches (local + remote-only) and commit graph; [f] fetch, [p] pull (--ff-only) |
 | `G` | Open lazygit in new terminal (project root; in Loop Slot focus: slot's worktree) |

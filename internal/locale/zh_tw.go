@@ -73,9 +73,13 @@ var zhTW = map[Key]string{
 	KeyUndeployNoop:    "無已部署檔案（%s）",
 
 	// Redeploy confirm dialog + deploy status tag
-	KeyRedeployConfirm:     "重新部署所有 Zpit 檔案至此專案？\n\n將移除現有部署並重新寫入：\n.claude/agents/ (4 個 agent)  .claude/docs/  .claude/hooks/",
-	KeyRedeployButton:      "重新部署",
+	KeyRedeployConfirm:     "重新部署 Zpit 檔案\n\n將移除現有部署並重新寫入：\n.claude/agents/ (4 個 agent)  .claude/docs/  .claude/hooks/",
+	KeyRedeployThisProject: "僅此專案（%s）",
+	KeyRedeployAllProjects: "全部已部署專案（%d）",
 	KeyRedeployDone:        "已重新部署至 %s",
+	KeyRedeployAllDone:     "已重新部署 %d/%d 個專案",
+	KeyRedeployAllFailed:   "失敗：%s",
+	KeyRedeployAllBusy:     "執行中的 session 需重啟才會載入新 agent：%s",
 	KeyDeployStatusFull:    "已部署",
 	KeyDeployStatusPartial: "部分部署",
 	KeyDeployStatusNone:    "未部署",

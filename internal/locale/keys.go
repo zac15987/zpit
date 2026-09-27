@@ -75,8 +75,12 @@ const (
 
 	// Redeploy confirm dialog + deploy status tag (view_projects.go)
 	KeyRedeployConfirm     Key = "redeploy_confirm"
-	KeyRedeployButton      Key = "redeploy_button"
+	KeyRedeployThisProject Key = "redeploy_this_project"
+	KeyRedeployAllProjects Key = "redeploy_all_projects"
 	KeyRedeployDone        Key = "redeploy_done"
+	KeyRedeployAllDone     Key = "redeploy_all_done"
+	KeyRedeployAllFailed   Key = "redeploy_all_failed"
+	KeyRedeployAllBusy     Key = "redeploy_all_busy"
 	KeyDeployStatusFull    Key = "deploy_status_full"
 	KeyDeployStatusPartial Key = "deploy_status_partial"
 	KeyDeployStatusNone    Key = "deploy_status_none"

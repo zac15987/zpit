@@ -78,22 +78,50 @@ func (m *Model) showEfficiencyDeployConfirm() {
 	}
 }
 
-// showRedeployConfirm displays a huh confirm dialog for running deployAllCmd
-// (undeploy + re-deploy all agents/hooks/docs, no Claude launch).
-func (m *Model) showRedeployConfirm() {
+// Redeploy dialog choices.
+const (
+	redeployChoiceThis   = "this"
+	redeployChoiceAll    = "all"
+	redeployChoiceCancel = "cancel"
+)
+
+// showRedeployConfirm displays a huh select dialog for redeploying Zpit files
+// (undeploy + re-deploy all agents/hooks/docs, no Claude launch) to either the
+// selected project or every already-deployed project. The "all" option is
+// omitted when no project carries a deployment yet.
+func (m *Model) showRedeployConfirm(project config.ProjectConfig) {
+	choice := new(string)
+	*choice = redeployChoiceThis
+	// A Select yields a string, not a bool: always report "confirmed" and let
+	// confirmAction map the cancel choice to a no-op.
 	confirmed := new(bool)
+	*confirmed = true
 	m.confirmResult = confirmed
+
+	opts := []huh.Option[string]{
+		huh.NewOption(fmt.Sprintf(locale.T(locale.KeyRedeployThisProject), project.Name), redeployChoiceThis),
+	}
+	if n := len(m.redeployTargets()); n > 0 {
+		opts = append(opts, huh.NewOption(fmt.Sprintf(locale.T(locale.KeyRedeployAllProjects), n), redeployChoiceAll))
+	}
+	opts = append(opts, huh.NewOption(locale.T(locale.KeyCancel), redeployChoiceCancel))
+
 	m.confirmForm = huh.NewForm(
 		huh.NewGroup(
-			huh.NewConfirm().
+			huh.NewSelect[string]().
 				Title(locale.T(locale.KeyRedeployConfirm)).
-				Affirmative(locale.T(locale.KeyRedeployButton)).
-				Negative(locale.T(locale.KeyCancel)).
-				Value(confirmed),
+				Options(opts...).
+				Value(choice),
 		),
 	).WithWidth(60)
 	m.confirmAction = func() tea.Cmd {
-		return m.deployAllCmd()
+		switch *choice {
+		case redeployChoiceThis:
+			return m.redeployProjectCmd(project)
+		case redeployChoiceAll:
+			return m.redeployAllProjectsCmd()
+		}
+		return nil
 	}
 }
 

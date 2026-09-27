@@ -73,9 +73,13 @@ var en = map[Key]string{
 	KeyUndeployNoop:    "No deployed files found (%s)",
 
 	// Redeploy confirm dialog + deploy status tag
-	KeyRedeployConfirm:     "Redeploy all Zpit files to this project?\n\nWill remove existing deploy and re-write:\n.claude/agents/ (4 agents)  .claude/docs/  .claude/hooks/",
-	KeyRedeployButton:      "Redeploy",
+	KeyRedeployConfirm:     "Redeploy Zpit files\n\nWill remove existing deploy and re-write:\n.claude/agents/ (4 agents)  .claude/docs/  .claude/hooks/",
+	KeyRedeployThisProject: "This project only (%s)",
+	KeyRedeployAllProjects: "All deployed projects (%d)",
 	KeyRedeployDone:        "Redeployed to %s",
+	KeyRedeployAllDone:     "Redeployed %d/%d project(s)",
+	KeyRedeployAllFailed:   "failed: %s",
+	KeyRedeployAllBusy:     "restart active sessions to load new agents: %s",
 	KeyDeployStatusFull:    "deployed",
 	KeyDeployStatusPartial: "partial",
 	KeyDeployStatusNone:    "not deployed",
