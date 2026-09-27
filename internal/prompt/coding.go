@@ -171,8 +171,9 @@ The following are NOT reasons to ask the user — resolve them yourself:
 Before performing any tracker operation (PR, label, comment), you MUST first read .claude/docs/tracker.md.
 Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
 Never embed long text directly in bash commands or MCP parameters.
-Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
-Delete the temp file after use.
+Write long content to a temp file first, then pass it via --body-file or read it back before sending.
+Put the temp file in your session scratchpad directory (the path Claude Code lists in your system prompt) — no cleanup needed.
+Only if no scratchpad is listed, use ./tmp_body.md in the working directory and delete it after use.
 `, acSelfCheckExample("initial"), p.IssueID, p.prTarget(), p.prTarget())
 
 	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {
@@ -398,8 +399,9 @@ The following are NOT reasons to ask the user — resolve them yourself:
 Before performing any tracker operation (PR, label, comment), you MUST first read .claude/docs/tracker.md.
 Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
 Never embed long text directly in bash commands or MCP parameters.
-Write long content to a temp file first (e.g. ./tmp_body.md), then pass it via --body-file or read it back before sending.
-Delete the temp file after use.
+Write long content to a temp file first, then pass it via --body-file or read it back before sending.
+Put the temp file in your session scratchpad directory (the path Claude Code lists in your system prompt) — no cleanup needed.
+Only if no scratchpad is listed, use ./tmp_body.md in the working directory and delete it after use.
 `, acSelfCheckExample("initial"), p.IssueID, p.prTarget(), p.prTarget())
 
 	if p.ChannelEnabled && len(p.Spec.CoordinatesWith) > 0 {

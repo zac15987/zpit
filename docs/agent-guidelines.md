@@ -82,9 +82,11 @@ Do NOT ask when:
 - Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
 - Never embed long text directly in bash commands or MCP parameters.
   Use the Write tool + `--body-file` pattern:
-  1. Use the Write tool to write content to a temp file in the working directory (e.g. `./tmp_body.md`)
-  2. Use `gh` with `--body-file ./tmp_body.md` or `curl` with `-d @./tmp_body.md`
-  3. Delete the temp file: `rm ./tmp_body.md`
+  1. Use the Write tool to write content to a temp file in your **session scratchpad directory**
+     (the path Claude Code lists in your system prompt, e.g. `<scratchpad>/body.md`)
+  2. Use `gh` with `--body-file <scratchpad>/body.md` or `curl` with `-d @<scratchpad>/body.md`
+  3. No cleanup needed — the scratchpad is private to the session and outside the repo.
+     Fallback only if no scratchpad is listed: use `./tmp_body.md` in the working directory and `rm ./tmp_body.md` afterwards.
 - **Do NOT use Bash heredoc** (`cat << 'EOF' > file`) — heredoc passes content through the shell,
   which fails on long content containing backticks, single quotes, backslash paths, or mixed CJK text.
 

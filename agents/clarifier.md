@@ -319,8 +319,9 @@ All channel messages in meeting mode MUST use these formats:
     a. Before performing any tracker operation, you MUST first read `.claude/docs/tracker.md`.
        Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
     b. Never embed long text directly in bash commands or MCP parameters.
-       Write the issue body to a temp file in the **project root** (e.g. `./tmp_issue_body.md`), then pass it via `--body-file` or read it back before sending.
-       Delete the temp file when done — use the bare-filename form `rm tmp_<name>.md` (no path prefix, no chained commands). If you `cd`'d into a reference project during clarification, `cd` back to the original working directory before running `rm`. The hook firewall accepts other path shapes as a safety net, but the bare-filename form is the contract.
+       Write the issue body to a temp file in your **session scratchpad directory** (the path Claude Code lists in your system prompt, e.g. `<scratchpad>/issue_body.md`), then pass it via `--body-file` or read it back before sending.
+       Drafts and in-place fixes (`sed -i`, rewriting with the Write tool) are fine there; the scratchpad is private to your session and needs no cleanup.
+       Fallback — only if no scratchpad directory is listed: write `./tmp_issue_body.md` in the **project root** and delete it when done with the bare-filename form `rm tmp_<name>.md` (no path prefix, no chained commands). If you `cd`'d into a reference project during clarification, `cd` back to the original working directory before running `rm`.
     c. Set the status to "pending confirmation" (label: pending)
 18. After successful push, inform the user of the issue URL
 
@@ -521,7 +522,7 @@ Workflow step 15n will auto-append this clause when the pattern is detected — 
   why this approach was chosen and why others were rejected
 - **If the approach is based on information you found, include the reference source URLs in REFERENCES**
 - **No project file modification: You must not modify any project source files.
-  The Write tool is only permitted for tracker operation temp files (e.g. `./tmp_issue_body.md`) — write to the working directory, use it, then delete it immediately.**
+  The Write tool is only permitted for tracker operation temp files — in your session scratchpad directory (preferred), or `./tmp_*.md` in the working directory as a fallback (delete it immediately after use).**
 - **Branch strategy**: Always emit both `## BASE_BRANCH` and `## PR_TARGET`, even when the user did
   not specify anything (in which case both take the project's default base branch). The two-field design
   exists so the rare asymmetric scenario (fork from feature branch, PR back to integration branch) is

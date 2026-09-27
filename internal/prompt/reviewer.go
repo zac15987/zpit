@@ -34,8 +34,9 @@ const reviewerTrackerNotes = `
 Before performing any tracker operation (comment, label, PR), you MUST first read .claude/docs/tracker.md.
 Use ONLY the tools and methods specified in tracker.md — do not use other MCP servers or CLIs not listed there.
 Never embed long text directly in bash commands or MCP parameters.
-Write long content to a temp file first (e.g. ./tmp_review_report.md), then pass it via --body-file or read it back before sending.
-Delete the temp file after use.
+Write long content to a temp file first, then pass it via --body-file or read it back before sending.
+Put the temp file in your session scratchpad directory (the path Claude Code lists in your system prompt) — no cleanup needed.
+Only if no scratchpad is listed, use ./tmp_review_report.md in the working directory and delete it after use.
 `
 
 // BuildReviewerPrompt assembles the full reviewer agent prompt from Issue Spec data.

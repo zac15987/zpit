@@ -149,14 +149,16 @@ Hook scripts are embedded in the Zpit binary via `go:embed` and automatically de
 
 ### 9.4.3 Hook 1: Path Guard (path-guard.sh)
 
-**Purpose:** Ensure Write/Edit only occur within the worktree directory assigned to the agent.
+**Purpose:** Ensure Write/Edit only occur within the worktree directory assigned to the agent, or the agent's own session scratchpad.
 
 **Logic:**
-1. Parse `tool_input.file_path` (or `.path` / `.file`) from stdin JSON
+1. Parse `tool_input.file_path` (or `.path` / `.file`) and `session_id` from stdin JSON
 2. Check `ZPIT_AGENT` — if absent, allow (not an agent session)
-3. Resolve relative paths to absolute (relative to `CLAUDE_PROJECT_DIR`)
-4. **Blocklist** (blocked even when inside the worktree): `.claude/agents/`, `.claude/settings`, `CLAUDE.md`, `.git/`, `.env`
-5. **Allowlist**: path must be within `CLAUDE_PROJECT_DIR`
+3. **Normalize** (`norm_path`): backslashes → `/`, relative paths resolved against the active worktree (`git rev-parse --show-toplevel`, falling back to `CLAUDE_PROJECT_DIR`), `./..` collapsed, MSYS forms (`/c/x`) mapped to `C:/x` via `cygpath`, drive letter upper-cased. Windows drive-letter paths (`C:oo`) count as absolute — previously a bare `/*` test treated them as relative, glued them onto the worktree root, and let any drive-letter path through the allowlist
+4. **Blocklist** (blocked even when inside the worktree): `.claude/agents/`, `.claude/settings`, `.git/`, `.env`
+5. **Own-session scratchpad → allow (every role)**: primary check is an exact prefix match on `scratchpad_dir` from hook stdin — the directory Claude Code assigned to the session (verified shared by the main session and its subagents, which also share `session_id`). Fallback when the field is absent (older Claude Code): reconstruct `<temp-root>/claude[-*]/<encoded-cwd>/<session_id>/scratchpad/…` with temp-root from `CLAUDE_CODE_TMPDIR` / `TMPDIR` / `TEMP` / `TMP` / `/tmp` and an exact `session_id` match, so a fabricated look-alike tree elsewhere on disk, or another session's scratchpad, never qualifies. The same check backs the clarifier's scratchpad carve-outs in bash-firewall / pwsh-firewall
+6. **Clarifier role**: outside the scratchpad, only `tmp_*.{md,txt}` basenames are writable
+7. **Allowlist**: path must be within the active worktree
 
 ### 9.4.4 Hook 2: Bash Firewall (bash-firewall.sh)
 
@@ -169,10 +171,10 @@ Hook scripts are embedded in the Zpit binary via `go:embed` and automatically de
 - Global package installs: `npm install -g`
 - Process management: `kill -9 1`, `killall`, `pkill -9`
 - **Redirect classification (per-target classifier)**: extracts each `>` / `>>` / `2>` / `&>` target and classifies them individually —
-  - **Allow**: discard devices (`/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/*`), OS temp scratch (`/tmp`, `/var/tmp`, macOS `/var/folders`, and un-expanded `$TMPDIR` / `$TMP` / `$TEMP` forms), paths within the worktree (relative paths or absolute paths under `CLAUDE_PROJECT_DIR`)
-  - **Block**: (1) absolute paths outside the worktree (escape attempt); (2) targets whose basename is `nul` or `NUL` (case-insensitive) — git-bash does not treat `nul` as a null device, so `2>nul` creates a **real reserved-name file** in the working directory, polluting `git status` and difficult to delete (in `in_project` mode this leaves the tree dirty on the next dispatch → `SlotNeedsHuman`); the block message guides the agent to use `/dev/null` instead
+  - **Allow**: discard devices (`/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/*`), OS temp scratch (`/tmp`, `/var/tmp`, macOS `/var/folders`, un-expanded `$TMPDIR` / `$TMP` / `$TEMP` forms, and any absolute path under a normalized temp root — which includes the session scratchpad), paths within the worktree (relative paths, or absolute paths under the active git worktree or `CLAUDE_PROJECT_DIR`)
+  - **Block**: (1) absolute paths — POSIX or Windows drive-letter, quoted or not — outside the worktree and temp roots (escape attempt); (2) targets whose basename is `nul` or `NUL` (case-insensitive) — git-bash does not treat `nul` as a null device, so `2>nul` creates a **real reserved-name file** in the working directory, polluting `git status` and difficult to delete (in `in_project` mode this leaves the tree dirty on the next dispatch → `SlotNeedsHuman`); the block message guides the agent to use `/dev/null` instead
   - This classifier replaces the old `(?!tmp)` / `[^t]` heuristic (which both false-blocked `/dev/null` and missed `nul`). Note: only `>` / `>>` redirects are checked; non-redirect writes such as `curl -o` or `cp` are outside scope (Write/Edit paths are covered by path-guard)
-- **Clarifier role — additional blocks**: all mutation verbs (`rm` / `mv` / `cp` / `mkdir` / `touch` / `sed -i`), with a carve-out allowing `rm tmp_*.{md,txt}` and `>` redirects targeting `tmp_*.{md,txt}` so the clarifier can manage its own tracker temp files
+- **Clarifier role — additional blocks**: all mutation verbs (`rm` / `mv` / `cp` / `mkdir` / `touch` / `sed -i`), with carve-outs so the clarifier can manage its own tracker temp files: `rm` of a single file and `>` redirects whose target is `tmp_*.{md,txt}` **or inside the own-session scratchpad**; and `sed -i` when every file target (tokenized with sed's argument grammar — `-e`/`-f` consume the next token, first bare token is the script) is `tmp_*.{md,txt}` or in the scratchpad, with no `>` in the segment
 
 **grep compatibility:** Tries `-P` (PCRE) first; falls back to `-E` (ERE) if unsupported.
 
@@ -187,7 +189,7 @@ Hook scripts are embedded in the Zpit binary via `go:embed` and automatically de
 - Package publish: `npm publish`, `dotnet nuget push`, `pip ... upload`, `npm install -g`
 - Destructive file operations: `Remove-Item ... -Recurse ... /` / `~` / `..`
 - **Redirect classification**: same per-target classifier as bash-firewall, with the difference that the discard set adds the PowerShell-native `$null`, and the temp set adds `$env:TEMP` / `$env:TMP`. `nul` / `NUL` are blocked equally (PowerShell also does not treat `nul` as a device — it creates a reserved-name file); the block message guides the agent to use `$null` instead
-- **Clarifier role — additional blocks**: PS write cmdlets and aliases (`Remove-Item` / `rm` / `ri` / `del` / `Move-Item` / `mv` / `Copy-Item` / `cp` / `New-Item` / `mkdir` / `Set-Content` / `Add-Content` / `Out-File` / `Clear-Content`), with the same `tmp_*.{md,txt}` carve-out covering `Remove-Item`, `Set-Content`, `Out-File`, and `>` redirect write paths
+- **Clarifier role — additional blocks**: PS write cmdlets and aliases (`Remove-Item` / `rm` / `ri` / `del` / `Move-Item` / `mv` / `Copy-Item` / `cp` / `New-Item` / `mkdir` / `Set-Content` / `Add-Content` / `Out-File` / `Clear-Content`), with the same `tmp_*.{md,txt}` / own-session scratchpad carve-out covering `Remove-Item`, `Set-Content`, `Out-File`, and `>` redirect write paths
 
 ### 9.4.6 Hook 4: Git Operation Guard (git-guard.sh)
 

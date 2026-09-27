@@ -19,8 +19,88 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 2
 fi
 
-COMMAND=$(cat | jq -r '.tool_input.command // empty')
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+SCRATCHPAD_DIR=$(echo "$INPUT" | jq -r '.scratchpad_dir // empty')
 [ -z "$COMMAND" ] && exit 0
+
+# ── Path helpers — duplicated in path-guard.sh / pwsh-firewall.sh (each
+#    hook is deployed standalone, so there is no shared lib to source). ──
+
+# is_abs_path <'/'-separated path> — POSIX absolute or Windows drive-letter.
+is_abs_path() { [[ "$1" == /* || "$1" =~ ^[A-Za-z]:/ ]]; }
+
+# norm_path <path> [base] — '/'-separated, absolute (relative paths resolve
+# against base), ./.. collapsed, drive letter upper-cased. On Git for Windows
+# MSYS forms (/c/x, /tmp) are mapped to C:/x via cygpath so every source
+# (Claude Code, git rev-parse, env vars) compares in one form.
+norm_path() {
+  local p="${1//\\//}" base="${2:-}"
+  base="${base//\\//}"
+  if ! is_abs_path "$p" && [ -n "$base" ]; then p="${base%/}/$p"; fi
+  if [[ "$p" =~ ^[A-Za-z]:/ ]] && ! command -v cygpath >/dev/null 2>&1; then
+    # Non-Windows realpath treats C:/x as relative — collapse ./.. without
+    # letting it prepend the cwd.
+    p=$(realpath -m -- "/$p" 2>/dev/null || printf '/%s' "$p"); p="${p#/}"
+  else
+    p=$(realpath -m -- "$p" 2>/dev/null || printf '%s' "$p")
+  fi
+  if [[ "$p" == /* ]] && command -v cygpath >/dev/null 2>&1; then
+    p=$(cygpath -m -- "$p" 2>/dev/null || printf '%s' "$p")
+  fi
+  if [[ "$p" =~ ^([a-z]):(.*)$ ]]; then
+    p="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]'):${BASH_REMATCH[2]}"
+  fi
+  printf '%s' "$p"
+}
+
+# unquote <token> — strip one pair of surrounding ' or " from a command token.
+unquote() {
+  local t="$1"
+  if [[ "$t" =~ ^\"(.*)\"$ || "$t" =~ ^\'(.*)\'$ ]]; then t="${BASH_REMATCH[1]}"; fi
+  printf '%s' "$t"
+}
+
+# Temp roots Claude Code may place the scratchpad under (CLAUDE_CODE_TMPDIR
+# overrides os.tmpdir(), which follows TMPDIR / TEMP / TMP).
+TEMP_ROOTS=()
+for r in "${CLAUDE_CODE_TMPDIR:-}" "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}" /tmp; do
+  [ -n "$r" ] && TEMP_ROOTS+=("$(norm_path "$r")")
+done
+
+# is_own_scratchpad <normalized path> — true only inside THIS session's
+# Claude Code scratchpad.
+#   Primary: exact prefix match on `scratchpad_dir` from hook stdin — the
+#   path Claude Code itself assigned (shared by the session's subagents).
+#   Fallback (older Claude Code without that field): reconstruct
+#   <temp-root>/claude[-*]/<encoded-cwd>/<session_id>/scratchpad/, anchored to
+#   a real temp root + the exact session_id so a look-alike tree elsewhere on
+#   disk, or another session's scratchpad, never qualifies.
+is_own_scratchpad() {
+  local p="$1" sp root rest
+  if [ -n "${SCRATCHPAD_DIR:-}" ]; then
+    sp=$(norm_path "$SCRATCHPAD_DIR")
+    is_abs_path "$sp" && [[ "$p" == "$sp"/?* ]]
+    return
+  fi
+  [[ "${SESSION_ID:-}" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+  for root in "${TEMP_ROOTS[@]}"; do
+    rest="${p#"$root"/}"
+    [ "$rest" = "$p" ] && continue
+    [[ "$rest" =~ ^claude(-[^/]+)?/[^/]+/${SESSION_ID}/scratchpad/[^/] ]] && return 0
+  done
+  return 1
+}
+
+# is_scratch_target <raw command token> — own-session scratchpad, any form
+# (quoted, backslashes, MSYS). Relative tokens never qualify.
+is_scratch_target() {
+  local t
+  t=$(unquote "$1")
+  t="${t//\\//}"
+  is_abs_path "$t" && is_own_scratchpad "$(norm_path "$t")"
+}
 
 # Blocked command patterns
 BLOCKED_PATTERNS=(
@@ -111,6 +191,42 @@ if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
       case "$RM_BASE" in
         tmp_*.md|tmp_*.txt) continue ;;
       esac
+      # …or any single file inside the own-session scratchpad.
+      is_scratch_target "$RM_TARGET" && continue
+    fi
+
+    # sed -i carve-out: in-place edits of the clarifier's own temp files
+    # (e.g. fixing a typo in a draft issue body). The segment is tokenized
+    # with xargs (honours '…' / "…" quoting, executes nothing but printf);
+    # backslashes are mapped to / first so Windows paths survive xargs'
+    # escape handling. Then sed's own grammar: -e/-f/--expression/--file
+    # consume the next token, other -flags are skipped, and the first bare
+    # token is the script unless -e/-f supplied one. Every remaining token is
+    # a file target and must be tmp_*.{md,txt} or inside the own-session
+    # scratchpad; zero targets or unparsable quoting → no carve-out (falls
+    # through to the block below). A `>` anywhere disqualifies the segment so
+    # a redirect can't ride along past the source-extension redirect check.
+    if [[ "$seg" =~ ^sed[[:space:]]+-i && "$seg" != *">"* ]]; then
+      SED_ARGS=()
+      if SED_LIST=$(printf '%s' "${seg#sed}" | tr '\\' '/' | xargs printf '%s\n' 2>/dev/null); then
+        mapfile -t SED_ARGS <<< "$SED_LIST"
+      fi
+      SED_OK=0 SED_SCRIPT=0 SED_SKIP=0
+      for tok in "${SED_ARGS[@]}"; do
+        [ -z "$tok" ] && continue
+        if [ "$SED_SKIP" -eq 1 ]; then SED_SKIP=0; continue; fi
+        case "$tok" in
+          -e|-f|--expression|--file) SED_SCRIPT=1; SED_SKIP=1; continue ;;
+          -e*|-f*|--expression=*|--file=*) SED_SCRIPT=1; continue ;;
+          -*) continue ;;
+        esac
+        if [ "$SED_SCRIPT" -eq 0 ]; then SED_SCRIPT=1; continue; fi
+        case "${tok##*/}" in
+          tmp_*.md|tmp_*.txt) SED_OK=1 ;;
+          *) if is_scratch_target "$tok"; then SED_OK=1; else SED_OK=0; break; fi ;;
+        esac
+      done
+      [ "$SED_OK" -eq 1 ] && continue
     fi
 
     # Mutation verbs in this segment
@@ -128,7 +244,8 @@ if [ "${ZPIT_AGENT_TYPE:-}" = "clarifier" ]; then
       case "$CLARIFIER_TGT_BASE" in
         tmp_*.md|tmp_*.txt) : ;;
         *)
-          echo "BLOCKED: Clarifier cannot redirect output to '$CLARIFIER_TGT'. Only tmp_*.{md,txt} tracker temp files are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
+          is_scratch_target "$CLARIFIER_TGT" && continue
+          echo "BLOCKED: Clarifier cannot redirect output to '$CLARIFIER_TGT'. Only the session scratchpad or tmp_*.{md,txt} tracker temp files are allowed. File changes must go through Issue SCOPE + Coding Agent." >&2
           exit 2
           ;;
       esac
@@ -147,7 +264,20 @@ fi
 # Note: only `>`/`>>` shell redirects are inspected. Non-redirect writes
 # (curl -o, cp, tar -C ...) are out of scope here — path-guard governs the
 # Write/Edit tools.
-ALLOWED_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+#
+# Allowed roots: the active git worktree (a task-runner's child worktree lives
+# under ~/.zpit/children, outside CLAUDE_PROJECT_DIR) plus CLAUDE_PROJECT_DIR.
+ALLOWED_DIRS=()
+GIT_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
+[ -n "$GIT_TOP" ] && ALLOWED_DIRS+=("$(norm_path "$GIT_TOP")")
+ALLOWED_DIRS+=("$(norm_path "${CLAUDE_PROJECT_DIR:-$(pwd)}")")
+
+# is_under_any <normalized path> <dir>... — path is strictly inside one of dirs.
+is_under_any() {
+  local p="$1" d; shift
+  for d in "$@"; do [[ "$p" == "$d"/* ]] && return 0; done
+  return 1
+}
 
 # Extract every redirect target (the token after > >> 2> 2>> &> ...).
 # fd-dup forms like `2>&1` yield no target (the & is excluded) and are skipped.
@@ -159,6 +289,7 @@ fi
 
 while IFS= read -r tgt; do
   [ -z "$tgt" ] && continue
+  tgt=$(unquote "$tgt")
 
   # basename after stripping both / and \ path separators
   base="${tgt##*/}"
@@ -183,10 +314,15 @@ while IFS= read -r tgt; do
     '$TMPDIR'*|'${TMPDIR}'*|'$TMP'*|'${TMP}'*|'$TEMP'*|'${TEMP}'*) continue ;;
   esac
 
-  # 4. Absolute path outside the worktree → block (escape). Relative targets
-  #    resolve inside the worktree and are allowed (path-guard covers Write/Edit).
-  if [[ "$tgt" == /* && "$tgt" != "${ALLOWED_DIR}"/* ]]; then
-    echo "BLOCKED: Redirect target '$tgt' is outside the working directory." >&2
+  # 4. Absolute path (POSIX or drive-letter) → allow only inside the worktree
+  #    or an OS temp root (which covers the session scratchpad); anything else
+  #    is an escape. Relative targets resolve inside the worktree and are
+  #    allowed (path-guard covers Write/Edit).
+  tgt_fs="${tgt//\\//}"
+  if is_abs_path "$tgt_fs"; then
+    tgt_abs=$(norm_path "$tgt_fs")
+    is_under_any "$tgt_abs" "${ALLOWED_DIRS[@]}" "${TEMP_ROOTS[@]}" && continue
+    echo "BLOCKED: Redirect target '$tgt' is outside the working directory. Use a path inside the worktree or your session scratchpad." >&2
     exit 2
   fi
 done <<< "$REDIRECT_TARGETS"
